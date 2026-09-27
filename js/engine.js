@@ -1920,7 +1920,9 @@ function ac() {
 window.addEventListener("pointerdown", () => ac(), { once: true });
 window.addEventListener("keydown", () => ac(), { once: true });
 // sample based sound: one-shots and loops from /sfx, everything through a glue compressor
-const Audio = { buffers: {}, bus: null, vol: 1 };
+// everything was way too loud at full scale
+const MASTER = 0.4;
+const Audio = { buffers: {}, bus: null, vol: 1, last: {}, voices: 0 };
 function bus() {
 	const a = ac();
 	if (!a) return null;
@@ -1932,7 +1934,7 @@ function bus() {
 		comp.attack.value = 0.004;
 		comp.release.value = 0.25;
 		const out = a.createGain();
-		out.gain.value = 1;
+		out.gain.value = Audio.vol * MASTER;
 		comp.connect(out);
 		out.connect(a.destination);
 		Audio.bus = comp;
@@ -1942,7 +1944,7 @@ function bus() {
 }
 export function setSfxVolume(v) {
 	Audio.vol = v;
-	if (Audio.out) Audio.out.gain.setTargetAtTime(v, Audio.out.context.currentTime, 0.05);
+	if (Audio.out) Audio.out.gain.setTargetAtTime(v * MASTER, Audio.out.context.currentTime, 0.05);
 }
 export async function loadSounds(names, base) {
 	let a;
@@ -1966,6 +1968,11 @@ export function hasSound(name) { return !!Audio.buffers[name]; }
 export function playSfx(name, pitch = 1, volume = 1, pan = 0) {
 	const a = ac(), b = Audio.buffers[name];
 	if (!a || !b || volume <= 0 || a.state !== "running") return;
+	// the same sound right on top of itself just gets louder, and too many at once turns to mush
+	const now = a.currentTime;
+	if (now - (Audio.last[name] || -1) < 0.09 || Audio.voices >= 10) return;
+	Audio.last[name] = now;
+	Audio.voices++;
 	const src = a.createBufferSource();
 	src.buffer = b;
 	src.playbackRate.value = pitch;
@@ -1981,6 +1988,7 @@ export function playSfx(name, pitch = 1, volume = 1, pan = 0) {
 		node = p;
 	}
 	node.connect(bus());
+	src.onended = () => Audio.voices--;
 	src.start();
 }
 // a looping layer you keep steering: volume, speed and a lowpass, all smoothed

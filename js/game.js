@@ -22,23 +22,23 @@ const EDIR = Enum.EasingDirection;
 
 // name: [file, pitch, volume, pitch jitter]
 const SFX = {
-	hover: ["ui_hover", 1, 0.35, 0.05], click: ["ui_click", 1, 0.8, 0.04], open: ["ui_open", 1, 0.55, 0], close: ["ui_close", 1, 0.45, 0],
-	good: ["ui_good", 1, 0.6, 0], bad: ["ui_bad", 1, 0.6, 0], tick: ["ui_tick", 1, 0.35, 0], whoosh: ["whoosh_ui", 1, 0.5, 0.05],
+	hover: ["ui_hover", 1, 0.15, 0.05], click: ["ui_click", 1, 0.8, 0.04], open: ["ui_open", 1, 0.55, 0], close: ["ui_close", 1, 0.45, 0],
+	good: ["ui_good", 1, 0.6, 0], bad: ["ui_bad", 1, 0.6, 0], tick: ["ui_tick", 1, 0.15, 0], whoosh: ["whoosh_ui", 1, 0.5, 0.05],
 	portal: ["pick_fuel", 1, 0.8, 0], crash: ["crash", 1, 1, 0],
 	crash_confetti: ["crash_confetti", 1, 1, 0], crash_pixel: ["crash_pixel", 1, 1, 0], crash_nuke: ["crash_nuke", 1, 1, 0],
 	pick_fuel: ["pick_fuel", 1, 0.8, 0.06], pick_gem: ["pick_gem", 1, 0.8, 0.04], pick_key: ["pick_key", 1, 0.9, 0], pick_heart: ["pick_heart", 1, 1, 0],
-	nitro_on: ["nitro_on", 1, 0.75, 0.05], roll: ["roll", 1, 0.7, 0.08], near: ["near", 1, 0.8, 0.08],
-	stage: ["stage", 1, 0.8, 0], map_clear: ["map_clear", 1, 0.7, 0], loop_banner: ["loop_banner", 1, 0.9, 0],
-	glass: ["glass", 1, 0.85, 0.1], shatter: ["shatter", 1, 0.8, 0.12], hit: ["hit", 1, 0.35, 0.15], shield: ["shield", 1, 0.5, 0.1],
-	gun: ["gun", 1, 0.3, 0.08], gun_plasma: ["gun_plasma", 1, 0.3, 0.08],
-	laser_charge: ["laser_charge", 1, 0.55, 0.05], laser_fire: ["laser_fire", 1, 0.8, 0.08],
-	missile_launch: ["missile_launch", 1, 0.7, 0.08], missile_pass: ["missile_pass", 1, 0.9, 0.06], blast: ["blast", 1, 0.8, 0.1], orb: ["orb", 1, 0.35, 0.05],
+	nitro_on: ["nitro_on", 1, 0.45, 0.05], roll: ["roll", 1, 0.45, 0.08], near: ["near", 1, 0.45, 0.08],
+	stage: ["stage", 1, 0.45, 0], map_clear: ["map_clear", 1, 0.7, 0], loop_banner: ["loop_banner", 1, 0.9, 0],
+	glass: ["glass", 1, 0.85, 0.1], shatter: ["shatter", 1, 0.5, 0.12], hit: ["hit", 1, 0.2, 0.15], shield: ["shield", 1, 0.5, 0.1],
+	gun: ["gun", 1, 0.12, 0.08], gun_plasma: ["gun_plasma", 1, 0.12, 0.08],
+	laser_charge: ["laser_charge", 1, 0.3, 0.05], laser_fire: ["laser_fire", 1, 0.5, 0.08],
+	missile_launch: ["missile_launch", 1, 0.7, 0.08], missile_pass: ["missile_pass", 1, 0.9, 0.06], blast: ["blast", 1, 0.5, 0.1], orb: ["orb", 1, 0.15, 0.05],
 	shield_down: ["shield_down", 1, 0.8, 0],
 	tower_fall: ["tower_fall", 1, 0.9, 0.05], tower_land: ["tower_land", 1, 1, 0.05],
 	boss_in: ["boss_in", 1, 1, 0], boss2_in: ["boss2_in", 1, 1, 0], boss_phase: ["boss_phase", 1, 0.9, 0], boss_down: ["boss_down", 1, 1, 0], boss_flyover: ["boss_flyover", 1, 0.9, 0],
 	jet_arrive: ["jet_arrive", 1, 0.9, 0], swap: ["swap", 1, 0.9, 0], plane_down: ["plane_down", 1, 0.8, 0], carrier: ["carrier", 1, 0.7, 0],
 	land: ["land", 1, 1, 0], launch: ["launch", 1, 1, 0], reentry_hit: ["reentry_hit", 1, 0.9, 0],
-	alarm: ["alarm", 1, 0.35, 0], fuel_out: ["fuel_out", 1, 0.7, 0], count: ["count", 1, 0.6, 0], go: ["go", 1, 0.8, 0], revive: ["revive", 1, 0.9, 0], record: ["record", 1, 0.9, 0],
+	alarm: ["alarm", 1, 0.18, 0], fuel_out: ["fuel_out", 1, 0.7, 0], count: ["count", 1, 0.6, 0], go: ["go", 1, 0.8, 0], revive: ["revive", 1, 0.9, 0], record: ["record", 1, 0.9, 0],
 };
 const LOOPS = ["loop_prop", "loop_jet", "loop_wind", "loop_nitro", "loop_space", "loop_reentry", "loop_boss"];
 await loadSounds([...new Set(Object.values(SFX).map((d) => d[0]))].map((f) => [f, f + ".mp3"]).concat(LOOPS.map((f) => [f, f + ".wav"])), "./sfx/");
@@ -5348,19 +5348,19 @@ task.spawn(async () => {
 		const spd = clamp(speedNow / BASE_SPEED, 0, 8);
 		const jet = F.tier >= 2 || (c && c.kind === "launch");
 		// the engine coughs when the tank is empty
-		const eng = run ? (fuel > 0 || curStage === "beyond" ? 0.42 : 0.16 + 0.14 * Math.abs(Math.sin(clock() * 9))) : 0;
+		const eng = run ? (fuel > 0 || curStage === "beyond" ? 0.16 : 0.06 + 0.06 * Math.abs(Math.sin(clock() * 9))) : 0;
 		const rate = 0.85 + Math.min(spd, 3) * 0.12 + nitroK * 0.25;
 		L.loop_prop.set(!jet ? eng * pause : 0, rate, fuel > 0 ? 14000 : 2200);
 		L.loop_jet.set(jet ? eng * pause * 0.9 : 0, rate * 0.95, fuel > 0 ? 16000 : 2500);
-		L.loop_wind.set(run ? (0.12 + Math.min(spd, 4) * 0.05 + nitroK * 0.35) * pause : mode === "menu" ? 0.1 : 0, 0.9 + nitroK * 0.35, 2500 + nitroK * 10000);
-		L.loop_nitro.set(run ? nitroK * 0.5 * pause : 0, 0.9 + nitroK * 0.2);
-		L.loop_space.set(mode === "run" && curStage === "beyond" && !(c && c.kind === "descent") ? 0.4 * pause : 0, 1, 20000, 1.2);
+		L.loop_wind.set(run ? (0.04 + Math.min(spd, 4) * 0.02 + nitroK * 0.14) * pause : 0, 0.9 + nitroK * 0.35, 2500 + nitroK * 10000);
+		L.loop_nitro.set(run ? nitroK * 0.2 * pause : 0, 0.9 + nitroK * 0.2);
+		L.loop_space.set(mode === "run" && curStage === "beyond" && !(c && c.kind === "descent") ? 0.18 * pause : 0, 1, 20000, 1.2);
 		const heat = c && c.kind === "descent" && c.shell ? clamp((1 - c.shell.Transparency) / 0.55, 0, 1) : 0;
-		L.loop_reentry.set(run ? heat * 0.85 : 0, 0.85 + heat * 0.25);
+		L.loop_reentry.set(run ? heat * 0.35 : 0, 0.85 + heat * 0.25);
 		let bv = 0;
-		if (run && boss && !boss.finale) bv = clamp(1 - boss.p.sub(pos).Magnitude / 800, 0, 1) * 0.55;
-		if (run && boss && boss.finale) bv = 0.55;
-		if (run && Game.boss2.active) bv = 0.3;
+		if (run && boss && !boss.finale) bv = clamp(1 - boss.p.sub(pos).Magnitude / 800, 0, 1) * 0.22;
+		if (run && boss && boss.finale) bv = 0.22;
+		if (run && Game.boss2.active) bv = 0.12;
 		L.loop_boss.set(bv * pause, Game.boss2.active ? 1.3 : boss && boss.finale ? 1.25 : 1);
 		// kicking in the nitro
 		if (!nitroOn && run && nitroK > 0.3) {
@@ -5368,11 +5368,11 @@ task.spawn(async () => {
 			sfx("nitro_on");
 		} else if (nitroOn && (!run || nitroK < 0.1)) nitroOn = false;
 		// low fuel beeps, faster the emptier
-		if (run && !c && !Game.hold && fuel > 0 && fuel < 25 && !boss && !Game.boss2.active) {
+		if (run && !c && !Game.hold && fuel > 0 && fuel < 15 && !boss && !Game.boss2.active) {
 			alarmT -= dt;
 			if (alarmT <= 0) {
-				alarmT = fuel < 12 ? 0.55 : 1.1;
-				sfx("alarm", fuel < 12 ? 1.12 : 1, 0.7);
+				alarmT = fuel < 7 ? 1.2 : 2.2;
+				sfx("alarm", fuel < 7 ? 1.12 : 1);
 			}
 		} else alarmT = 0;
 	});
