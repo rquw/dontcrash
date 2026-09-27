@@ -1919,65 +1919,99 @@ function ac() {
 }
 window.addEventListener("pointerdown", () => ac(), { once: true });
 window.addEventListener("keydown", () => ac(), { once: true });
-export function playSound(kind, pitch, volume) {
+// sample based sound: one-shots and loops from /sfx, everything through a glue compressor
+const Audio = { buffers: {}, bus: null, vol: 1 };
+function bus() {
 	const a = ac();
-	if (!a || volume <= 0) return;
-	const t = a.currentTime;
-	const g = a.createGain();
-	g.connect(a.destination);
-	if (kind === "button") {
-		// a short clicky blip
-		const o = a.createOscillator();
-		o.type = "square";
-		o.frequency.setValueAtTime(900 * pitch, t);
-		o.frequency.exponentialRampToValueAtTime(420 * pitch, t + 0.06);
-		g.gain.setValueAtTime(volume * 0.18, t);
-		g.gain.exponentialRampToValueAtTime(0.0001, t + 0.08);
-		o.connect(g);
-		o.start(t);
-		o.stop(t + 0.09);
-	} else if (kind === "ping") {
-		// electronicpingshort: a bright sine ping with a quick decay
-		for (const [mult, amp] of [[1, 1], [2.01, 0.35], [3.02, 0.15]]) {
-			const o = a.createOscillator();
-			o.type = "sine";
-			o.frequency.setValueAtTime(880 * pitch * mult, t);
-			const gg = a.createGain();
-			gg.gain.setValueAtTime(volume * 0.22 * amp, t);
-			gg.gain.exponentialRampToValueAtTime(0.0001, t + 0.35 / Math.max(pitch, 0.4));
-			o.connect(gg);
-			gg.connect(a.destination);
-			o.start(t);
-			o.stop(t + 0.5);
-		}
-	} else if (kind === "collide") {
-		// a crunchy thud: filtered noise + low sine drop
-		const len = 0.6 / Math.max(pitch, 0.3);
-		const buf = a.createBuffer(1, Math.floor(a.sampleRate * len), a.sampleRate);
-		const d = buf.getChannelData(0);
-		for (let i = 0; i < d.length; i++) d[i] = (Math.random() * 2 - 1) * Math.pow(1 - i / d.length, 2.5);
-		const src = a.createBufferSource();
-		src.buffer = buf;
-		const f = a.createBiquadFilter();
-		f.type = "lowpass";
-		f.frequency.value = 1400 * pitch;
-		src.connect(f);
-		f.connect(g);
-		g.gain.setValueAtTime(volume * 0.7, t);
-		src.start(t);
-		const o = a.createOscillator();
-		o.frequency.setValueAtTime(120 * pitch, t);
-		o.frequency.exponentialRampToValueAtTime(40, t + len);
-		const og = a.createGain();
-		og.gain.setValueAtTime(volume * 0.5, t);
-		og.gain.exponentialRampToValueAtTime(0.0001, t + len);
-		o.connect(og);
-		og.connect(a.destination);
-		o.start(t);
-		o.stop(t + len);
+	if (!a) return null;
+	if (!Audio.bus) {
+		const comp = a.createDynamicsCompressor();
+		comp.threshold.value = -16;
+		comp.knee.value = 8;
+		comp.ratio.value = 4;
+		comp.attack.value = 0.004;
+		comp.release.value = 0.25;
+		const out = a.createGain();
+		out.gain.value = 1;
+		comp.connect(out);
+		out.connect(a.destination);
+		Audio.bus = comp;
+		Audio.out = out;
 	}
+	return Audio.bus;
 }
-
+export function setSfxVolume(v) {
+	Audio.vol = v;
+	if (Audio.out) Audio.out.gain.setTargetAtTime(v, Audio.out.context.currentTime, 0.05);
+}
+export async function loadSounds(names, base) {
+	let a;
+	try {
+		a = actx || new (window.AudioContext || window.webkitAudioContext)();
+		actx = a;
+	} catch (e) {
+		return;
+	}
+	await Promise.all(names.map(async ([name, file]) => {
+		try {
+			const r = await fetch(base + file);
+			const buf = await r.arrayBuffer();
+			Audio.buffers[name] = await new Promise((res, rej) => a.decodeAudioData(buf, res, rej));
+		} catch (e) {
+			console.warn("sound failed", name, e);
+		}
+	}));
+}
+export function hasSound(name) { return !!Audio.buffers[name]; }
+export function playSfx(name, pitch = 1, volume = 1, pan = 0) {
+	const a = ac(), b = Audio.buffers[name];
+	if (!a || !b || volume <= 0 || a.state !== "running") return;
+	const src = a.createBufferSource();
+	src.buffer = b;
+	src.playbackRate.value = pitch;
+	const g = a.createGain();
+	g.gain.value = volume;
+	let node = src;
+	node.connect(g);
+	node = g;
+	if (pan && a.createStereoPanner) {
+		const p = a.createStereoPanner();
+		p.pan.value = clamp(pan, -1, 1);
+		node.connect(p);
+		node = p;
+	}
+	node.connect(bus());
+	src.start();
+}
+// a looping layer you keep steering: volume, speed and a lowpass, all smoothed
+export function loopSound(name) {
+	const L = { name, src: null, g: null, f: null, vol: 0, rate: 1, cut: 20000 };
+	L.set = (vol, rate = 1, cut = 20000, smooth = 0.12) => {
+		const a = ac(), b = Audio.buffers[name];
+		if (!a || !b || a.state !== "running") return;
+		if (!L.src) {
+			if (vol <= 0.001) return;
+			L.src = a.createBufferSource();
+			L.src.buffer = b;
+			L.src.loop = true;
+			L.f = a.createBiquadFilter();
+			L.f.type = "lowpass";
+			L.f.frequency.value = cut;
+			L.g = a.createGain();
+			L.g.gain.value = 0;
+			L.src.connect(L.f);
+			L.f.connect(L.g);
+			L.g.connect(bus());
+			L.src.start(0, Math.random() * b.duration);
+		}
+		const t = a.currentTime;
+		L.g.gain.setTargetAtTime(vol, t, smooth);
+		L.src.playbackRate.setTargetAtTime(rate, t, smooth);
+		L.f.frequency.setTargetAtTime(cut, t, smooth);
+		L.vol = vol;
+	};
+	return L;
+}
 // ------------------------------------------------------------------ gui: roblox-style frames on top of the dom
 
 const GUI_CLASSES = {
