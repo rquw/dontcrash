@@ -1,0 +1,5327 @@
+import {
+	THREE, clamp, lerp, sign, rad, random, Vector3, Vector2, Color3, CFrame, UDim2, UDim, Random, clock, osTime, task, Signal, RunService,
+	camera, Lighting, Instance, workspace, markQueryRoot, Enum, OverlapParams, TweenService, TweenInfo, Debris, UIS, playSound,
+	NumberSequence, NumberSequenceKeypoint, NumberRange, ColorSequence, ColorSequenceKeypoint, guiRootInst, setUiScale, setLowGraphics, physicsGround,
+	mergeFloor, start, perf,
+} from "./engine.js";
+import * as Server from "./server.js";
+
+const V3 = (x, y, z) => new Vector3(x, y, z);
+const RGB = Color3.fromRGB;
+const CFn = (x, y, z) => CFrame.new(x, y, z);
+const Ang = CFrame.Angles;
+const U2 = (a, b, c, d) => new UDim2(a, b, c, d);
+const US = UDim2.fromScale;
+const UO = UDim2.fromOffset;
+const V2 = (x, y) => new Vector2(x, y);
+const mod = (a, b) => a - Math.floor(a / b) * b;
+const idiv = (a, b) => Math.floor(a / b);
+const deg = (r) => (r * 180) / Math.PI;
+const EASE = Enum.EasingStyle;
+const EDIR = Enum.EasingDirection;
+
+const SFX = {
+	hover: ["button", 1.8, 0.2],
+	click: ["button", 1.1, 0.7],
+	open: ["ping", 0.75, 0.35],
+	close: ["ping", 0.55, 0.25],
+	good: ["ping", 1.35, 0.6],
+	bad: ["button", 0.55, 0.7],
+	portal: ["ping", 1, 0.8],
+	crash: ["collide", 0.6, 1],
+	whoosh: ["ping", 0.45, 0.4],
+};
+
+// ------------------------------------------------------------------ data
+
+let data, claimed, CONFIG, saveState;
+let sessionBase = 0, snapNow = osTime(), snapClock = clock();
+let refreshUI = null;
+
+function apply(s) {
+	if (typeof s !== "object" || !s) return;
+	data = s.data;
+	claimed = s.claimed;
+	sessionBase = s.session;
+	snapNow = s.now;
+	snapClock = clock();
+	if (s.config) CONFIG = JSON.parse(JSON.stringify(s.config));
+	saveState = s.saving;
+	if (refreshUI) refreshUI();
+}
+
+function request(action, arg) {
+	let r;
+	try {
+		r = Server.call(action, arg);
+	} catch (e) {
+		console.error(e);
+		return [false, "error"];
+	}
+	apply(r[2]);
+	return [r[0], r[1]];
+}
+
+request("get");
+
+const settings = JSON.parse(JSON.stringify(data.settings));
+
+const serverNow = () => snapNow + (clock() - snapClock);
+const sessionTime = () => sessionBase + (clock() - snapClock);
+const boostMult = () => (data.boostUntil > serverNow() ? data.boost : 1);
+
+function fmt(n) {
+	const s = String(Math.floor(Math.abs(n)));
+	const out = s.replace(/\B(?=(\d{3})+(?!\d))/g, ",");
+	return (n < 0 ? "-" : "") + out;
+}
+function fmtTime(s) {
+	s = Math.max(0, Math.floor(s));
+	const h = idiv(s, 3600), m = idiv(s % 3600, 60), sec = s % 60;
+	const p2 = (v) => String(v).padStart(2, "0");
+	if (h > 0) return `${h}:${p2(m)}:${p2(sec)}`;
+	return `${m}:${p2(sec)}`;
+}
+function describe(r) {
+	const parts = [];
+	if (r.coins && r.coins > 0) parts.push("+" + fmt(r.coins) + " ●");
+	if (r.gems && r.gems > 0) parts.push("+" + fmt(r.gems) + " ◆");
+	if (r.keys && r.keys > 0) parts.push("+" + fmt(r.keys) + " ✦");
+	return parts.join("   ");
+}
+
+// ------------------------------------------------------------------ sound
+
+function sfx(name, pitch) {
+	const d = SFX[name];
+	if (!settings.sfx || !d) return;
+	playSound(d[0], pitch || d[1], d[2] * settings.sfxVol);
+}
+
+// ------------------------------------------------------------------ constants
+
+const BASE_SPEED = 90;
+const STRAFE = 70;
+const STEER = 6;
+const ALT = 25;
+const SOFT = 1600;
+const ARENA = 1600;
+const HITBOX = V3(10, 2, 7);
+const PICKBOX = V3(16, 16, 8);
+
+const CHUNK = 200;
+const SAFE_ROWS = 2;
+
+const BLAST_RADIUS = 45;
+const BLAST_POWER = 140;
+const CORE = 9;
+const CRATER = 28;
+
+const FUEL = { max: 100, drain: 4.5, pad: 18, nitro: 30, sink: 4, mult: 10 };
+
+const TOWER = RGB(70, 70, 80);
+
+const STAGE_BY_ID = {};
+let BOSS_START;
+(() => {
+	let acc = 0;
+	for (const s of CONFIG.stages) {
+		s.start = acc;
+		acc += s.len;
+		s.finish = acc;
+		STAGE_BY_ID[s.id] = s;
+	}
+	BOSS_START = acc;
+})();
+const MAP_STAGES = { towers: true, moving: true, canyon: true, smash: true, turrets: true, city: true, sea: true };
+
+const PAD = {
+	fuel: [RGB(255, 45, 35), "FUEL"],
+	gem: [RGB(90, 220, 255), "+5 ◆"],
+	key: [RGB(255, 200, 70), "+1 ✦"],
+	heart: [RGB(255, 40, 70), "+1 REVIVE"],
+};
+
+// ------------------------------------------------------------------ state
+
+let mode = "menu";
+let dead = false;
+let runId = 0;
+let pos = V3(0, ALT, 0);
+let vx = 0;
+let runTime = 0;
+let shake = 0;
+let speedNow = BASE_SPEED;
+let fuel = FUEL.max, nitroK = 0;
+const roll = { dir: 0, cd: 0, kick: 0 };
+const Missiles = {};
+const Game = { flow: { tier: 1 }, boss2: {}, guns: {}, marks: {}, cam: {}, fallers: new Map(), SEA_LEN: CONFIG.seaLen || 5000, loop: 0, loopBase: 0, voidT: 0, gravity: workspace.Gravity, touch: {} };
+window.Game = Game;
+let devK = 0;
+
+(() => {
+	const DEFAULT = {
+		left: ["A", "Left"],
+		right: ["D", "Right"],
+		nitro: ["W", "Space"],
+		dashL: ["Q", "MouseButton1"],
+		dashR: ["E", "MouseButton2"],
+		shoot: ["LeftShift", "RightShift"],
+		pause: ["P", ""],
+	};
+	const NICE = {
+		LeftShift: "SHIFT", RightShift: "R-SHIFT", LeftControl: "CTRL", RightControl: "R-CTRL", LeftAlt: "ALT", RightAlt: "R-ALT",
+		MouseButton1: "LEFT CLICK", MouseButton2: "RIGHT CLICK", MouseButton3: "MIDDLE CLICK",
+		Space: "SPACE", Return: "ENTER", Left: "LEFT", Right: "RIGHT", Up: "UP", Down: "DOWN", Tab: "TAB",
+	};
+	Game.BIND_DEFAULT = DEFAULT;
+	Game.BIND_ORDER = ["left", "right", "nitro", "dashL", "dashR", "shoot", "pause"];
+	Game.BIND_NAMES = { left: "STEER LEFT", right: "STEER RIGHT", nitro: "NITRO", dashL: "DASH LEFT", dashR: "DASH RIGHT", shoot: "SHOOT", pause: "PAUSE" };
+
+	Game.binds = () => {
+		settings.binds = typeof settings.binds === "object" && settings.binds && !Array.isArray(settings.binds) ? settings.binds : {};
+		for (const action in DEFAULT) {
+			const b = settings.binds[action];
+			if (!Array.isArray(b)) settings.binds[action] = [DEFAULT[action][0], DEFAULT[action][1]];
+		}
+		return settings.binds;
+	};
+	const mouseName = (n) => n.slice(0, 11) === "MouseButton";
+	Game.down = (action) => {
+		for (const n of Game.binds()[action]) {
+			if (n !== "") {
+				if (mouseName(n)) {
+					if (!Game.touch.on && UIS.IsMouseButtonPressed(n)) return true;
+				} else if (UIS.IsKeyDown(n)) return true;
+			}
+		}
+		return false;
+	};
+	Game.isBind = (action, input) => {
+		const name = input.UserInputType === "Keyboard" ? input.KeyCode : input.UserInputType;
+		if (mouseName(name) && Game.touch.on) return false;
+		for (const n of Game.binds()[action]) if (n !== "" && n === name) return true;
+		return false;
+	};
+	Game.niceKey = (n) => {
+		if (n === "") return "-";
+		return NICE[n] || n.toUpperCase();
+	};
+	Game.keyName = (action) => {
+		const b = Game.binds()[action];
+		return Game.niceKey(b[0] !== "" ? b[0] : b[1]);
+	};
+})();
+
+const isDev = false;
+let ghost = false;
+let menuX = 0, menuZ = 0;
+let curStage;
+let stats;
+const buff = { immortal: 0 };
+let boss = null, bossDone = false, beyondStart = null;
+
+let seed = 0;
+let canyonOffset = 0;
+let chunks = new Map();
+let queued = new Map();
+let lastKey;
+let maxRow = -1;
+const pads = new Map();
+
+const world = Instance.new("Folder");
+world.Name = "World";
+world.Parent = workspace;
+markQueryRoot(world);
+
+const pickups = Instance.new("Folder");
+pickups.Name = "Pickups";
+pickups.Parent = workspace;
+markQueryRoot(pickups);
+
+const junk = Instance.new("Folder");
+junk.Name = "Junk";
+junk.Parent = workspace;
+
+const params = OverlapParams.new();
+params.FilterType = "Include";
+params.FilterDescendantsInstances = [world];
+
+const pickParams = OverlapParams.new();
+pickParams.FilterType = "Include";
+pickParams.FilterDescendantsInstances = [pickups];
+
+// ------------------------------------------------------------------ world
+
+function stageFor(d) {
+	if (Game.introEnd && d < Game.introEnd) return ["intro", 0];
+	for (const s of CONFIG.stages) {
+		if (d < s.finish) return [s.id, clamp((d - s.start) / s.len, 0, 1)];
+	}
+	if (beyondStart != null && d >= beyondStart) {
+		const k = d - beyondStart;
+		const tl = CONFIG.turretsLen || 4000, cl = CONFIG.cityLen || 4000;
+		if (k < tl) return ["turrets", k / tl];
+		if (k < tl + cl) return ["city", (k - tl) / cl];
+		const m = Game.marks;
+		if (m.sea == null || d < m.sea) return ["boss2", 0];
+		if (m.final == null || d < m.final) return ["sea", Math.min((d - m.sea) / Game.SEA_LEN, 1)];
+		return ["beyond", (d - m.final) / 1000];
+	}
+	return ["boss", 0];
+}
+
+function stageName(id) {
+	if (STAGE_BY_ID[id]) return STAGE_BY_ID[id].name;
+	const n = { boss: "5  BOSS", turrets: "6  TURRETS", city: "7  CITY", boss2: "8  BOSS", sea: "9  SEA", beyond: "10  SPACE", intro: "" }[id];
+	return n === undefined ? id : n;
+}
+
+function block(size, p, color, parent) {
+	const b = Instance.new("Part");
+	b.Anchored = true;
+	b.Size = size;
+	b.Position = p;
+	b.Color = color;
+	b.Parent = parent;
+	return b;
+}
+
+let trackChunks, updateMovers, regenerate, canyonPath, canyonHalfGap, updatePads;
+(() => {
+	function floorColor(stage, h, x, d) {
+		let s = 90 + h * 6;
+		if (stage === "moving") return RGB(s, s * 0.8, s * 0.5);
+		if (stage === "canyon") return RGB(s * 0.9, s * 0.5, s * 0.35);
+		if (stage === "smash") {
+			s = 60 + h * 5;
+			return RGB(s * 0.45, s * 0.35, s * 0.8);
+		}
+		if (stage === "chill") return Color3.fromHSV(mod((x + d) / 500, 1), 0.55, 0.95);
+		if (stage === "boss") return RGB(30 + h * 4, 20, 25);
+		if (stage === "beyond") return RGB(20, 25 + h * 3, 45 + h * 4);
+		if (stage === "turrets") return RGB(s * 0.55, s * 0.75, s * 0.45);
+		if (stage === "city") return RGB(35 + h * 2, 35 + h * 2, 42 + h * 2);
+		if (stage === "boss2") return RGB(s * 0.6, s * 0.45, s * 0.35);
+		if (stage === "sea") return RGB(20 + h * 8, 70 + h * 14, 140 + h * 12);
+		return RGB(s * 0.6, s, s * 0.5);
+	}
+
+	canyonPath = (d) => {
+		const k = clamp((d - STAGE_BY_ID.canyon.start) / 400, 0, 1);
+		return (Math.sin((d + canyonOffset) / 300) * 60 + Math.sin((d + canyonOffset) / 130) * 22) * k;
+	};
+
+	canyonHalfGap = (d) => {
+		const c = STAGE_BY_ID.canyon;
+		const k = d - c.start;
+		const funnel = 1700 - k * 0.6;
+		const tight = (1700 - 60) / 0.6;
+		const t = clamp((k - tight) / Math.max(c.len - tight, 1), 0, 1);
+		const narrow = 60 - t * 18;
+		return [Math.max(narrow, funnel), funnel > narrow];
+	};
+
+	const amount = (rng, n) => Math.floor(n + rng.NextNumber());
+
+	function towers(folder, rng, x0, z0, count, color) {
+		for (let i = 0; i < count; i++) {
+			const w = rng.NextInteger(14, 30);
+			const d = rng.NextInteger(14, 30);
+			const h = rng.NextInteger(100, 120);
+			const x = x0 + rng.NextNumber(w / 2, CHUNK - w / 2);
+			const z = z0 - rng.NextNumber(d / 2, CHUNK - d / 2);
+			const t = block(V3(w, h, d), V3(x, h / 2, z), color || TOWER, folder);
+			t.SetAttribute("Break", true);
+		}
+	}
+
+	function movingWall(folder, movers, rng, x0, z0, t) {
+		const p = block(V3(rng.NextInteger(40, 110), 45, 8), V3(x0 + rng.NextNumber(0, CHUNK), 10, z0 - rng.NextNumber(15, CHUNK - 15)), RGB(230, 120, 50), folder);
+		p.SetAttribute("Break", true);
+		movers.push({ part: p, base: p.Position, a: Vector3.yAxis.mul(22), f: (0.9 + t * 0.9) * rng.NextNumber(0.8, 1.2), ph: rng.NextNumber(0, 6.28) });
+	}
+
+	function turretTowers(folder, rng, x0, z0, count) {
+		for (let i = 0; i < count; i++) {
+			const w = rng.NextInteger(18, 26);
+			const h = rng.NextInteger(95, 115);
+			const x = x0 + rng.NextNumber(w / 2, CHUNK - w / 2);
+			const z = z0 - rng.NextNumber(w / 2, CHUNK - w / 2);
+			const t = block(V3(w, h, w), V3(x, h / 2, z), RGB(60, 35, 40), folder);
+			t.SetAttribute("Break", true);
+			const head = block(V3(w + 2, 6, w + 2), V3(x, h + 3, z), RGB(30, 20, 22), t);
+			head.CanQuery = false;
+			const eye = block(V3(6, 2.5, 1), V3(x, h + 3, z + w / 2 + 1.2), RGB(255, 40, 40), t);
+			eye.Material = "Neon";
+			eye.CanQuery = false;
+			Missiles.addTurret(t);
+		}
+	}
+
+	function cityBlocks(folder, rng, x0, z0, count, plain) {
+		const neon = [RGB(0, 220, 255), RGB(255, 60, 200), RGB(255, 210, 60)];
+		for (let i = 0; i < count; i++) {
+			const w = rng.NextInteger(28, 52), d = rng.NextInteger(28, 60), h = rng.NextInteger(160, 340);
+			const x = x0 + rng.NextNumber(w / 2, CHUNK - w / 2);
+			const z = z0 - rng.NextNumber(d / 2, CHUNK - d / 2);
+			const shade = rng.NextInteger(70, 105);
+			const b = block(V3(w, h, d), V3(x, h / 2, z), RGB(shade, shade, shade + 15), folder);
+			b.SetAttribute("Break", true);
+			b.SetAttribute("HP", 8);
+			const col = neon[rng.NextInteger(1, neon.length) - 1];
+			const n = plain || settings.low ? 0 : 3;
+			for (let j = 0; j < n; j++) {
+				const band = block(V3(w + 0.4, 2, d + 0.4), V3(x, rng.NextNumber(8, h - 6), z), col, b);
+				band.Material = "Neon";
+				band.CanQuery = false;
+				band.CastShadow = false;
+			}
+			if (!plain && h < 230 && rng.NextNumber() < 0.35) {
+				const warn = block(V3(w * 0.6, 3, d * 0.6), V3(x, h + 1.5, z), RGB(255, 40, 40), b);
+				warn.Material = "Neon";
+				warn.CanQuery = false;
+				Game.fallers.set(b, { warn });
+			}
+		}
+	}
+
+	function ships(folder, rng, x0, z0, count) {
+		const hullC = RGB(88, 94, 104), deckC = RGB(62, 66, 74), superC = RGB(122, 128, 138);
+		for (let i = 0; i < count; i++) {
+			const x = x0 + rng.NextNumber(30, CHUNK - 30);
+			const z = z0 - rng.NextNumber(0, CHUNK);
+			const L = rng.NextInteger(220, 300), W = rng.NextInteger(40, 56);
+
+			const hull = block(V3(W, 26, L), V3(x, 13, z), hullC, folder);
+			hull.SetAttribute("Floor", true);
+			const bow = Instance.new("WedgePart");
+			bow.Anchored = true;
+			bow.Size = V3(W, 26, 50);
+			bow.Color = hullC;
+			bow.CFrame = CFn(x, 13, z - L / 2 - 25);
+			bow.SetAttribute("Floor", true);
+			bow.Parent = folder;
+			const deck = block(V3(W - 4, 0.6, L - 10), V3(x, 26.3, z), deckC, hull);
+			deck.CanQuery = false;
+			const stripe = block(V3(W + 0.4, 2, L + 0.4), V3(x, 4, z), RGB(150, 40, 40), hull);
+			stripe.CanQuery = false;
+
+			const sz = z + L * 0.12;
+			const s1 = block(V3(W * 0.55, 42, 60), V3(x, 26 + 21, sz), superC, folder);
+			s1.SetAttribute("Break", true);
+			s1.SetAttribute("HP", 8);
+			const s2 = block(V3(W * 0.4, 24, 36), V3(x, 68 + 12, sz + 4), superC, folder);
+			s2.SetAttribute("Break", true);
+			s2.SetAttribute("HP", 6);
+			const win = block(V3(W * 0.4 + 0.4, 2, 36.4), V3(x, 86, sz + 4), RGB(150, 220, 255), s2);
+			win.Material = "Neon";
+			win.CanQuery = false;
+			const mast = block(V3(2.5, 40, 2.5), V3(x, 92 + 20, sz + 4), RGB(60, 60, 65), folder);
+			mast.SetAttribute("Break", true);
+			mast.SetAttribute("HP", 1);
+			const radar = block(V3(16, 6, 1), V3(x, 126, sz + 4), RGB(150, 155, 160), mast);
+			radar.CanQuery = false;
+			const beacon = block(V3(2, 2, 2), V3(x, 133, sz + 4), RGB(255, 40, 40), mast);
+			beacon.Material = "Neon";
+			beacon.CanQuery = false;
+
+			for (const gz of [z - L * 0.32, z + L * 0.38]) {
+				const base = block(V3(14, 6, 14), V3(x, 29, gz), superC, hull);
+				base.CanQuery = false;
+				for (const bx of [-2, 2]) {
+					const barrel = block(V3(1.2, 1.2, 18), V3(x + bx, 30, gz - 12), RGB(50, 50, 55), hull);
+					barrel.CanQuery = false;
+				}
+			}
+
+			if (rng.NextNumber() < 0.7) {
+				const lz = z - L * 0.15;
+				const launcher = block(V3(16, 3, 24), V3(x, 27.5, lz), RGB(45, 45, 50), s1);
+				launcher.CanQuery = false;
+				for (let k = 0; k <= 2; k++) {
+					const cell = block(V3(14, 0.4, 2), V3(x, 29.1, lz - 8 + k * 8), RGB(255, 40, 40), s1);
+					cell.Material = "Neon";
+					cell.CanQuery = false;
+				}
+				Missiles.addTurret(launcher);
+			}
+		}
+	}
+
+	function asteroids(folder, movers, rng, x0, z0, count, t) {
+		for (let i = 0; i < count; i++) {
+			const size = rng.NextInteger(10, 38);
+			const p = block(
+				V3(size, size * rng.NextNumber(0.6, 1.2), size * rng.NextNumber(0.6, 1.2)),
+				V3(x0 + rng.NextNumber(0, CHUNK), rng.NextNumber(-10, 60), z0 - rng.NextNumber(0, CHUNK)),
+				RGB(rng.NextInteger(70, 110), rng.NextInteger(60, 90), rng.NextInteger(55, 80)),
+				folder,
+			);
+			p.Material = "Slate";
+			p.CFrame = CFrame.fromPos(p.Position).mul(Ang(rng.NextNumber(0, 6), rng.NextNumber(0, 6), rng.NextNumber(0, 6)));
+			p.SetAttribute("Break", true);
+			p.SetAttribute("HP", 3);
+			if (rng.NextNumber() < 0.3) {
+				movers.push({ part: p, base: p.Position, a: Vector3.xAxis.mul(rng.NextNumber(20, 60)), f: (0.4 + t * 0.05) * rng.NextNumber(0.7, 1.3), ph: rng.NextNumber(0, 6.28) });
+			}
+		}
+	}
+
+	function glassTowers(folder, rng, x0, z0, count) {
+		for (let i = 0; i < count; i++) {
+			const w = rng.NextInteger(16, 26);
+			const h = rng.NextInteger(90, 115);
+			const x = x0 + rng.NextNumber(w / 2, CHUNK - w / 2);
+			const z = z0 - rng.NextNumber(w / 2, CHUNK - w / 2);
+			const t = block(V3(w, h, w), V3(x, h / 2, z), RGB(120, 220, 255), folder);
+			t.Material = "Glass";
+			t.Transparency = 0.35;
+			t.SetAttribute("Glass", true);
+			const cap = block(V3(w + 1, 2, w + 1), V3(x, h + 1, z), RGB(255, 60, 45), folder);
+			cap.Material = "Neon";
+			cap.CanQuery = false;
+			const core = block(V3(w * 0.3, h * 0.85, w * 0.3), V3(x, h * 0.45, z), RGB(255, 50, 35), folder);
+			core.Material = "Neon";
+			core.Transparency = 0.15;
+			core.CanQuery = false;
+			core.CastShadow = false;
+			t.Name = "Glass";
+			cap.Parent = t;
+			core.Parent = t;
+		}
+	}
+
+	function makePad(kind, x, z, parent) {
+		const m = Instance.new("Model");
+		m.SetAttribute("Kind", kind);
+		const S = 1.3;
+		let main = null;
+		function part(size, color, cf, props) {
+			const p = Instance.new("Part");
+			p.Anchored = true;
+			p.CanCollide = false;
+			p.CastShadow = false;
+			p.Size = size.mul(S);
+			p.Color = color;
+			p.CFrame = CFrame.fromPos(cf.Position.mul(S)).mul(cf.Rotation);
+			if (props) for (const k in props) p[k] = props[k];
+			p.Parent = m;
+			main = main || p;
+			return p;
+		}
+
+		if (kind === "fuel") {
+			const red = RGB(225, 55, 40), dark = RGB(110, 22, 18), cap = RGB(245, 200, 60);
+			part(V3(3.6, 4.6, 1.8), red, CFn());
+			for (const zz of [-0.92, 0.92]) {
+				for (const a of [0.62, -0.62]) {
+					part(V3(0.35, 4.2, 0.1), RGB(255, 70, 50), CFn(0, -0.1, zz).mul(Ang(0, 0, a)), { Material: "Neon" });
+				}
+			}
+			part(V3(2.2, 0.4, 0.6), dark, CFn(0.5, 3.1, 0));
+			part(V3(0.4, 0.8, 0.6), dark, CFn(-0.4, 2.7, 0));
+			part(V3(0.4, 0.8, 0.6), dark, CFn(1.4, 2.7, 0));
+			part(V3(0.9, 1.2, 0.9), cap, CFn(-1.3, 2.7, 0).mul(Ang(0, 0, 0.5)));
+		} else if (kind === "gem") {
+			const tip = Ang(rad(35.26), 0, rad(45));
+			part(Vector3.one.mul(3.6), RGB(80, 200, 255), tip, { Material: "Glass", Transparency: 0.2, Reflectance: 0.15 });
+			part(Vector3.one.mul(2), RGB(200, 245, 255), tip, { Material: "Neon", Transparency: 0.1 });
+		} else if (kind === "heart") {
+			const red = RGB(235, 30, 60);
+			for (const sx of [-0.75, 0.75]) part(Vector3.one.mul(2.3), red, CFn(sx, 0.55, 0), { Shape: "Ball", Material: "Neon" });
+			part(V3(2.5, 2.5, 1.9), red, CFn(0, -0.45, 0).mul(Ang(0, 0, rad(45))), { Material: "Neon" });
+		} else {
+			const gold = RGB(255, 190, 45);
+			part(V3(0.7, 3.8, 0.7), gold, CFn(0, -1.3, 0), { Material: "Metal" });
+			for (let i = 0; i <= 7; i++) {
+				const a = (i * Math.PI) / 4;
+				part(V3(0.7, 1.05, 0.7), gold, CFn(Math.cos(a) * 1.25, 1.9 + Math.sin(a) * 1.25, 0).mul(Ang(0, 0, a)), { Material: "Metal" });
+			}
+			part(V3(1, 0.55, 0.7), gold, CFn(0.75, -2.9, 0), { Material: "Metal" });
+			part(V3(0.8, 0.55, 0.7), gold, CFn(0.65, -2, 0), { Material: "Metal" });
+		}
+
+		if (!settings.low) {
+			const light = Instance.new("PointLight");
+			light.Color = PAD[kind][0];
+			light.Range = 22;
+			light.Brightness = 3;
+			light.Parent = main;
+			const glow = Instance.new("ParticleEmitter");
+			glow.Texture = "smoke";
+			glow.Color = new ColorSequence(PAD[kind][0]);
+			glow.LightEmission = 1;
+			glow.LightInfluence = 0;
+			glow.Size = new NumberSequence(7 * S);
+			glow.Transparency = new NumberSequence([NumberSequenceKeypoint.new(0, 1), NumberSequenceKeypoint.new(0.4, 0.65), NumberSequenceKeypoint.new(1, 1)]);
+			glow.Lifetime = new NumberRange(0.8);
+			glow.Rate = 6;
+			glow.Speed = new NumberRange(0);
+			glow.Rotation = new NumberRange(0, 360);
+			glow.LockedToPart = true;
+			glow.Parent = main;
+			if (kind !== "fuel") {
+				const sp = Instance.new("ParticleEmitter");
+				sp.Texture = "sparkles";
+				sp.Color = new ColorSequence(PAD[kind][0]);
+				sp.LightEmission = 1;
+				sp.Size = new NumberSequence(0.6, 0);
+				sp.Lifetime = new NumberRange(0.5, 0.9);
+				sp.Rate = 8;
+				sp.Speed = new NumberRange(2, 5);
+				sp.SpreadAngle = V2(180, 180);
+				sp.Parent = main;
+			}
+		}
+
+		m.WorldPivot = CFn();
+		m.PivotTo(CFn(x, ALT, z));
+		m.Parent = parent;
+		pads.set(m, { x, z, ph: Math.random() * 6 });
+	}
+	Game.makePad = makePad;
+
+	function rollKind(rng) {
+		const r = rng.NextNumber();
+		if (r < 0.0015) return "heart";
+		if (r < 0.04) return "key";
+		if (r < 0.14) return "gem";
+		return "fuel";
+	}
+
+	function placePad(pick, rng, x0, z0, kind) {
+		for (let i = 0; i < 8; i++) {
+			const x = x0 + rng.NextNumber(12, CHUNK - 12), z = z0 - rng.NextNumber(20, CHUNK - 20);
+			if (workspace.GetPartBoundsInBox(CFn(x, ALT, z), V3(20, 20, 40), params).length === 0) {
+				makePad(kind, x, z, pick);
+				return;
+			}
+		}
+	}
+
+	updatePads = (y, z) => {
+		const t = clock();
+		for (const [m, p] of pads) {
+			if (!m.Parent) pads.delete(m);
+			else if (Math.abs(p.z - z) < 1500) {
+				m.PivotTo(CFn(p.x, y + Math.sin(t * 2 + p.ph) * 0.8, p.z).mul(Ang(0, t * 1.8 + p.ph, 0)));
+			}
+		}
+	};
+
+	const key = (cx, cz) => cx + ":" + cz;
+
+	function build(cx, cz) {
+		const rng = new Random(seed + cz * 7919 + cx * 104729);
+		const folder = Instance.new("Folder");
+		const pick = Instance.new("Folder");
+		const movers = [];
+		const d0 = cz * CHUNK;
+		const z0 = -d0;
+		const x0 = cx * CHUNK;
+		const x1 = x0 + CHUNK;
+		const [stage, t] = stageFor(Math.max(d0, 0) + 1);
+		const mult = 1;
+		const safe = cz < SAFE_ROWS || (Game.safeRow != null && cz >= Game.safeRow && cz < Game.safeRow + SAFE_ROWS);
+		const playable = x1 > -SOFT && x0 < SOFT;
+
+		const tile = x0 >= -400 && x1 <= 400 && !settings.low ? 20 : 40;
+		const tiles = [];
+		if (stage === "city") {
+			const slab = block(V3(CHUNK, 2, CHUNK), V3(x0 + CHUNK / 2, 1, z0 - CHUNK / 2), RGB(34, 34, 42), folder);
+			slab.SetAttribute("Floor", true);
+			slab.CastShadow = false;
+		} else if (stage !== "beyond") {
+			for (let x = x0; x <= x1 - tile; x += tile) {
+				for (let z = 0; z <= CHUNK - tile; z += tile) {
+					const tx = x + tile / 2;
+					const d = d0 + z + tile / 2;
+					let h;
+					if (stage === "chill") h = Math.max(1, 3 + 2.5 * Math.sin(tx / 35 + d / 50) + 2.5 * Math.cos(d / 80 - tx / 60));
+					else if (stage === "boss" || stage === "boss2") h = rng.NextInteger(1, 2);
+					else if (stage === "sea") h = 1.5 + Math.sin(tx / 40 + d / 55) * 0.6 + Math.cos(d / 70 - tx / 90) * 0.5;
+					else h = rng.NextInteger(1, 10);
+					// floor tiles are merged into one mesh per chunk, they still exist for queries
+					const f = Instance.new("Part");
+					f._noMesh = true;
+					f.Anchored = true;
+					f.Size = V3(tile, h, tile);
+					f.Position = V3(tx, h / 2, z0 - z - tile / 2);
+					f.Color = floorColor(stage, h, tx, d);
+					f.SetAttribute("Floor", true);
+					f.CastShadow = false;
+					f.Parent = folder;
+					tiles.push(f);
+				}
+			}
+		}
+		if (tiles.length) mergeFloor(folder, tiles);
+
+		if (!safe) {
+			if (stage === "towers") towers(folder, rng, x0, z0, amount(rng, (1.5 + t * 4) * mult));
+			else if (stage === "moving") {
+				towers(folder, rng, x0, z0, amount(rng, (0.5 + t) * mult));
+				const n = amount(rng, (0.8 + t * 1.15) * mult);
+				for (let i = 0; i < n; i++) movingWall(folder, movers, rng, x0, z0, t);
+			} else if (stage === "canyon") {
+				const rock = RGB(150, 80, 55);
+				for (let z = 0; z <= CHUNK - 20; z += 20) {
+					const d = d0 + z + 10;
+					const c = canyonPath(d);
+					const hg = canyonHalfGap(d)[0];
+					const tint = rock.Lerp(new Color3(0, 0, 0), rng.NextNumber(0, 0.25));
+					const zc = z0 - z - 10;
+					const lx1 = Math.min(x1, c - hg);
+					if (lx1 - x0 > 1) block(V3(lx1 - x0, 130, 20), V3((x0 + lx1) / 2, 65, zc), tint, folder);
+					const rx0 = Math.max(x0, c + hg);
+					if (x1 - rx0 > 1) block(V3(x1 - rx0, 130, 20), V3((rx0 + x1) / 2, 65, zc), tint, folder);
+				}
+				if (rng.NextNumber() < 0.5) {
+					const d = d0 + rng.NextNumber(30, CHUNK - 30);
+					const x = canyonPath(d);
+					if (x >= x0 && x < x1) makePad("fuel", x + rng.NextNumber(-8, 8), -d, pick);
+				}
+			} else if (stage === "smash") {
+				towers(folder, rng, x0, z0, amount(rng, (1 + t * 2.5) * mult), RGB(35, 35, 45));
+				glassTowers(folder, rng, x0, z0, amount(rng, 0.8 - t * 0.3));
+			} else if (stage === "turrets") {
+				towers(folder, rng, x0, z0, amount(rng, (1.5 + t * 2.5) * mult));
+				turretTowers(folder, rng, x0, z0, amount(rng, 0.25 + t * 0.35));
+			} else if (stage === "city") {
+				const far = Math.abs(x0 + CHUNK / 2 - pos.X) > 900;
+				cityBlocks(folder, rng, x0, z0, far ? Math.min(1, amount(rng, 0.7)) : amount(rng, (0.6 + t * 0.8) * mult), far);
+			} else if (stage === "sea") {
+				ships(folder, rng, x0, z0, amount(rng, 0.18 + t * 0.2));
+			} else if (stage === "beyond") {
+				asteroids(folder, movers, rng, x0, z0, amount(rng, Math.min(1.5 + t / 3, 5) * mult), t);
+			}
+		}
+
+		folder.Parent = world;
+		pick.Parent = pickups;
+
+		let chance = 0.65;
+		if (safe || !playable || stage === "boss" || stage === "boss2" || stage === "smash") chance = 0;
+		if (rng.NextNumber() < chance) {
+			placePad(pick, rng, x0, z0, stage === "intro" ? "fuel" : rollKind(rng));
+			if (rng.NextNumber() < 0.25) placePad(pick, rng, x0, z0, stage === "intro" ? "fuel" : rollKind(rng));
+		}
+
+		chunks.set(key(cx, cz), { folder, pick, movers });
+		maxRow = Math.max(maxRow, cz);
+	}
+
+	function updateChunks(x, z) {
+		const row = Math.floor(-z / CHUNK);
+		const col = Math.floor(x / CHUNK);
+		const keep = new Set();
+		const view = settings.low ? Math.min(settings.view, 4) : settings.view;
+		for (let r = row - 1; r <= row + view; r++) {
+			const ahead = Math.max(0, r - row) * CHUNK;
+			const half = Math.min(400 + ahead * (settings.low ? 0.8 : 1.25), SOFT + 400);
+			for (let cx = Math.floor((x - half) / CHUNK); cx <= Math.floor((x + half) / CHUNK); cx++) {
+				const k = key(cx, r);
+				keep.add(k);
+				if (!chunks.has(k) && !queued.has(k)) queued.set(k, { key: k, cx, cz: r, prio: Math.abs(r - row) * 2 + Math.abs(cx - col) });
+			}
+		}
+		for (const [k, c] of chunks) {
+			if (!keep.has(k)) {
+				c.folder.Destroy();
+				c.pick.Destroy();
+				chunks.delete(k);
+			}
+		}
+		for (const k of [...queued.keys()]) if (!keep.has(k)) queued.delete(k);
+	}
+
+	function processQueue(budget) {
+		if (queued.size === 0) return;
+		const list = [...queued.values()].sort((a, b) => a.prio - b.prio);
+		const t0 = clock();
+		for (const q of list) {
+			if (q.prio > 4 && clock() - t0 > budget) break;
+			queued.delete(q.key);
+			build(q.cx, q.cz);
+		}
+	}
+
+	trackChunks = (x, z) => {
+		const k = key(Math.floor(x / CHUNK), Math.floor(-z / CHUNK));
+		if (k !== lastKey) {
+			lastKey = k;
+			updateChunks(x, z);
+		}
+		processQueue(0.004);
+	};
+
+	updateMovers = () => {
+		for (const c of chunks.values()) {
+			for (const m of c.movers) {
+				if (m.part.Parent) {
+					let off = m.a.mul(Math.sin(runTime * m.f + m.ph));
+					if (m.a2) off = off.add(m.a2.mul(Math.sin(runTime * m.f2 + m.ph)));
+					m.part.Position = m.base.add(off);
+				}
+			}
+		}
+	};
+
+	Game.buildChunk = (cx, cz) => {
+		if (!chunks.has(key(cx, cz))) build(cx, cz);
+	};
+
+	regenerate = (x, z) => {
+		for (const c of chunks.values()) {
+			c.folder.Destroy();
+			c.pick.Destroy();
+		}
+		chunks = new Map();
+		queued = new Map();
+		world.ClearAllChildren();
+		pickups.ClearAllChildren();
+		junk.ClearAllChildren();
+		seed = random(1, 1e6);
+		canyonOffset = Math.random() * 1000;
+		maxRow = -1;
+		lastKey = null;
+		updateChunks(x || 0, z || 0);
+		processQueue(0.05);
+	};
+})();
+
+// ------------------------------------------------------------------ side walls
+
+const walls = {};
+(() => {
+	const wallFolder = Instance.new("Folder");
+	wallFolder.Name = "Walls";
+	wallFolder.Parent = workspace;
+	for (const side of [-1, 1]) {
+		const w = Instance.new("Part");
+		w.Anchored = true;
+		w.CanCollide = false;
+		w.CanQuery = false;
+		w.CastShadow = false;
+		w.Material = "Neon";
+		w.Color = RGB(170, 220, 255);
+		w.Size = V3(2, 300, 3000);
+		w.Transparency = 1;
+		w._uniqueMat = true;
+		w.SetAttribute("Side", side);
+		w.Parent = wallFolder;
+		walls[side] = w;
+	}
+})();
+
+const BOSS_ARENA = 320;
+const bound = () => (boss || Game.boss2.active ? BOSS_ARENA : SOFT);
+const center = () => (boss || Game.boss2.active ? Game.arenaX || 0 : 0);
+
+function updateWalls(show) {
+	const b = bound();
+	for (const side of [-1, 1]) {
+		const w = walls[side];
+		if (!show) w.Transparency = 1;
+		else {
+			w.CFrame = CFn(center() + side * b, 150, pos.Z - 1200);
+			w.Transparency = b < SOFT ? 0.8 : 1;
+		}
+	}
+}
+
+// ------------------------------------------------------------------ effects
+
+function ball(at, size, color, time) {
+	const p = Instance.new("Part");
+	p.Shape = "Ball";
+	p.Anchored = true;
+	p.CanCollide = false;
+	p.CanQuery = false;
+	p.CastShadow = false;
+	p.Material = "Neon";
+	p.Color = color;
+	p.Size = Vector3.one.mul(2);
+	p.Position = at;
+	p.Parent = junk;
+	TweenService.Create(p, new TweenInfo(time, "Quint"), { Size: Vector3.one.mul(size), Transparency: 1 }).Play();
+	Debris.AddItem(p, time);
+}
+
+function sparks(at, n, size, colorFn, speed) {
+	for (let i = 0; i < n; i++) {
+		const d = Instance.new("Part");
+		d.Size = Vector3.one.mul((size * random(6, 14)) / 10);
+		d.Color = colorFn();
+		d.Material = "Neon";
+		d.CanQuery = false;
+		d.Position = at;
+		d.Parent = junk;
+		d.AssemblyLinearVelocity = V3(random(-speed, speed), random(idiv(speed, 4), speed), random(-speed, speed));
+		d.AssemblyAngularVelocity = V3(random(-10, 10), random(-10, 10), random(-10, 10));
+		Debris.AddItem(d, 8);
+	}
+}
+
+function smoke(at, n, spread, size, time) {
+	for (let i = 0; i < n; i++) {
+		const off = V3(random(-spread, spread), random(idiv(-spread, 2), spread), random(-spread, spread));
+		ball(at.add(off), random(size, size * 2), RGB(50, 50, 50), random(time * 10, time * 18) / 10);
+	}
+}
+
+function deathEffect(at) {
+	const kind = data.death;
+	if (kind === "Confetti") {
+		ball(at, 30, new Color3(1, 1, 1), 0.3);
+		sparks(at, 70, 0.8, () => Color3.fromHSV(Math.random(), 0.8, 1), 90);
+		shake = 0.5;
+		return 1;
+	} else if (kind === "Pixel") {
+		const cyan = RGB(60, 240, 255), pink = RGB(255, 60, 220);
+		ball(at, 45, cyan, 0.5);
+		sparks(at, 40, 2, () => (Math.random() < 0.5 ? cyan : pink), 70);
+		shake = 0.6;
+		return 1.2;
+	} else if (kind === "Nuke") {
+		ball(at, 200, new Color3(1, 1, 0.9), 0.9);
+		ball(at, 130, RGB(255, 120, 30), 1.6);
+		smoke(at, 10, 30, 40, 2.5);
+		sparks(at, 30, 1.5, () => RGB(255, 160, 50), 120);
+		shake = 1.6;
+		return 1.7;
+	}
+	ball(at, 70, RGB(255, 240, 180), 0.4);
+	ball(at, 50, RGB(255, 120, 30), 0.9);
+	smoke(at, 5, 12, 18, 1.5);
+	sparks(at, 20, 1, () => (Math.random() < 0.5 ? RGB(255, 140, 40) : RGB(40, 40, 40)), 80);
+	shake = 0.8;
+	return 1;
+}
+
+let shatter;
+(() => {
+	function cuts(length, min, max) {
+		const out = [];
+		let at = 0;
+		while (at < length) {
+			let s = random(Math.ceil(min * 10), Math.floor(max * 10)) / 10;
+			if (length - (at + s) < min) s = length - at;
+			out.push([at, s]);
+			at += s;
+		}
+		return out;
+	}
+
+	shatter = (target, at, mult, big, life) => {
+		mult = mult || 1;
+		const radius = BLAST_RADIUS * mult, power = BLAST_POWER * mult, core = CORE * mult;
+		const size = target.Size;
+		const origin = target.Position.sub(size.div(2));
+		const base = target.Color;
+		const mat = target.Material;
+		const trans = target.Transparency;
+		target.Destroy();
+
+		const s = big ? 2.2 : 1;
+		let count = 0;
+		for (const ly of cuts(size.Y, 4 * s, 8 * s)) {
+			for (const lx of cuts(size.X, 5 * s, 9 * s)) {
+				for (const lz of cuts(size.Z, 5 * s, 9 * s)) {
+					const c = origin.add(V3(lx[0] + lx[1] / 2, ly[0] + ly[1] / 2, lz[0] + lz[1] / 2));
+					const offset = c.sub(at);
+					const dist = offset.Magnitude;
+					if (dist > core + random(-3, 3)) {
+						const b = Instance.new("Part");
+						b.Size = V3(lx[1], ly[1], lz[1]).sub(Vector3.one.mul(0.05));
+						b.Position = c;
+						b.Color = base.Lerp(new Color3(0, 0, 0), Math.random() * 0.35);
+						b.Transparency = trans;
+						b.Material = mat;
+						b.CanQuery = false;
+						b.Parent = junk;
+						// bricks settle and vanish after a while, roblox streams them out the same way
+						Debris.AddItem(b, life ? life + Math.random() : 25 + Math.random() * 5);
+						count++;
+						const force = Math.max(0, 1 - dist / radius) * power * (0.6 + Math.random() * 0.8);
+						if (force > 0) {
+							b.AssemblyLinearVelocity = offset.add(V3(0, 4, 0)).Unit.mul(force);
+							const spin = force / 8;
+							b.AssemblyAngularVelocity = V3((Math.random() - 0.5) * spin, (Math.random() - 0.5) * spin, (Math.random() - 0.5) * spin);
+						} else {
+							b._sleep = true;
+						}
+					}
+				}
+			}
+		}
+	};
+})();
+
+// no csg in the browser: tiles near the blast sink and get scorched instead
+function crater(at) {
+	const ground = V3(at.X, 0, at.Z);
+	for (const tile of workspace.GetPartBoundsInRadius(ground, CRATER, params)) {
+		if (tile.IsA("Part") && !tile.GetAttribute("Break") && tile.Size.Y <= 12 && !tile.GetAttribute("Crater")) {
+			const p = tile.Position;
+			const d = Math.hypot(p.X - at.X, p.Z - at.Z);
+			const k = clamp(1 - d / (CRATER + 6), 0.15, 1);
+			const h = Math.max(0.2, tile.Size.Y * (1 - 0.85 * k));
+			tile.SetAttribute("Crater", true);
+			tile.Size = V3(tile.Size.X, h, tile.Size.Z);
+			tile.Position = V3(p.X, h / 2, p.Z);
+			tile.Color = tile.Color.Lerp(RGB(40, 30, 20), 0.4 + 0.3 * k);
+		}
+	}
+}
+
+// ------------------------------------------------------------------ plane skins
+
+let planeModel, planeMain, planeParts;
+let buildPlane;
+(() => {
+	const SKIN_BUILD = {};
+	SKIN_BUILD.Default = (add) => {
+		const red = RGB(230, 60, 60), white = RGB(240, 240, 240);
+		add("Part", V3(2, 2, 8), red, CFn());
+		add("Part", V3(12, 0.5, 3), white, CFn(0, 0, -0.5));
+		add("Part", V3(5, 0.4, 1.5), white, CFn(0, 0, 3.3));
+		add("Part", V3(0.4, 2, 1.5), red, CFn(0, 1.4, 3.3));
+	};
+	SKIN_BUILD.Jet = (add) => {
+		const grey = RGB(150, 155, 165), dark = RGB(60, 65, 75);
+		add("Part", V3(1.6, 1.6, 11), grey, CFn());
+		add("Part", V3(7, 0.3, 4), dark, CFn(-3.2, 0, 0.5).mul(Ang(0, -0.45, 0)));
+		add("Part", V3(7, 0.3, 4), dark, CFn(3.2, 0, 0.5).mul(Ang(0, 0.45, 0)));
+		add("Part", V3(0.3, 2.4, 2), dark, CFn(-0.8, 1.3, 4.4).mul(Ang(0, 0, 0.3)));
+		add("Part", V3(0.3, 2.4, 2), dark, CFn(0.8, 1.3, 4.4).mul(Ang(0, 0, -0.3)));
+		add("Part", V3(1.1, 0.8, 2.6), RGB(80, 200, 255), CFn(0, 0.9, -2), { Transparency: 0.3 });
+		add("Part", V3(1.2, 1.2, 0.6), RGB(255, 140, 40), CFn(0, 0, 5.7), { Material: "Neon" });
+	};
+	SKIN_BUILD.Biplane = (add) => {
+		const yellow = RGB(255, 200, 40), brown = RGB(110, 70, 40);
+		add("Part", V3(2, 2, 7), yellow, CFn());
+		add("Part", V3(13, 0.4, 2.6), yellow, CFn(0, 1.3, -0.8));
+		add("Part", V3(13, 0.4, 2.6), yellow, CFn(0, -1.1, -0.8));
+		add("Part", V3(0.3, 2.4, 0.3), brown, CFn(-4.5, 0.1, -0.8));
+		add("Part", V3(0.3, 2.4, 0.3), brown, CFn(4.5, 0.1, -0.8));
+		add("Part", V3(4.5, 0.4, 0.3), brown, CFn(0, 0, -3.7));
+		add("Part", V3(4, 0.3, 1.4), yellow, CFn(0, 0, 3));
+		add("Part", V3(0.3, 1.8, 1.4), brown, CFn(0, 1.1, 3));
+	};
+	SKIN_BUILD.Paper = (add) => {
+		const white = RGB(245, 245, 240);
+		add("Part", V3(0.3, 1.2, 9), white, CFn());
+		add("Part", V3(5, 0.15, 8), white, CFn(-2.4, 0.5, 0.3).mul(Ang(0, -0.3, 0.15)));
+		add("Part", V3(5, 0.15, 8), white, CFn(2.4, 0.5, 0.3).mul(Ang(0, 0.3, -0.15)));
+	};
+	SKIN_BUILD.UFO = (add) => {
+		add("Part", V3(1.2, 12, 12), RGB(190, 195, 205), Ang(0, 0, Math.PI / 2), { Shape: "Cylinder" });
+		add("Part", V3(5, 5, 5), RGB(80, 230, 255), CFn(0, 0.8, 0), { Shape: "Ball", Transparency: 0.3 });
+		add("Part", V3(0.3, 13, 13), RGB(80, 255, 120), CFn(0, -0.4, 0).mul(Ang(0, 0, Math.PI / 2)), { Shape: "Cylinder", Material: "Neon" });
+	};
+	SKIN_BUILD.Rocket = (add) => {
+		const white = RGB(240, 240, 240), red = RGB(220, 50, 50);
+		add("Part", V3(10, 2.4, 2.4), white, Ang(0, Math.PI / 2, 0), { Shape: "Cylinder" });
+		add("Part", V3(2.4, 2.4, 2.4), red, CFn(0, 0, -5), { Shape: "Ball" });
+		add("Part", V3(0.3, 2.5, 2), red, CFn(0, 1.8, 4));
+		add("Part", V3(0.3, 2.5, 2), red, CFn(0, -1.8, 4));
+		add("Part", V3(2.5, 0.3, 2), red, CFn(1.8, 0, 4));
+		add("Part", V3(2.5, 0.3, 2), red, CFn(-1.8, 0, 4));
+		add("Part", V3(1.5, 1.8, 1.8), RGB(255, 150, 40), CFn(0, 0, 5.6).mul(Ang(0, Math.PI / 2, 0)), { Shape: "Cylinder", Material: "Neon" });
+	};
+	SKIN_BUILD.TeamJet = (add) => {
+		const grey = RGB(150, 160, 170), dark = RGB(70, 75, 85), blue = RGB(40, 120, 255);
+		add("Part", V3(1.8, 1.8, 12), grey, CFn());
+		add("Part", V3(1.2, 1.2, 3), grey, CFn(0, 0, -7));
+		for (const side of [-1, 1]) {
+			add("Part", V3(8, 0.3, 5), dark, CFn(side * 4, 0, 1).mul(Ang(0, side * 0.5, 0)));
+			add("Part", V3(3.5, 0.25, 2.5), dark, CFn(side * 2.2, 0, 5.5).mul(Ang(0, side * 0.4, 0)));
+			add("Part", V3(0.3, 2.6, 2.4), dark, CFn(side * 0.9, 1.4, 5).mul(Ang(0, 0, -side * 0.25)));
+			add("Part", V3(0.2, 0.3, 10), blue, CFn(side * 0.95, 0.3, 0), { Material: "Neon" });
+		}
+		add("Part", V3(1.1, 0.8, 3), RGB(90, 200, 255), CFn(0, 1, -3), { Transparency: 0.3 });
+		add("Part", V3(1.3, 1.3, 0.6), RGB(255, 140, 40), CFn(0, 0, 6.3), { Material: "Neon" });
+	};
+	SKIN_BUILD.Stealth = (add) => {
+		const black = RGB(25, 25, 30), edge = RGB(170, 80, 255);
+		add("Part", V3(2.4, 1.2, 10), black, CFn());
+		for (const side of [-1, 1]) {
+			add("Part", V3(9, 0.4, 7), black, CFn(side * 4.2, 0, 1.5).mul(Ang(0, side * 0.6, 0)));
+			add("Part", V3(0.2, 0.2, 9), edge, CFn(side * 4.6, 0.25, -1).mul(Ang(0, side * 0.6, 0)), { Material: "Neon" });
+			add("Part", V3(0.3, 2, 2), black, CFn(side * 1.2, 1, 4).mul(Ang(0, 0, -side * 0.5)));
+		}
+		add("Part", V3(1, 0.6, 2.4), edge, CFn(0, 0.8, -2.5), { Material: "Neon", Transparency: 0.2 });
+		add("Part", V3(2, 0.6, 0.4), edge, CFn(0, 0, 5.2), { Material: "Neon" });
+	};
+
+	buildPlane = (id) => {
+		if (planeModel) planeModel.Destroy();
+		[planeModel, planeMain, planeParts] = Game.makePlane(id);
+	};
+
+	Game.makePlane = (id, parent) => {
+		const model = Instance.new("Model");
+		const main = Instance.new("Part");
+		main.Size = Vector3.one;
+		main.Transparency = 1;
+		main.Anchored = true;
+		main.CanCollide = false;
+		main.CanQuery = false;
+		main.CanTouch = false;
+		main.CFrame = CFn();
+		main.Parent = model;
+		const parts = [];
+		function add(cls, size, color, cf, extra) {
+			const p = Instance.new(cls);
+			p.Anchored = true;
+			if (extra) for (const k in extra) p[k] = extra[k];
+			p.Size = size;
+			p.Color = color;
+			p.CFrame = cf;
+			p.CanCollide = false;
+			p.CanQuery = false;
+			p.CanTouch = false;
+			p.Massless = true;
+			p._uniqueMat = true;
+			const w = Instance.new("WeldConstraint");
+			w.Part0 = main;
+			w.Part1 = p;
+			w.Parent = p;
+			p.Parent = model;
+			parts.push(p);
+		}
+		(SKIN_BUILD[id] || SKIN_BUILD.Default)(add);
+		if (id === "Stealth") {
+			const glow = Instance.new("PointLight");
+			glow.Range = 16;
+			glow.Brightness = 1.5;
+			glow.Color = RGB(170, 80, 255);
+			glow.Parent = main;
+		}
+		model.PrimaryPart = main;
+		model.Parent = parent || workspace;
+		return [model, main, parts];
+	};
+})();
+
+function wreck(vel) {
+	for (const p of planeParts) {
+		for (const w of p.GetChildren()) if (w.IsA("WeldConstraint")) w.Destroy();
+	}
+	for (const p of planeParts) {
+		p.Anchored = false;
+		p.CanCollide = true;
+		p.Massless = false;
+		p.LocalTransparencyModifier = 0;
+		p._sleep = false;
+		p.AssemblyLinearVelocity = V3(vel + random(-30, 30), random(30, 60), 40);
+		p.AssemblyAngularVelocity = V3(random(-20, 20), random(-20, 20), random(-20, 20));
+	}
+	planeModel.Parent = junk;
+}
+
+// ------------------------------------------------------------------ ui helpers
+
+const FONT = "Highway";
+const BLACK = new Color3(0, 0, 0);
+const WHITE = new Color3(1, 1, 1);
+const DIM = RGB(150, 150, 150);
+const GOOD = RGB(110, 255, 150);
+const BAD = RGB(255, 95, 95);
+const COIN = RGB(255, 205, 60);
+const GEM = RGB(90, 220, 255);
+const KEY = RGB(255, 140, 220);
+const T = { panel: 0.12, row: 0.5, btn: 0.45, pill: 0.35, hud: 0.5 };
+const LEFT = "left";
+const RIGHT = "right";
+
+function make(cls, props) {
+	const o = Instance.new(cls);
+	const parent = props.Parent;
+	o._batch = true;
+	for (const k in props) if (k !== "Parent") o[k] = props[k];
+	o._batch = false;
+	if (o._isGui) {
+		o.BorderSizePixel = 0;
+		if (o._apply) o._apply();
+	}
+	o.Parent = parent;
+	return o;
+}
+
+function tw(o, t, props, style, dir) {
+	const x = TweenService.Create(o, new TweenInfo(t, style || "Quint", dir || "Out"), props);
+	x.Play();
+	return x;
+}
+const tweenDone = (x) => new Promise((res) => x.Completed.Connect(res));
+
+function text(parent, str, size, position, ts, color, align) {
+	return make("TextLabel", {
+		BackgroundTransparency: 1,
+		Size: size,
+		Position: position || new UDim2(),
+		Font: FONT,
+		Text: str,
+		TextSize: ts || 20,
+		TextColor3: color || WHITE,
+		TextXAlignment: align || "center",
+		TextWrapped: true,
+		Parent: parent,
+	});
+}
+
+function button(parent, str, size, position, fn, base) {
+	base = base === undefined || base === null ? T.btn : base;
+	const b = make("TextButton", {
+		Size: size,
+		Position: position || new UDim2(),
+		BackgroundColor3: BLACK,
+		BackgroundTransparency: base,
+		AutoButtonColor: false,
+		Font: FONT,
+		Text: str,
+		TextSize: 22,
+		TextColor3: WHITE,
+		Parent: parent,
+	});
+	b.SetAttribute("Base", base);
+	const sc = make("UIScale", { Parent: b });
+	b.MouseEnter.Connect(() => {
+		sfx("hover");
+		tw(b, 0.18, { BackgroundTransparency: Math.max(0, b.GetAttribute("Base") - 0.3) });
+		tw(sc, 0.18, { Scale: 1.04 });
+	});
+	b.MouseLeave.Connect(() => {
+		tw(b, 0.25, { BackgroundTransparency: b.GetAttribute("Base") });
+		tw(sc, 0.25, { Scale: 1 });
+	});
+	b.MouseButton1Down.Connect(() => tw(sc, 0.08, { Scale: 0.95 }));
+	b.MouseButton1Up.Connect(() => tw(sc, 0.3, { Scale: 1.04 }, "Back"));
+	b.MouseButton1Click.Connect(() => {
+		sfx("click");
+		return fn(b);
+	});
+	return b;
+}
+
+let nextOrder;
+(() => {
+	let order = 0;
+	nextOrder = () => ++order;
+})();
+
+function row(parent, h, trans) {
+	return make("Frame", {
+		Size: U2(1, -10, 0, h),
+		BackgroundColor3: BLACK,
+		BackgroundTransparency: trans === undefined ? T.row : trans,
+		LayoutOrder: nextOrder(),
+		Parent: parent,
+	});
+}
+
+// ------------------------------------------------------------------ icons
+
+const Icons = {};
+(() => {
+	const GLYPH = { "●": "coin", "◆": "gem", "✦": "key" };
+	const SHADE = new ColorSequence(new Color3(1, 1, 1), RGB(160, 160, 160));
+	const DRAW = {};
+
+	DRAW.coin = (put, s) => {
+		const dark = RGB(200, 125, 15);
+		put(0.5, 0.5, 1, 1, dark, { round: true });
+		put(0.5, 0.5, 0.8, 0.8, RGB(255, 210, 70), { round: true, grad: SHADE });
+		put(0.5, 0.5, 0.4, 0.4, dark, { round: true, stroke: Math.max(1, s * 0.07) });
+		put(0.34, 0.3, 0.22, 0.09, WHITE, { round: true, rot: -40, alpha: 0.3 });
+	};
+	DRAW.gem = (put, s) => {
+		put(0.5, 0.5, 0.7, 0.7, RGB(30, 100, 220), { rot: 45 });
+		put(0.5, 0.5, 0.58, 0.58, WHITE, { rot: 45, grad: new ColorSequence(RGB(220, 252, 255), RGB(50, 150, 255)), gradRot: 45 });
+		put(0.5, 0.5, 0.24, 0.24, WHITE, { rot: 45, alpha: 0.55 });
+		put(0.39, 0.36, 0.16, 0.06, WHITE, { rot: -45, round: true, alpha: 0.1 });
+	};
+	DRAW.key = (put, s) => {
+		const c = RGB(255, 140, 220);
+		const inner = put(0.5, 0.5, 1, 1, c, { alpha: 1, rot: 0 });
+		put(0.27, 0.5, 0.3, 0.3, c, { round: true, stroke: Math.max(1, s * 0.1), parent: inner });
+		put(0.68, 0.5, 0.5, 0.13, c, { parent: inner, grad: SHADE });
+		put(0.8, 0.62, 0.08, 0.2, c, { parent: inner });
+		put(0.9, 0.64, 0.08, 0.26, c, { parent: inner });
+	};
+	DRAW.play = (put, s) => {
+		const d = put(0.27, 0.5, 0.66, 0.66, WHITE, { rot: 45 });
+		make("UIGradient", {
+			Rotation: -45,
+			Transparency: new NumberSequence([NumberSequenceKeypoint.new(0, 1), NumberSequenceKeypoint.new(0.5, 1), NumberSequenceKeypoint.new(0.505, 0), NumberSequenceKeypoint.new(1, 0)]),
+			Parent: d,
+		});
+	};
+	DRAW.gear = (put, s) => {
+		for (let i = 0; i <= 7; i++) {
+			const a = (i * Math.PI) / 4;
+			put(0.5 + Math.cos(a) * 0.38, 0.5 + Math.sin(a) * 0.38, 0.2, 0.2, WHITE, { rot: deg(a), round: 0.2 });
+		}
+		put(0.5, 0.5, 0.48, 0.48, WHITE, { round: true, stroke: Math.max(1, s * 0.14) });
+	};
+	DRAW.skull = (put, s) => {
+		const bone = RGB(235, 235, 225);
+		const dark = RGB(25, 25, 30);
+		put(0.5, 0.42, 0.8, 0.7, bone, { round: true });
+		put(0.5, 0.76, 0.5, 0.3, bone, { round: 0.25 });
+		put(0.33, 0.45, 0.22, 0.24, dark, { round: true });
+		put(0.67, 0.45, 0.22, 0.24, dark, { round: true });
+		put(0.5, 0.63, 0.1, 0.1, dark, { rot: 45 });
+		for (const x of [0.4, 0.5, 0.6]) put(x, 0.84, 0.05, 0.14, dark);
+	};
+	DRAW.flag = (put, s) => {
+		put(0.2, 0.52, 0.08, 0.92, WHITE, { round: true });
+		for (let i = 0; i <= 3; i++) for (let j = 0; j <= 2; j++) put(0.34 + i * 0.15, 0.2 + j * 0.15, 0.15, 0.15, (i + j) % 2 === 0 ? WHITE : RGB(40, 40, 45));
+	};
+	DRAW.trophy = (put, s) => {
+		const gold = RGB(255, 205, 60);
+		for (const x of [0.2, 0.8]) put(x, 0.36, 0.22, 0.26, gold, { round: true, stroke: Math.max(1, s * 0.06) });
+		put(0.5, 0.36, 0.56, 0.46, WHITE, { round: 0.3, grad: new ColorSequence(RGB(255, 230, 130), RGB(215, 145, 20)) });
+		put(0.5, 0.15, 0.64, 0.09, gold);
+		put(0.5, 0.7, 0.14, 0.2, RGB(215, 150, 25));
+		put(0.5, 0.86, 0.56, 0.12, gold, { round: 0.2 });
+		put(0.38, 0.3, 0.07, 0.2, WHITE, { round: true, alpha: 0.45 });
+	};
+	DRAW.help = (put, s) => {
+		const f = put(0.5, 0.5, 0.78, 0.78, WHITE, { round: true, stroke: Math.max(1, s * 0.1) });
+		make("TextLabel", {
+			AnchorPoint: V2(0.5, 0.5),
+			Position: US(0.5, 0.52),
+			Size: US(0.8, 0.8),
+			BackgroundTransparency: 1,
+			Font: FONT,
+			Text: "?",
+			TextSize: Math.floor(s * 0.62),
+			TextColor3: WHITE,
+			Parent: f,
+		});
+	};
+	DRAW.heart = (put, s) => {
+		const c = RGB(255, 80, 110);
+		put(0.5, 0.537, 0.5, 0.5, c, { rot: 45 });
+		put(0.323, 0.36, 0.5, 0.5, c, { round: true });
+		put(0.677, 0.36, 0.5, 0.5, c, { round: true });
+		put(0.3, 0.3, 0.14, 0.08, WHITE, { round: true, rot: -40, alpha: 0.3 });
+	};
+	DRAW.gift = (put, s) => {
+		const box = RGB(255, 95, 95), rib = RGB(255, 205, 60);
+		put(0.37, 0.2, 0.24, 0.2, rib, { round: true, rot: -30 });
+		put(0.63, 0.2, 0.24, 0.2, rib, { round: true, rot: 30 });
+		put(0.5, 0.66, 0.76, 0.52, box, { grad: SHADE });
+		put(0.5, 0.36, 0.9, 0.2, RGB(255, 125, 125));
+		put(0.5, 0.6, 0.16, 0.66, rib);
+	};
+	DRAW.bag = (put, s) => {
+		put(0.5, 0.36, 0.36, 0.4, WHITE, { round: true, stroke: Math.max(1, s * 0.07) });
+		put(0.5, 0.64, 0.74, 0.56, WHITE, { round: 0.12, grad: SHADE });
+		put(0.5, 0.56, 0.2, 0.06, RGB(60, 60, 60), { round: true, alpha: 0.4 });
+	};
+
+	Icons.make = (kind, parent, s, canvas) => {
+		const root = make(canvas ? "CanvasGroup" : "Frame", { Size: UO(s, s), BackgroundTransparency: 1, Parent: parent });
+		let z = 0;
+		function put(x, y, w, h, color, o) {
+			o = o || {};
+			z++;
+			const f = make("Frame", {
+				AnchorPoint: V2(0.5, 0.5),
+				Position: US(x, y),
+				Size: US(w, h),
+				BackgroundColor3: color,
+				BackgroundTransparency: o.alpha || 0,
+				Rotation: o.rot || 0,
+				ZIndex: z,
+				Parent: o.parent || root,
+			});
+			if (o.round) make("UICorner", { CornerRadius: UDim.new(o.round === true ? 0.5 : o.round, 0), Parent: f });
+			if (o.stroke) {
+				f.BackgroundTransparency = 1;
+				make("UIStroke", { Thickness: o.stroke, Color: color, Parent: f });
+			}
+			if (o.grad) make("UIGradient", { Color: o.grad, Rotation: o.gradRot === undefined ? 90 : o.gradRot, Parent: f });
+			return f;
+		}
+		DRAW[kind](put, s, root);
+		return root;
+	};
+
+	// a label that draws ● ◆ ✦ as real icons. set .Text like a normal label
+	Icons.text = (parent, size, position, ts, color, align) => {
+		const holder = make("Frame", { BackgroundTransparency: 1, Size: size, Position: position || new UDim2(), Parent: parent });
+		make("UIListLayout", {
+			FillDirection: "row",
+			HorizontalAlignment: align === LEFT ? "flex-start" : align === RIGHT ? "flex-end" : "center",
+			VerticalAlignment: "center",
+			SortOrder: "LayoutOrder",
+			Padding: UDim.new(0, Math.floor(ts * 0.15)),
+			Parent: holder,
+		});
+		const st = { text: "", color: color || WHITE, stroke: 1, sig: "", labels: {} };
+
+		function render(str) {
+			const segs = [];
+			let buf = [];
+			function flush() {
+				const raw = buf.join("");
+				buf = [];
+				if (/^\s\s/.test(raw) && segs.length > 0) segs.push("gap");
+				const t = raw.trim();
+				if (t !== "") segs.push(t);
+				if (/\S\s\s+$/.test(raw)) segs.push("gap");
+			}
+			for (const ch of String(str)) {
+				if (GLYPH[ch]) {
+					flush();
+					segs.push([GLYPH[ch]]);
+				} else buf.push(ch);
+			}
+			flush();
+			const sig = segs.map((sg) => (Array.isArray(sg) ? sg[0] : sg === "gap" ? "gap" : "t")).join(",");
+			if (sig !== st.sig) {
+				st.sig = sig;
+				for (const c of holder.GetChildren()) if (!c.IsA("UIListLayout")) c.Destroy();
+				st.labels = {};
+				segs.forEach((sg, i) => {
+					if (Array.isArray(sg)) Icons.make(sg[0], holder, Math.floor(ts * 0.9)).LayoutOrder = i + 1;
+					else if (sg === "gap") make("Frame", { Size: UO(Math.floor(ts * 0.5), 1), BackgroundTransparency: 1, LayoutOrder: i + 1, Parent: holder });
+					else {
+						st.labels[i] = make("TextLabel", {
+							AutomaticSize: "X",
+							Size: U2(0, 0, 1, 0),
+							BackgroundTransparency: 1,
+							Font: FONT,
+							TextSize: ts,
+							TextColor3: st.color,
+							TextStrokeTransparency: st.stroke,
+							LayoutOrder: i + 1,
+							Parent: holder,
+						});
+					}
+				});
+			}
+			for (const i in st.labels) st.labels[i].Text = segs[i];
+		}
+
+		return new Proxy({}, {
+			get(_, k) {
+				if (k === "Text") return st.text;
+				if (k === "TextColor3") return st.color;
+				if (k === "_holder") return holder;
+				const v = holder[k];
+				return typeof v === "function" ? v.bind(holder) : v;
+			},
+			set(_, k, v) {
+				if (k === "Text") {
+					if (v !== st.text) {
+						st.text = v;
+						render(v);
+					}
+				} else if (k === "TextColor3" || k === "TextStrokeTransparency") {
+					if (k === "TextColor3") st.color = v;
+					else st.stroke = v;
+					for (const i in st.labels) st.labels[i][k] = v;
+				} else holder[k] = v;
+				return true;
+			},
+		});
+	};
+})();
+
+Game.screen = guiRootInst;
+const gui = make("Frame", { Name: "Root", Size: US(1, 1), BackgroundTransparency: 1, Parent: Game.screen });
+(() => {
+	const sc = make("UIScale", { Parent: gui });
+	function fit() {
+		const s = clamp(camera.ViewportSize.Y / 760, 0.45, 1);
+		sc.Scale = s;
+		setUiScale(s);
+		gui.Size = US(1 / s, 1 / s);
+	}
+	camera.GetPropertyChangedSignal("ViewportSize").Connect(fit);
+	fit();
+})();
+
+let flash, fade;
+(() => {
+	const flashFrame = make("Frame", { Size: US(1, 1), BackgroundColor3: WHITE, BackgroundTransparency: 1, ZIndex: 50, Parent: gui });
+	const blackout = make("Frame", { Size: US(1, 1), BackgroundColor3: BLACK, BackgroundTransparency: 1, ZIndex: 60, Parent: gui });
+	flashFrame.el.style.pointerEvents = "none";
+	blackout.el.style.pointerEvents = "none";
+
+	flash = () => {
+		flashFrame.BackgroundTransparency = 0;
+		tw(flashFrame, 0.8, { BackgroundTransparency: 1 });
+	};
+
+	let fading = false;
+	fade = async (fn) => {
+		if (fading) return;
+		fading = true;
+		sfx("whoosh");
+		await tweenDone(tw(blackout, 0.25, { BackgroundTransparency: 0 }, "Quad"));
+		try {
+			await fn();
+		} catch (e) {
+			console.error(e);
+		}
+		tw(blackout, 0.5, { BackgroundTransparency: 1 }, "Quad");
+		fading = false;
+	};
+})();
+
+let notify;
+(() => {
+	const toast = make("CanvasGroup", {
+		AnchorPoint: V2(0.5, 1),
+		Position: U2(0.5, 0, 1, -40),
+		Size: UO(520, 46),
+		BackgroundColor3: BLACK,
+		BackgroundTransparency: 0.25,
+		GroupTransparency: 1,
+		ZIndex: 45,
+		Parent: gui,
+	});
+	toast.el.style.pointerEvents = "none";
+	const toastL = Icons.text(toast, US(1, 1), null, 22);
+	let toastToken = 0;
+	notify = (msg, color) => {
+		if (!msg) return;
+		toastToken++;
+		const my = toastToken;
+		toastL.Text = msg;
+		toastL.TextColor3 = color || WHITE;
+		toast.Position = U2(0.5, 0, 1, -20);
+		tw(toast, 0.35, { GroupTransparency: 0, Position: U2(0.5, 0, 1, -40) });
+		task.delay(2.5, () => {
+			if (my !== toastToken) return;
+			tw(toast, 0.4, { GroupTransparency: 1 });
+		});
+	};
+})();
+
+// no robux in the browser, so not having enough just says so
+Game.topUp = (currency, cost) => {
+	const need = cost - (data[currency] || 0);
+	if (need <= 0) return false;
+	sfx("bad");
+	notify("not enough " + currency, BAD);
+	return true;
+};
+
+let banner;
+(() => {
+	const bannerL = text(gui, "", U2(1, 0, 0, 90), U2(0, 0, 0.28, 0), 72, WHITE);
+	bannerL.TextTransparency = 1;
+	bannerL.TextStrokeTransparency = 1;
+	bannerL.ZIndex = 30;
+	bannerL.el.style.pointerEvents = "none";
+	const bannerScale = make("UIScale", { Parent: bannerL });
+	let bannerToken = 0;
+	banner = (str, color, dur) => {
+		bannerToken++;
+		const my = bannerToken;
+		bannerL.Text = str;
+		bannerL.TextColor3 = color || WHITE;
+		bannerScale.Scale = 1.35;
+		tw(bannerScale, 0.5, { Scale: 1 }, "Back");
+		tw(bannerL, 0.25, { TextTransparency: 0, TextStrokeTransparency: 0.4 });
+		task.delay(dur || 2, () => {
+			if (my !== bannerToken) return;
+			tw(bannerL, 0.5, { TextTransparency: 1, TextStrokeTransparency: 1 });
+			tw(bannerScale, 0.5, { Scale: 0.9 });
+		});
+	};
+})();
+
+function popup(str, color) {
+	const g = make("CanvasGroup", { Size: UO(600, 44), Position: U2(0.5, -300, 0.56, 0), BackgroundTransparency: 1, ZIndex: 35, Parent: gui });
+	g.el.style.pointerEvents = "none";
+	const l = Icons.text(g, US(1, 1), null, 32, color);
+	l.TextStrokeTransparency = 0.3;
+	l.Text = str;
+	const sc = make("UIScale", { Scale: 0.6, Parent: g });
+	tw(sc, 0.3, { Scale: 1 }, "Back");
+	tw(g, 1.5, { Position: U2(0.5, -300, 0.46, 0), GroupTransparency: 1 }, "Quad");
+	Debris.AddItem(g, 1.6);
+}
+
+// ------------------------------------------------------------------ wallet
+
+const wallet = make("CanvasGroup", {
+	AnchorPoint: V2(1, 0),
+	Position: U2(1, -16, 0, 16),
+	Size: UO(420, 40),
+	BackgroundTransparency: 1,
+	Parent: gui,
+});
+make("UIListLayout", { FillDirection: "row", HorizontalAlignment: "flex-end", Padding: UDim.new(0, 6), Parent: wallet });
+
+let coinL, gemL, keyL;
+(() => {
+	function pill(color) {
+		const f = make("Frame", { Size: UO(130, 40), BackgroundColor3: BLACK, BackgroundTransparency: T.pill, Parent: wallet });
+		const hit = make("TextButton", { Size: US(1, 1), BackgroundTransparency: 1, Text: "", ZIndex: 2, Parent: f });
+		hit.MouseEnter.Connect(() => tw(f, 0.15, { BackgroundTransparency: 0.1 }));
+		hit.MouseLeave.Connect(() => tw(f, 0.2, { BackgroundTransparency: T.pill }));
+		hit.MouseButton1Click.Connect(() => {
+			sfx("click");
+			Game.openShop();
+		});
+		return Icons.text(f, US(1, 1), null, 22, color);
+	}
+	coinL = pill(COIN);
+	gemL = pill(GEM);
+	keyL = pill(KEY);
+})();
+const shown = { coins: data.coins, gems: data.gems, keys: data.keys };
+
+// ------------------------------------------------------------------ hud
+
+const hud = make("Frame", { Size: US(1, 1), BackgroundTransparency: 1, Visible: false, Parent: gui });
+hud.el.style.pointerEvents = "none";
+const topBox = make("Frame", {
+	AnchorPoint: V2(0.5, 0),
+	Position: U2(0.5, 0, 0, 14),
+	Size: UO(360, 92),
+	BackgroundColor3: BLACK,
+	BackgroundTransparency: T.hud,
+	Parent: hud,
+});
+const distL = text(topBox, "", U2(1, 0, 0, 56), UO(0, 4), 54);
+const stageL = text(topBox, "", U2(1, 0, 0, 24), UO(0, 60), 20, DIM);
+const effectL = text(hud, "", UO(500, 28), U2(0.5, -250, 0, 150), 24, COIN);
+effectL.TextStrokeTransparency = 0.5;
+
+const coinBox = make("Frame", { AnchorPoint: V2(1, 0), Position: U2(1, -16, 0, 14), Size: UO(200, 50), BackgroundColor3: BLACK, BackgroundTransparency: T.hud, Parent: hud });
+const runCoinL = Icons.text(coinBox, U2(1, -20, 1, 0), UO(14, 0), 32, COIN, LEFT);
+
+const bossBar = make("Frame", {
+	AnchorPoint: V2(0.5, 0),
+	Size: UO(440, 16),
+	Position: U2(0.5, 0, 0, 116),
+	BackgroundColor3: BLACK,
+	BackgroundTransparency: 0.3,
+	Visible: false,
+	Parent: hud,
+});
+const bossFill = make("Frame", { Size: US(1, 1), BackgroundColor3: WHITE, Parent: bossBar });
+
+Game.mapBar = make("Frame", {
+	AnchorPoint: V2(0.5, 0),
+	Size: UO(440, 10),
+	Position: U2(0.5, 0, 0, 116),
+	BackgroundColor3: BLACK,
+	BackgroundTransparency: 0.4,
+	Visible: false,
+	Parent: hud,
+});
+Game.mapFill = make("Frame", { Size: US(0, 1), BackgroundColor3: WHITE, BackgroundTransparency: 0.15, Parent: Game.mapBar });
+Game.mapPct = text(Game.mapBar, "", UO(60, 20), U2(1, 8, 0.5, -10), 16, DIM, LEFT);
+
+let setVignette;
+(() => {
+	const frames = [];
+	function edge(size, position, anchor, rot) {
+		const f = make("Frame", { Size: size, Position: position, AnchorPoint: anchor, BackgroundColor3: BLACK, ZIndex: 0, Parent: gui });
+		f.el.style.pointerEvents = "none";
+		make("UIGradient", { Rotation: rot, Transparency: new NumberSequence(0, 1), Parent: f });
+		frames.push(f);
+	}
+	edge(US(1, 0.35), US(0, 0), V2(0, 0), 90);
+	edge(US(1, 0.35), US(0, 1), V2(0, 1), 270);
+	edge(US(0.3, 1), US(0, 0), V2(0, 0), 0);
+	edge(US(0.3, 1), US(1, 0), V2(1, 0), 180);
+	setVignette = (a) => {
+		for (const f of frames) {
+			f.BackgroundTransparency = 1 - a;
+			f.Visible = a > 0.01;
+		}
+	};
+	setVignette(0);
+})();
+
+let fuelFill;
+(() => {
+	const bar = make("Frame", {
+		AnchorPoint: V2(0.5, 1),
+		Position: U2(0.5, 0, 1, -34),
+		Size: UO(420, 14),
+		BackgroundColor3: BLACK,
+		BackgroundTransparency: 0.35,
+		Parent: hud,
+	});
+	fuelFill = make("Frame", { Size: US(1, 1), BackgroundColor3: WHITE, Parent: bar });
+	text(bar, "FUEL", UO(70, 24), UO(-80, -5), 22, WHITE, RIGHT);
+	Game.nitroHint = text(bar, "HOLD " + Game.keyName("nitro") + " FOR NITRO", UO(200, 24), U2(1, 12, 0, -5), 20, DIM, LEFT);
+	Game.fuelBar = bar;
+})();
+
+// ------------------------------------------------------------------ touch controls
+
+(() => {
+	const TC = Game.touch;
+	TC.on = UIS.TouchEnabled && !UIS.KeyboardEnabled;
+	const root = make("Frame", { Size: US(1, 1), BackgroundTransparency: 1, Visible: false, ZIndex: 20, Parent: gui });
+	root.el.style.pointerEvents = "none";
+	TC.ui = root;
+	const held = new Map();
+
+	function pad(size, position, label, key, onTap) {
+		const b = make("TextButton", {
+			AnchorPoint: V2(0.5, 1),
+			Position: position,
+			Size: UO(size, size),
+			BackgroundColor3: BLACK,
+			BackgroundTransparency: 0.5,
+			AutoButtonColor: false,
+			Font: FONT,
+			Text: label || "",
+			TextSize: Math.floor(size * 0.24),
+			TextColor3: WHITE,
+			ZIndex: 21,
+			Parent: root,
+		});
+		b.el.style.pointerEvents = "auto";
+		b.el.style.touchAction = "none";
+		make("UICorner", { CornerRadius: UDim.new(0.5, 0), Parent: b });
+		make("UIStroke", { Color: WHITE, Transparency: 0.7, Thickness: 2, Parent: b });
+		const sc = make("UIScale", { Parent: b });
+		const down = (id) => {
+			held.set(id, { key, b, sc });
+			if (key) TC[key] = true;
+			if (onTap) onTap();
+			tw(b, 0.08, { BackgroundTransparency: 0.15 });
+			tw(sc, 0.08, { Scale: 0.9 });
+		};
+		const up = (id) => {
+			const h = held.get(id);
+			if (!h) return;
+			held.delete(id);
+			if (h.key) {
+				let still = false;
+				for (const o of held.values()) if (o.key === h.key) still = true;
+				if (!still) TC[h.key] = false;
+			}
+			tw(h.b, 0.2, { BackgroundTransparency: 0.5 });
+			tw(h.sc, 0.25, { Scale: 1 }, "Back");
+		};
+		b.el.addEventListener("pointerdown", (e) => {
+			e.preventDefault();
+			e.stopPropagation();
+			try {
+				b.el.setPointerCapture(e.pointerId);
+			} catch (err) {}
+			down(e.pointerId);
+		});
+		for (const ev of ["pointerup", "pointercancel", "lostpointercapture"]) b.el.addEventListener(ev, (e) => up(e.pointerId));
+		return b;
+	}
+
+	const left = pad(130, U2(0, 110, 1, -40), null, "left");
+	const right = pad(130, U2(0, 256, 1, -40), null, "right");
+	for (const [b, flip] of [[left, true], [right, false]]) {
+		const ic = Icons.make("play", b, 52);
+		ic.AnchorPoint = V2(0.5, 0.5);
+		ic.Position = US(0.5, 0.5);
+		ic.Rotation = flip ? 180 : 0;
+		ic.el.style.pointerEvents = "none";
+	}
+	pad(150, U2(1, -115, 1, -40), "NITRO", "nitro");
+	TC.fireBtn = pad(120, U2(1, -270, 1, -40), "FIRE", "shoot");
+	pad(84, U2(1, -300, 1, -176), "«", null, () => Game.roll(-1));
+	pad(84, U2(1, -78, 1, -206), "»", null, () => Game.roll(1));
+
+	if (TC.on) {
+		Game.fuelBar.Position = U2(0.5, 0, 1, -10);
+		Game.nitroHint.Visible = false;
+	}
+})();
+
+// ------------------------------------------------------------------ menu
+
+const menu = make("CanvasGroup", { Size: US(1, 1), BackgroundTransparency: 1, Parent: gui });
+let titleL, bestL, rewardsBtn, animateMenu;
+const panels = {};
+let openPanel, closePanels, startRun, toMenu;
+(() => {
+	const shade = make("Frame", { Size: U2(0, 460, 1, 0), BackgroundColor3: BLACK, BackgroundTransparency: 0.45, Parent: menu });
+	make("UIGradient", {
+		Transparency: new NumberSequence([NumberSequenceKeypoint.new(0, 0), NumberSequenceKeypoint.new(0.7, 0.2), NumberSequenceKeypoint.new(1, 1)]),
+		Parent: shade,
+	});
+	titleL = text(menu, CONFIG.title, UO(700, 100), UO(56, 50), 96, WHITE, LEFT);
+	bestL = text(menu, "", UO(500, 26), UO(60, 146), 22, DIM, LEFT);
+
+	const col = make("Frame", { Position: UO(56, 200), Size: UO(320, 420), BackgroundTransparency: 1, Parent: menu });
+	make("UIListLayout", { Padding: UDim.new(0, 8), SortOrder: "LayoutOrder", Parent: col });
+
+	const menuItems = [];
+	const menuIcons = new Map();
+
+	function menuButton(str, icon, fn, base) {
+		const holder = make("Frame", { Size: UO(320, 56), BackgroundTransparency: 1, LayoutOrder: nextOrder(), Parent: col });
+		const b = button(holder, str, US(1, 1), null, fn, base);
+		b.TextXAlignment = LEFT;
+		b.TextSize = 28;
+		make("UIPadding", { PaddingLeft: UDim.new(0, 64), Parent: b });
+		const ic = Icons.make(icon, b, 30, true);
+		ic.AnchorPoint = V2(0, 0.5);
+		ic.Position = U2(0, -46, 0.5, 0);
+		menuItems.push(b);
+		menuIcons.set(b, ic);
+		b.MouseEnter.Connect(() => tw(ic, 0.25, { Rotation: icon === "gear" ? 45 : 8 }, "Back"));
+		b.MouseLeave.Connect(() => tw(ic, 0.3, { Rotation: 0 }));
+		return b;
+	}
+
+	Game.go = async (id) => {
+		if (Game.going) return;
+		Game.going = true;
+		const [ok, msg] = request("run_start", id);
+		Game.going = false;
+		if (!ok) {
+			notify(msg, BAD);
+			sfx("bad");
+			return;
+		}
+		fade(() => startRun(id));
+	};
+
+	const strip = make("ScrollingFrame", {
+		Position: UO(56 + 320 + 12, 200),
+		Size: U2(1, -(56 + 320 + 12 + 16), 0, 66),
+		BackgroundTransparency: 1,
+		ScrollingDirection: "X",
+		AutomaticCanvasSize: "X",
+		CanvasSize: new UDim2(),
+		ScrollBarThickness: 4,
+		ScrollBarImageColor3: WHITE,
+		Visible: false,
+		Parent: menu,
+	});
+	make("UIListLayout", { FillDirection: "row", Padding: UDim.new(0, 8), SortOrder: "LayoutOrder", Parent: strip });
+	// wheel scrolls it sideways, there's no horizontal wheel on most mice
+	strip.el.addEventListener("wheel", (e) => {
+		if (Math.abs(e.deltaY) > Math.abs(e.deltaX)) {
+			strip.el.scrollLeft += e.deltaY;
+			e.preventDefault();
+		}
+	}, { passive: false });
+
+	Game.rebuildStrip = (animate) => {
+		for (const c of strip.GetChildren()) if (c.IsA("GuiButton")) c.Destroy();
+		CONFIG.starts.forEach((st, idx) => {
+			const i = idx + 1;
+			const open = data.starts[st.id];
+			const prev = CONFIG.starts[idx - 1];
+			let blocked = null;
+			if (!open) {
+				if (prev && !data.starts[prev.id]) blocked = "UNLOCK " + prev.name + " FIRST";
+				else if (Math.max(data.farthest || 0, data.best) < (st.at || 0)) blocked = "FLY THERE ONCE FIRST";
+			}
+			const b = button(strip, "", UO(230, 56), null, () => {
+				if (open) {
+					if (!Game.topUp("coins", st.coins)) Game.go(st.id);
+				} else if (blocked) {
+					notify(blocked.toLowerCase(), BAD);
+					sfx("bad");
+				} else if (Game.topUp("keys", st.keys)) {
+					return;
+				} else {
+					const [ok, msg] = request("unlock_start", st.id);
+					notify(msg, ok ? GOOD : BAD);
+					sfx(ok ? "good" : "bad");
+				}
+			}, 0.35);
+			b.LayoutOrder = i;
+			text(b, "FROM " + st.name, U2(1, -20, 0, 26), UO(12, 5), 22, open ? WHITE : DIM, LEFT);
+			const cost = Icons.text(b, U2(1, -20, 0, 20), UO(12, 31), 17, open ? (data.coins >= st.coins ? COIN : DIM) : data.keys >= st.keys ? KEY : DIM, LEFT);
+			cost.Text = open ? fmt(st.coins) + " ●  FAST TRAVEL" : blocked || "UNLOCK  " + st.keys + " ✦";
+			if (blocked) cost.TextColor3 = DIM;
+			if (animate) {
+				const sc = b.FindFirstChildOfClass("UIScale");
+				sc.Scale = 0.4;
+				b.BackgroundTransparency = 1;
+				task.delay(0.035 * i, () => {
+					tw(sc, 0.4, { Scale: 1 }, "Back");
+					tw(b, 0.3, { BackgroundTransparency: 0.35 });
+				});
+			}
+		});
+	};
+
+	const playBtn = menuButton("PLAY", "play", () => {
+		if (strip.Visible) Game.go("towers");
+		else Game.openStrip();
+	}, 0.1);
+
+	Game.openStrip = () => {
+		strip.Visible = true;
+		strip.CanvasPosition = V2(0, 0);
+		playBtn.Text = "START FROM BEGINNING";
+		playBtn.TextSize = 21;
+		Game.rebuildStrip(true);
+	};
+	Game.closeStrip = () => {
+		strip.Visible = false;
+		playBtn.Text = "PLAY";
+		playBtn.TextSize = 28;
+	};
+	Game.stripOpen = () => strip.Visible;
+
+	menuButton("SHOP", "bag", () => {
+		Game.closeStrip();
+		openPanel("shop");
+	});
+	rewardsBtn = menuButton("FREE REWARDS", "gift", () => {
+		Game.closeStrip();
+		openPanel("rewards");
+	});
+	menuButton("SETTINGS", "gear", () => {
+		Game.closeStrip();
+		openPanel("settings");
+	});
+	menuButton("HOW TO PLAY", "help", () => {
+		Game.closeStrip();
+		openPanel("howto");
+	});
+
+	animateMenu = () => {
+		Game.closeStrip();
+		titleL.TextTransparency = 1;
+		titleL.Position = UO(20, 50);
+		tw(titleL, 0.7, { TextTransparency: 0, Position: UO(56, 50) });
+		menuItems.forEach((b, idx) => {
+			const i = idx + 1;
+			b.Position = UO(-70, 0);
+			b.TextTransparency = 1;
+			b.BackgroundTransparency = 1;
+			menuIcons.get(b).GroupTransparency = 1;
+			task.delay(0.15 + 0.06 * i, () => {
+				tw(b, 0.5, { Position: UO(0, 0), TextTransparency: 0, BackgroundTransparency: b.GetAttribute("Base") });
+				tw(menuIcons.get(b), 0.5, { GroupTransparency: 0 });
+			});
+		});
+	};
+})();
+
+// ------------------------------------------------------------------ panels
+
+const overlay = make("TextButton", {
+	Size: US(1, 1),
+	BackgroundColor3: BLACK,
+	BackgroundTransparency: 1,
+	AutoButtonColor: false,
+	Text: "",
+	Visible: false,
+	ZIndex: 4,
+	Parent: gui,
+});
+
+function panel(name, title) {
+	const p = make("CanvasGroup", {
+		AnchorPoint: V2(0.5, 0.5),
+		Position: U2(0.5, 0, 0.5, 30),
+		Size: UO(680, 520),
+		BackgroundColor3: BLACK,
+		BackgroundTransparency: T.panel,
+		GroupTransparency: 1,
+		Visible: false,
+		ZIndex: 5,
+		Parent: gui,
+	});
+	text(p, title, U2(1, -80, 0, 56), UO(22, 6), 40, WHITE, LEFT);
+	make("Frame", { Position: UO(22, 60), Size: U2(1, -44, 0, 1), BackgroundColor3: WHITE, BackgroundTransparency: 0.8, Parent: p });
+	button(p, "X", UO(44, 44), U2(1, -58, 0, 10), () => closePanels());
+	const body = make("ScrollingFrame", {
+		Position: UO(18, 72),
+		Size: U2(1, -36, 1, -86),
+		BackgroundTransparency: 1,
+		ScrollBarThickness: 4,
+		ScrollBarImageColor3: WHITE,
+		AutomaticCanvasSize: "Y",
+		CanvasSize: new UDim2(),
+		Parent: p,
+	});
+	make("UIListLayout", { Padding: UDim.new(0, 6), SortOrder: "LayoutOrder", Parent: body });
+	panels[name] = { frame: p, body, token: 0 };
+	return panels[name];
+}
+
+closePanels = () => {
+	let any = false;
+	for (const name in panels) {
+		const p = panels[name];
+		if (p.frame.Visible && p.frame.GroupTransparency < 1 && !p.closing) {
+			any = true;
+			p.closing = true;
+			if (p.onClose) p.onClose();
+			p.token++;
+			const my = p.token;
+			tw(p.frame, 0.25, { GroupTransparency: 1, Position: U2(0.5, 0, 0.5, 30) });
+			task.delay(0.25, () => {
+				if (p.token === my) {
+					p.frame.Visible = false;
+					p.closing = false;
+				}
+			});
+		}
+	}
+	if (any) sfx("close");
+	tw(overlay, 0.25, { BackgroundTransparency: 1 });
+	task.delay(0.25, () => {
+		let open = false;
+		for (const name in panels) {
+			const p = panels[name];
+			if (p.frame.Visible && !p.closing) open = true;
+		}
+		if (!open) overlay.Visible = false;
+	});
+};
+
+openPanel = (name) => {
+	closePanels();
+	const p = panels[name];
+	p.token++;
+	p.closing = false;
+	p.frame.Visible = true;
+	p.frame.GroupTransparency = 1;
+	p.frame.Position = U2(0.5, 0, 0.5, 30);
+	tw(p.frame, 0.4, { GroupTransparency: 0, Position: US(0.5, 0.5) });
+	overlay.Visible = true;
+	tw(overlay, 0.3, { BackgroundTransparency: 0.5 });
+	sfx("open");
+	if (p.onOpen) p.onOpen();
+};
+
+overlay.MouseButton1Click.Connect(() => closePanels());
+
+// ------------------------------------------------------------------ settings
+
+function applySettings() {
+	const view = settings.low ? Math.min(settings.view, 4) : settings.view;
+	Lighting.FogEnd = view * CHUNK + 200;
+	Lighting.FogStart = view * CHUNK * 0.45;
+	Lighting.GlobalShadows = !settings.low && curStage !== "city";
+	setLowGraphics(!!settings.low);
+	if (mode === "menu") camera.FieldOfView = settings.fov;
+}
+
+(() => {
+	let activeSlider = null;
+	UIS.InputChanged.Connect((input) => {
+		if (activeSlider && (input.UserInputType === "MouseMovement" || input.UserInputType === "Touch")) activeSlider(input.Position.X);
+	});
+	UIS.InputEnded.Connect((input) => {
+		if (input.UserInputType === "MouseButton1" || input.UserInputType === "Touch") activeSlider = null;
+	});
+	window.addEventListener("pointermove", (e) => {
+		if (activeSlider && e.pointerType !== "mouse") activeSlider(e.clientX);
+	});
+	window.addEventListener("pointerup", (e) => {
+		if (e.pointerType !== "mouse") activeSlider = null;
+	});
+
+	const settingsPanel = panel("settings", "SETTINGS");
+
+	function slider(name, min, max, step, key_, show) {
+		const r = row(settingsPanel.body, 58);
+		const l = text(r, "", U2(0.45, 0, 1, 0), UO(16, 0), 22, WHITE, LEFT);
+		const bar = make("Frame", { AnchorPoint: V2(0, 0.5), Position: U2(0.5, 0, 0.5, 0), Size: U2(0.45, 0, 0, 4), BackgroundColor3: WHITE, BackgroundTransparency: 0.8, Parent: r });
+		const fill = make("Frame", { Size: US(0, 1), BackgroundColor3: WHITE, Parent: bar });
+		const knob = make("Frame", { AnchorPoint: V2(0.5, 0.5), Size: UO(14, 22), BackgroundColor3: WHITE, Parent: bar });
+		const hit = make("TextButton", { AnchorPoint: V2(0, 0.5), Position: U2(0.5, -12, 0.5, 0), Size: U2(0.45, 24, 0, 44), BackgroundTransparency: 1, Text: "", ZIndex: 3, Parent: r });
+		hit.el.style.touchAction = "none";
+
+		let last;
+		function refresh() {
+			const v = settings[key_];
+			const a = (v - min) / (max - min);
+			tw(fill, 0.12, { Size: US(a, 1) });
+			tw(knob, 0.12, { Position: US(a, 0.5) });
+			l.Text = name + "   " + (show ? show(v) : String(v));
+		}
+		function set(x) {
+			// screen pixels -> ui units
+			const r0 = bar.el.getBoundingClientRect();
+			const a = clamp((x - r0.left) / Math.max(r0.width, 1), 0, 1);
+			let v = min + Math.floor((a * (max - min)) / step + 0.5) * step;
+			v = Math.round(v * 1000) / 1000;
+			if (v !== last) {
+				last = v;
+				sfx("hover", 1.2 + a * 0.8);
+			}
+			settings[key_] = v;
+			refresh();
+			applySettings();
+		}
+		hit.MouseEnter.Connect(() => tw(knob, 0.15, { Size: UO(18, 28) }));
+		hit.MouseLeave.Connect(() => tw(knob, 0.15, { Size: UO(14, 22) }));
+		hit.InputBegan.Connect((input) => {
+			if (input.UserInputType === "MouseButton1" || input.UserInputType === "Touch") {
+				activeSlider = set;
+				set(input.Position.X);
+			}
+		});
+		refresh();
+	}
+
+	function toggle(name, key_) {
+		const r = row(settingsPanel.body, 58);
+		text(r, name, U2(0.5, 0, 1, 0), UO(16, 0), 22, WHITE, LEFT);
+		let b;
+		function refresh() {
+			b.Text = settings[key_] ? "ON" : "OFF";
+			b.TextColor3 = settings[key_] ? GOOD : DIM;
+		}
+		b = button(r, "", UO(110, 40), U2(1, -124, 0.5, -20), () => {
+			settings[key_] = !settings[key_];
+			refresh();
+			applySettings();
+		}, 0.3);
+		refresh();
+	}
+
+	const pct = (v) => Math.floor(v * 100 + 0.5) + "%";
+	slider("VIEW DISTANCE", 3, 50, 1, "view", (v) => v * CHUNK + " studs" + (v > 15 ? "  (LAGGY)" : ""));
+	toggle("MUSIC", "music");
+	slider("MUSIC VOLUME", 0, 1, 0.05, "musicVol", pct);
+	toggle("SOUND EFFECTS", "sfx");
+	slider("SOUND EFFECT VOLUME", 0, 1, 0.05, "sfxVol", pct);
+	slider("FOV", 50, 110, 1, "fov");
+	toggle("LOW GRAPHICS (FOR SLOW DEVICES)", "low");
+	toggle("SCREEN SHAKE", "shake");
+
+	{
+		const head = row(settingsPanel.body, 40, 1);
+		text(head, "CONTROLS", U2(1, -20, 1, 0), UO(16, 4), 24, WHITE, LEFT);
+		const slots = [];
+		function refreshBinds() {
+			const b = Game.binds();
+			for (const s of slots) {
+				if (Game.rebinding && Game.rebinding.btn === s.btn) {
+					s.btn.Text = "PRESS A KEY...";
+					s.btn.TextColor3 = COIN;
+				} else {
+					s.btn.Text = Game.niceKey(b[s.action][s.i] || "");
+					s.btn.TextColor3 = WHITE;
+				}
+			}
+		}
+		for (const action of Game.BIND_ORDER) {
+			const r = row(settingsPanel.body, 52);
+			text(r, Game.BIND_NAMES[action], U2(0.4, 0, 1, 0), UO(16, 0), 20, WHITE, LEFT);
+			for (let i = 0; i < 2; i++) {
+				let btn;
+				btn = button(r, "", UO(150, 38), U2(1, -324 + i * 160, 0.5, -19), () => {
+					Game.rebinding = { action, i, btn };
+					refreshBinds();
+				}, 0.3);
+				btn.TextSize = 18;
+				slots.push({ action, i, btn });
+			}
+		}
+		const rr = row(settingsPanel.body, 56, 1);
+		button(rr, "RESET CONTROLS", UO(240, 42), U2(0.5, -120, 0.5, -21), () => {
+			for (const action in Game.BIND_DEFAULT) settings.binds[action] = [Game.BIND_DEFAULT[action][0], Game.BIND_DEFAULT[action][1]];
+			Game.rebinding = null;
+			refreshBinds();
+		});
+		UIS.InputBegan.Connect((input) => {
+			const rb = Game.rebinding;
+			if (!rb) return;
+			const t = input.UserInputType;
+			let name;
+			if (t === "Keyboard") {
+				if (input.KeyCode === "Escape") {
+					Game.rebinding = null;
+					refreshBinds();
+					return;
+				}
+				name = input.KeyCode === "Backspace" ? "" : input.KeyCode;
+			} else if (t === "MouseButton1" || t === "MouseButton2" || t === "MouseButton3") {
+				// the click that picked the slot lands here too, skip that one
+				if (clock() - (rb.at || 0) < 0.05) return;
+				name = t;
+			} else return;
+			if (name !== "") {
+				const all = Game.binds();
+				for (const a in all) for (let j = 0; j < 2; j++) if (all[a][j] === name) all[a][j] = "";
+			}
+			Game.binds()[rb.action][rb.i] = name;
+			task.defer(() => {
+				Game.rebinding = null;
+				refreshBinds();
+			});
+			sfx("good");
+		});
+		settingsPanel.onOpen = refreshBinds;
+		refreshBinds();
+	}
+
+	settingsPanel.onClose = () => {
+		Game.rebinding = null;
+		request("settings", settings);
+		Game.nitroHint.Text = "HOLD " + Game.keyName("nitro") + " FOR NITRO";
+	};
+})();
+
+// ------------------------------------------------------------------ how to play
+
+(() => {
+	const help = panel("howto", "HOW TO PLAY");
+	const PAGES = [
+		["CONTROLS", KEY, [
+			"A / D to steer left and right (change any key in Settings).",
+			"W for boost. You're invincible while boosting, so you can fly straight through dead ends. It burns a lot of fuel though.",
+			"Q / E or left / right click to do a barrel roll, a quick dash to the side.",
+			"W or SPACE for nitro.",
+			"SHIFT to shoot, once you're in the team jet after the first boss.",
+			"P to pause. From the pause menu you can also end your run early and still keep what you earned.",
+			"Crashed? Press R on the results screen to go again right away.",
+			"On mobile it's the buttons on the screen: arrows, NITRO, FIRE and the two roll buttons.",
+		]],
+		["FUEL", RGB(255, 70, 55), [
+			"Your tank drains all the time. Grab the red fuel cans to fill it up.",
+			"Empty tank means you slowly sink and crash into the ground. In space there's no air, you blow up 3 seconds later.",
+			"In the Smash stage there are no fuel cans. Ram the glass towers instead, they fill you up.",
+			"Shooting costs a tiny bit of fuel too. During boss fights your tank only drains when you shoot.",
+		]],
+		["PICKUPS", GEM, [
+			"Blue crystals give you 5 gems. Gems buy plane skins in the shop.",
+			"Gold keys give you 1 key. Keys unlock fast travel points and death effects.",
+			"Red hearts are super rare. Each one is a revive you keep for when you crash.",
+			"Coins come from flying: distance, cleared stages, bosses and everything you destroy.",
+		]],
+		["STAGES", WHITE, [
+			"Towers, Moving, Canyon and Smash, then the first boss: an airliner that shoots lasers and missiles at you.",
+			"After that you jump over to a jet and fly through Turrets, City and the second boss.",
+			"Then out over the sea: land on the carrier with the green beam, taxi to the stealth jet and launch into space.",
+			"After space it all starts over, just faster. Your distance keeps counting. How far can you get? ;)",
+		]],
+		["TIPS", COIN, [
+			"Red arrows at the edge of your screen are missiles coming at you. Once they're close they stop tracking, so dodge late.",
+			"You can shoot missiles down.",
+			"City towers with red lights on top fall over as you get close. Shoot a fallen tower 5 times and it disappears.",
+			"Click PLAY once to see the fast travel points, click it again to start from the beginning.",
+			"Crashed? If you have a revive you can keep going right where you died.",
+		]],
+	];
+	function block2(title, color, lines) {
+		const head = row(help.body, 40, 1);
+		make("Frame", { Size: UO(4, 20), Position: UO(6, 12), BackgroundColor3: color, Parent: head });
+		text(head, title, U2(1, -30, 1, 0), UO(18, 4), 24, WHITE, LEFT);
+		for (const line of lines) {
+			const r = row(help.body, 0);
+			r.AutomaticSize = "Y";
+			make("UIPadding", { PaddingTop: UDim.new(0, 10), PaddingBottom: UDim.new(0, 10), PaddingLeft: UDim.new(0, 16), PaddingRight: UDim.new(0, 16), Parent: r });
+			const l = text(r, line, US(1, 0), null, 20, RGB(215, 215, 215), LEFT);
+			l.AutomaticSize = "Y";
+			l.el.style.position = "relative";
+			l.el.style.transform = "none";
+		}
+	}
+	for (const pg of PAGES) block2(pg[0], pg[1], pg[2]);
+})();
+
+// ------------------------------------------------------------------ rewards
+
+function result(ok, msg) {
+	if (Array.isArray(ok)) [ok, msg] = ok;
+	notify(msg, ok ? GOOD : BAD);
+	sfx(ok ? "good" : "bad");
+}
+
+const rewardRefs = { play: [] };
+(() => {
+	const rewardsPanel = panel("rewards", "FREE REWARDS");
+	function header(body, str) {
+		const r = row(body, 34, 1);
+		text(r, str, US(1, 1), UO(4, 4), 18, DIM, LEFT);
+	}
+	function rewardRow(body, title, sub, fn) {
+		const r = row(body, 64);
+		text(r, title, U2(0.62, 0, 0, 30), UO(16, 6), 24, WHITE, LEFT);
+		Icons.text(r, U2(0.62, 0, 0, 22), UO(16, 36), 18, DIM, LEFT).Text = sub;
+		return button(r, "", UO(170, 44), U2(1, -184, 0.5, -22), fn, 0.3);
+	}
+	header(rewardsPanel.body, "CHESTS");
+	rewardRefs.daily = rewardRow(rewardsPanel.body, "DAILY GOLD CHEST", describe(CONFIG.daily), () => {
+		if (serverNow() - data.lastDaily >= 86400) result(request("claim_daily"));
+		else sfx("bad");
+	});
+	rewardRefs.hourly = rewardRow(rewardsPanel.body, "HOURLY SMALL CHEST", describe(CONFIG.hourly), () => {
+		if (serverNow() - data.lastHourly >= 3600) result(request("claim_hourly"));
+		else sfx("bad");
+	});
+	header(rewardsPanel.body, "GAMEPLAY REWARDS (STAY WITHOUT LEAVING)");
+	CONFIG.playRewards.forEach((r, idx) => {
+		const i = idx + 1;
+		const label = r.min < 60 ? r.min + " MIN" : idiv(r.min, 60) + "H" + (r.min % 60 > 0 ? " " + (r.min % 60) + "M" : "");
+		rewardRefs.play[idx] = rewardRow(rewardsPanel.body, label, describe(r), () => {
+			if (!claimed["p" + i] && sessionTime() >= r.min * 60) result(request("claim_play", i));
+			else sfx("bad");
+		});
+	});
+	header(rewardsPanel.body, "CODES");
+	{
+		const r = row(rewardsPanel.body, 64);
+		const box = make("TextBox", {
+			Size: U2(1, -210, 0, 44),
+			Position: UO(12, 10),
+			BackgroundColor3: BLACK,
+			BackgroundTransparency: 0.3,
+			PlaceholderText: "ENTER CODE",
+			Text: "",
+			ClearTextOnFocus: false,
+			Font: FONT,
+			TextSize: 24,
+			TextColor3: WHITE,
+			Parent: r,
+		});
+		function redeem() {
+			if (box.Text === "") return;
+			result(request("redeem", box.Text));
+			box.Text = "";
+		}
+		box.el.addEventListener("keydown", (e) => {
+			if (e.key === "Enter") redeem();
+		});
+		button(r, "REDEEM", UO(170, 44), U2(1, -184, 0.5, -22), redeem, 0.1);
+	}
+})();
+
+function setState(b, state, label) {
+	b.Text = label;
+	b.TextColor3 = state === "ready" ? GOOD : DIM;
+}
+
+function updateRewards() {
+	const now = serverNow();
+	let ready = 0;
+	let left = 86400 - (now - data.lastDaily);
+	if (left <= 0) {
+		ready++;
+		setState(rewardRefs.daily, "ready", "CLAIM");
+	} else setState(rewardRefs.daily, "wait", fmtTime(left));
+	left = 3600 - (now - data.lastHourly);
+	if (left <= 0) {
+		ready++;
+		setState(rewardRefs.hourly, "ready", "CLAIM");
+	} else setState(rewardRefs.hourly, "wait", fmtTime(left));
+	const t = sessionTime();
+	CONFIG.playRewards.forEach((r, idx) => {
+		const b = rewardRefs.play[idx];
+		if (claimed["p" + (idx + 1)]) setState(b, "done", "CLAIMED");
+		else if (t >= r.min * 60) {
+			ready++;
+			setState(b, "ready", "CLAIM");
+		} else setState(b, "wait", fmtTime(r.min * 60 - t));
+	});
+	rewardsBtn.Text = ready > 0 ? "FREE REWARDS  (" + ready + ")" : "FREE REWARDS";
+	rewardsBtn.TextColor3 = ready > 0 ? GOOD : WHITE;
+}
+
+// ------------------------------------------------------------------ shop
+
+let shopTab = "UPGRADES";
+let rebuildShop;
+(() => {
+	const shopPanel = panel("shop", "SHOP");
+	const tabButtons = {};
+	{
+		const tabs = make("Frame", { Size: U2(1, -10, 0, 46), BackgroundTransparency: 1, LayoutOrder: -1, Parent: shopPanel.body });
+		make("UIListLayout", { FillDirection: "row", Padding: UDim.new(0, 6), Parent: tabs });
+		["UPGRADES", "SKINS", "DEATH EFFECTS"].forEach((name, idx) => {
+			tabButtons[name] = button(tabs, name, U2(1 / 3, -4, 1, 0), null, () => {
+				shopTab = name;
+				rebuildShop();
+			});
+			tabButtons[name].LayoutOrder = idx + 1;
+		});
+	}
+
+	const shopItems = make("Frame", { Size: U2(1, 0, 0, 0), AutomaticSize: "Y", BackgroundTransparency: 1, LayoutOrder: 1, Parent: shopPanel.body });
+	make("UIListLayout", { Padding: UDim.new(0, 6), SortOrder: "LayoutOrder", Parent: shopItems });
+
+	function itemRow(title, sub, btnText, btnColor, fn) {
+		const r = row(shopItems, 66);
+		text(r, title, U2(0.6, 0, 0, 30), UO(16, 7), 24, WHITE, LEFT);
+		text(r, sub, U2(0.6, 0, 0, 22), UO(16, 37), 18, DIM, LEFT);
+		const b = button(r, btnText, UO(180, 44), U2(1, -194, 0.5, -22), fn, 0.3);
+		b.TextColor3 = btnColor;
+		if (/[●◆✦]/.test(btnText)) {
+			b.Text = "";
+			Icons.text(b, US(1, 1), null, 22, btnColor).Text = btnText;
+		}
+		return b;
+	}
+
+	rebuildShop = () => {
+		for (const name in tabButtons) {
+			const b = tabButtons[name];
+			const sel = name === shopTab;
+			b.SetAttribute("Base", sel ? 0.05 : 0.55);
+			b.BackgroundTransparency = sel ? 0.05 : 0.55;
+			b.TextColor3 = sel ? WHITE : DIM;
+		}
+		for (const c of shopItems.GetChildren()) if (!c.IsA("UIListLayout")) c.Destroy();
+
+		if (shopTab === "UPGRADES") {
+			for (const p of CONFIG.powers) {
+				const lvl = data.power[p.id] || 0;
+				const price = p.base * (lvl + 1) ** 2;
+				const maxed = lvl >= p.max;
+				itemRow(p.name.toUpperCase() + "   x" + (1 + 0.25 * lvl).toFixed(2), p.desc + "   " + "■".repeat(lvl) + "□".repeat(p.max - lvl),
+					maxed ? "MAX" : fmt(price) + " ●",
+					maxed ? DIM : data.coins >= price ? COIN : DIM,
+					() => {
+						if (maxed) sfx("bad");
+						else if (!Game.topUp("coins", price)) result(request("buy_power", p.id));
+					});
+			}
+			const rh = row(shopItems, 34, 1);
+			text(rh, "REVIVES: COLLECT THE RARE RED HEARTS WHILE FLYING.   YOU HAVE " + (data.revives || 0), US(1, 1), UO(4, 0), 18, DIM, LEFT);
+		} else {
+			const isSkin = shopTab === "SKINS";
+			const list = isSkin ? CONFIG.skins : CONFIG.deaths;
+			const owned = isSkin ? data.skins : data.deaths;
+			const equipped = isSkin ? data.skin : data.death;
+			const icon = isSkin ? " ◆" : " ✦", money = isSkin ? data.gems : data.keys, color = isSkin ? GEM : KEY;
+			const head = row(shopItems, 34, 1);
+			text(head, isSkin ? "SKINS ONLY CHANGE YOUR FIRST PLANE, THE JETS STAY STOCK" : "WHAT HAPPENS WHEN YOU CRASH", US(1, 1), UO(4, 0), 18, DIM, LEFT);
+			if (isSkin) {
+				Game.skinView = Game.skinView || data.skin;
+				const vr = row(shopItems, 220, 1);
+				const vp = make("ViewportFrame", {
+					Size: U2(1, -8, 1, -8),
+					Position: UO(4, 4),
+					BackgroundColor3: RGB(24, 26, 36),
+					BackgroundTransparency: 0.1,
+					Ambient: RGB(150, 150, 165),
+					LightColor: WHITE,
+					LightDirection: V3(-1, -1.5, -0.6),
+					Parent: vr,
+				});
+				const cam = Instance.new("Camera");
+				cam.FieldOfView = 35;
+				cam.CFrame = CFrame.lookAt(V3(0, 6, 24), V3(0, -0.5, 0));
+				cam.Parent = vp;
+				vp.CurrentCamera = cam;
+				const [model] = Game.makePlane(Game.skinView, vp);
+				Game.skinModel = model;
+				let shownIt = null;
+				for (const it of list) if (it.id === Game.skinView) shownIt = it;
+				const status = equipped === Game.skinView ? "EQUIPPED" : owned[Game.skinView] ? "OWNED" : shownIt ? fmt(shownIt.price) + " ◆" : "";
+				const nameL = text(vr, Game.skinView.toUpperCase(), U2(1, -40, 0, 36), UO(20, 14), 32, WHITE, LEFT);
+				nameL.ZIndex = 3;
+				const stL = Icons.text(vr, U2(1, -40, 0, 26), UO(20, 50), 20, equipped === Game.skinView ? GOOD : DIM, LEFT);
+				stL.Text = status;
+				stL.ZIndex = 3;
+			}
+			const DESC = {
+				skin: { Default: "the classic red one", Jet: "sleek, pointy, fast looking", Biplane: "old school, two wings", Paper: "folded out of homework", UFO: "not from around here", Rocket: "basically a missile with a seat" },
+				death: { Default: "a normal explosion", Confetti: "party time", Pixel: "retro blocks everywhere", Nuke: "way too much" },
+			};
+			for (const item of list) {
+				let label, c;
+				if (equipped === item.id) [label, c] = ["EQUIPPED", GOOD];
+				else if (owned[item.id]) [label, c] = ["EQUIP", WHITE];
+				else [label, c] = [fmt(item.price) + icon, money >= item.price ? color : DIM];
+				const b = itemRow(item.id.toUpperCase(), DESC[isSkin ? "skin" : "death"][item.id] || "", label, c, () => {
+					if (equipped === item.id) return;
+					if (!owned[item.id] && Game.topUp(isSkin ? "gems" : "keys", item.price)) return;
+					result(request(isSkin ? "skin" : "death", item.id));
+				});
+				if (isSkin) {
+					const r = b.Parent;
+					if (Game.skinView === item.id) make("UIStroke", { Color: WHITE, Thickness: 2, Transparency: 0.4, ApplyStrokeMode: "Border", Parent: r });
+					const pick = make("TextButton", { Size: U2(1, -210, 1, 0), BackgroundTransparency: 1, Text: "", Parent: r });
+					pick.MouseButton1Click.Connect(() => {
+						if (Game.skinView === item.id) return;
+						Game.skinView = item.id;
+						sfx("click");
+						rebuildShop();
+					});
+				}
+			}
+		}
+	};
+
+	shopPanel.onOpen = () => rebuildShop();
+	Game.openShop = () => {
+		shopTab = "UPGRADES";
+		if (Game.closeStrip) Game.closeStrip();
+		openPanel("shop");
+	};
+})();
+panels.rewards.onOpen = () => updateRewards();
+
+// ------------------------------------------------------------------ results
+
+const results = make("CanvasGroup", {
+	AnchorPoint: V2(0.5, 0.5),
+	Position: US(0.5, 0.55),
+	Size: UO(580, 560),
+	BackgroundColor3: BLACK,
+	BackgroundTransparency: T.panel,
+	GroupTransparency: 1,
+	Visible: false,
+	ZIndex: 5,
+	Parent: gui,
+});
+let showResults;
+(() => {
+	const title = text(results, "", U2(1, 0, 0, 64), UO(0, 16), 60, BAD);
+	const titleScale = make("UIScale", { Parent: title });
+	Game.resultsTitle = (str, col) => {
+		title.Text = str;
+		title.TextColor3 = col;
+		titleScale.Scale = 1.4;
+		tw(titleScale, 0.6, { Scale: 1 }, "Back");
+	};
+	const distL2 = text(results, "", U2(1, 0, 0, 90), UO(0, 82), 96, WHITE);
+	const unitL = text(results, "STUDS", U2(1, 0, 0, 22), UO(0, 168), 20, DIM);
+	const stageL2 = text(results, "", U2(1, 0, 0, 30), UO(0, 198), 26, WHITE);
+	make("Frame", { Position: UO(40, 240), Size: U2(1, -80, 0, 1), BackgroundColor3: WHITE, BackgroundTransparency: 0.8, Parent: results });
+
+	const statRows = [];
+	for (let i = 1; i <= 6; i++) {
+		const col = (i - 1) % 2;
+		const rowI = idiv(i - 1, 2);
+		const f = make("Frame", { Position: U2(col * 0.5, col === 0 ? 40 : 10, 0, 256 + rowI * 40), Size: U2(0.5, -50, 0, 36), BackgroundTransparency: 1, Parent: results });
+		const k = text(f, "", U2(0.6, 0, 1, 0), null, 20, DIM, LEFT);
+		const v = text(f, "", U2(0.4, 0, 1, 0), US(0.6, 0), 24, WHITE, RIGHT);
+		statRows.push({ frame: f, k, v, base: f.Position });
+	}
+	make("Frame", { Position: UO(40, 382), Size: U2(1, -80, 0, 1), BackgroundColor3: WHITE, BackgroundTransparency: 0.8, Parent: results });
+
+	const rewardL = Icons.text(results, U2(1, -40, 0, 36), UO(20, 394), 32, COIN);
+	const noteL = text(results, "", U2(1, -40, 0, 22), UO(20, 432), 18, DIM);
+
+	Game.retryBtn = button(results, "RETRY", UO(250, 58), U2(0, 30, 1, -80), () => Game.go("towers"), 0.1);
+	button(results, "MENU", UO(250, 58), U2(1, -280, 1, -80), () => fade(toMenu));
+
+	let token = 0;
+	function countUp(label, target, dur, fmtFn, my) {
+		task.spawn(async () => {
+			const t0 = clock();
+			let lastTick = 0;
+			while (token === my) {
+				const k = Math.min((clock() - t0) / dur, 1);
+				const e = 1 - (1 - k) ** 3;
+				label.Text = fmtFn(target * e);
+				if (clock() - lastTick > 0.05 && k < 1) {
+					lastTick = clock();
+					sfx("hover", 1.4 + e * 0.8);
+				}
+				if (k >= 1) break;
+				await task.wait();
+			}
+		});
+	}
+	function confetti(my) {
+		for (let i = 0; i < 60; i++) {
+			const c = make("Frame", {
+				AnchorPoint: V2(0.5, 0.5),
+				Position: U2(Math.random(), 0, 0, -20),
+				Size: UO(random(6, 12), random(10, 18)),
+				BackgroundColor3: Color3.fromHSV(Math.random(), 0.7, 1),
+				Rotation: random(0, 360),
+				ZIndex: 6,
+				Parent: gui,
+			});
+			const dur = random(18, 32) / 10;
+			tw(c, dur, { Position: U2(c.Position.xs + (Math.random() - 0.5) * 0.2, 0, 1, 40), Rotation: c.Rotation + random(-540, 540) }, "Quad", "In");
+			Debris.AddItem(c, dur);
+		}
+	}
+	const fmtTimeShort = (sec) => {
+		sec = Math.floor(sec);
+		return idiv(sec, 60) + ":" + String(sec % 60).padStart(2, "0");
+	};
+
+	showResults = (award, info) => {
+		token++;
+		const my = token;
+		hud.Visible = false;
+		wallet.Visible = true;
+		results.Visible = true;
+		results.GroupTransparency = 1;
+		results.Position = US(0.5, 0.6);
+		tw(results, 0.5, { GroupTransparency: 0, Position: US(0.5, 0.53) });
+
+		const record = award && info.prevBest != null && award.dist > info.prevBest && award.dist > 0;
+		title.Text = record ? "NEW RECORD" : "CRASHED";
+		title.TextColor3 = record ? COIN : BAD;
+		titleScale.Scale = 1.4;
+		tw(titleScale, 0.6, { Scale: 1 }, "Back");
+		if (record) {
+			confetti(my);
+			sfx("good", 1);
+			task.delay(0.25, () => sfx("good", 1.4));
+		}
+		stageL2.Text = "REACHED  " + info.stage;
+		unitL.Text = record ? "STUDS, YOUR BEST EVER" : "STUDS, BEST " + fmt(award ? award.best : data.best);
+
+		const st = [["TIME", fmtTimeShort(info.time)]];
+		for (const e of [["MAPS CLEARED", info.maps], ["BOSSES", info.bosses], ["DESTROYED", info.kills], ["GLASS SMASHED", info.glass], ["BONUS PADS", info.pads]]) {
+			if ((e[1] || 0) > 0) st.push([e[0], String(e[1])]);
+		}
+		statRows.forEach((r, idx) => {
+			const i = idx + 1;
+			r.frame.Visible = st[idx] !== undefined;
+			if (!st[idx]) return;
+			r.k.Text = st[idx][0];
+			r.v.Text = st[idx][1];
+			r.frame.Position = r.base.add(UO(0, 12));
+			r.k.TextTransparency = 1;
+			r.v.TextTransparency = 1;
+			task.delay(0.5 + i * 0.07, () => {
+				if (token !== my) return;
+				tw(r.frame, 0.4, { Position: r.base });
+				tw(r.k, 0.4, { TextTransparency: 0 });
+				tw(r.v, 0.4, { TextTransparency: 0 });
+			});
+		});
+
+		if (award) {
+			countUp(distL2, award.dist, 1.2, fmt, my);
+			rewardL.Text = "";
+			task.delay(1.2, () => {
+				if (token !== my) return;
+				const coins = award.coins || 0, gems = award.gems || 0, keys = award.keys || 0;
+				countUp(rewardL, 1, 0.8, (k) => {
+					const parts = ["+" + fmt(coins * k) + " ●"];
+					if (gems > 0) parts.push("+" + fmt(gems * k) + " ◆");
+					if (keys > 0) parts.push("+" + fmt(keys * k) + " ✦");
+					if ((award.revives || 0) > 0) parts.push("+" + award.revives + " REVIVE");
+					return parts.join("     ");
+				}, my);
+			});
+			noteL.Text = award.mult > 1 ? award.mult.toFixed(2).replace(/\.?0+$/, "") + "X COIN MULTIPLIER" : "";
+		} else {
+			distL2.Text = fmt(info.dist);
+			rewardL.Text = "";
+			noteL.Text = "COULDN'T SAVE THIS RUN";
+		}
+	};
+})();
+
+// ------------------------------------------------------------------ revive (only with revives you collected)
+
+(() => {
+	const ORDER = ["towers", "moving", "canyon", "smash", "boss", "turrets", "city", "boss2", "sea", "beyond"];
+	Game.STAGE_ORDER = ORDER;
+	const WAIT = 6;
+	const box = make("CanvasGroup", {
+		AnchorPoint: V2(0.5, 0.5),
+		Position: US(0.5, 0.5),
+		Size: UO(500, 260),
+		BackgroundColor3: BLACK,
+		BackgroundTransparency: T.panel,
+		GroupTransparency: 1,
+		Visible: false,
+		ZIndex: 6,
+		Parent: gui,
+	});
+	text(box, "REVIVE?", U2(1, 0, 0, 60), UO(0, 16), 58, WHITE);
+	const subL = text(box, "", U2(1, -40, 0, 24), UO(20, 80), 20, DIM);
+	const barBg = make("Frame", { Position: UO(40, 120), Size: U2(1, -80, 0, 6), BackgroundColor3: WHITE, BackgroundTransparency: 0.85, Parent: box });
+	const bar = make("Frame", { Size: US(1, 1), BackgroundColor3: GOOD, Parent: barBg });
+	let cur = null;
+
+	const use = button(box, "", UO(270, 64), U2(0, 24, 1, -88), async () => {
+		if (!cur || cur.waiting || cur.done || (data.revives || 0) < 1) return;
+		cur.waiting = clock();
+		const [ok, msg] = request("use_revive");
+		if (ok) {
+			cur.done = true;
+			cur.revived = true;
+		} else {
+			cur.waiting = null;
+			notify(msg, BAD);
+		}
+	}, 0.05);
+	use.TextColor3 = RGB(255, 90, 110);
+	use.TextSize = 24;
+	make("UIPadding", { PaddingLeft: UDim.new(0, 40), Parent: use });
+	const useIcon = Icons.make("heart", use, 30);
+	useIcon.AnchorPoint = V2(0, 0.5);
+	useIcon.Position = U2(0, -26, 0.5, 0);
+	button(box, "NO THANKS", UO(170, 64), U2(1, -194, 1, -88), () => {
+		if (cur && !cur.waiting) cur.done = true;
+	});
+
+	Game.offerRevive = async (my) => {
+		const owned = data.revives || 0;
+		if (owned < 1) return false;
+		const c = { left: WAIT };
+		cur = c;
+		use.Text = "USE A REVIVE (" + owned + ")";
+		subL.Text = "KEEP GOING RIGHT WHERE YOU CRASHED";
+		box.Visible = true;
+		box.GroupTransparency = 1;
+		box.Position = US(0.5, 0.56);
+		tw(box, 0.4, { GroupTransparency: 0, Position: US(0.5, 0.5) });
+		sfx("open");
+		while (!c.done && runId === my) {
+			const dt = await task.wait();
+			if (!c.waiting) {
+				c.left -= dt;
+				if (c.left <= 0) c.done = true;
+			}
+			bar.Size = US(Math.max(c.left, 0) / WAIT, 1);
+		}
+		cur = null;
+		tw(box, 0.25, { GroupTransparency: 1 });
+		task.delay(0.25, () => {
+			if (!cur) box.Visible = false;
+		});
+		return c.revived === true && runId === my;
+	};
+})();
+
+// ------------------------------------------------------------------ refresh
+
+refreshUI = () => {
+	bestL.Text = "BEST  " + fmt(data.best);
+	if (saveState === false) {
+		bestL.Text += "     PROGRESS ISN'T SAVING (BROWSER STORAGE IS BLOCKED)";
+		bestL.TextColor3 = BAD;
+	} else bestL.TextColor3 = DIM;
+	if (panels.shop.frame.Visible) rebuildShop();
+	if (Game.stripOpen()) Game.rebuildStrip();
+	updateRewards();
+};
+
+// ------------------------------------------------------------------ boss
+
+let startBoss, updateBoss, resetSky;
+(() => {
+	const HOLD = 12;
+	const MISSILE_TIME = 16;
+	const FIRE = 0.35;
+	const HULL = RGB(242, 244, 248);
+	const BELLY = RGB(175, 180, 190);
+	const LIVERY = RGB(25, 45, 120);
+	const DARK = RGB(20, 25, 35);
+	const ALONG = Ang(0, Math.PI / 2, 0);
+	const skyObj = Lighting._sky;
+	const bloom = Lighting._bloom;
+	const sky = {
+		clock: Lighting.ClockTime,
+		fog: RGB(190, 205, 225),
+		outdoor: Lighting.OutdoorAmbient,
+		exposure: Lighting.ExposureCompensation,
+		lat: Lighting.GeographicLatitude,
+		moonSize: skyObj.MoonAngularSize,
+		stars: skyObj.StarCount,
+	};
+	Game.sky = sky;
+	Game.mood = (clk, fog, dur, outdoor, exposure) => {
+		TweenService.Create(Lighting, new TweenInfo(dur || 3), {
+			ClockTime: clk,
+			FogColor: fog,
+			OutdoorAmbient: outdoor || sky.outdoor,
+			ExposureCompensation: exposure === undefined ? sky.exposure : exposure,
+		}).Play();
+	};
+	Game.space = () => {
+		Game.mood(0, RGB(8, 8, 18), 3, RGB(185, 185, 215), 0.75);
+		skyObj.StarCount = 6000;
+		TweenService.Create(bloom, new TweenInfo(3), { Intensity: settings.low ? 0 : 0.35 }).Play();
+		workspace.Gravity = 0;
+	};
+	Game.daySky = (dur) => {
+		TweenService.Create(Lighting, new TweenInfo(dur), { ClockTime: sky.clock, FogColor: sky.fog, OutdoorAmbient: sky.outdoor, ExposureCompensation: sky.exposure }).Play();
+		TweenService.Create(bloom, new TweenInfo(dur), { Intensity: 0 }).Play();
+		skyObj.StarCount = sky.stars;
+		workspace.Gravity = Game.gravity;
+	};
+	// the moon hangs straight ahead, a bit up, right behind the airliner
+	const MOON_DIR = V3(0, 0.26, -1).Unit;
+
+	resetSky = () => {
+		Lighting.ClockTime = sky.clock;
+		Lighting.FogColor = sky.fog;
+		Lighting.OutdoorAmbient = sky.outdoor;
+		Lighting.ExposureCompensation = sky.exposure;
+		Lighting.GeographicLatitude = sky.lat;
+		Lighting._moonDir = null;
+		skyObj.MoonAngularSize = sky.moonSize;
+		skyObj.StarCount = sky.stars;
+		bloom.Intensity = 0;
+		workspace.Gravity = Game.gravity;
+		Lighting.GlobalShadows = !settings.low;
+	};
+
+	function part(model, size, color, cf, props) {
+		const p = Instance.new("Part");
+		if (props) for (const k in props) p[k] = props[k];
+		p.Anchored = true;
+		p.CanCollide = false;
+		p.CanQuery = false;
+		p.Size = size;
+		p.Color = color;
+		p.CFrame = cf;
+		p.Parent = model;
+		return p;
+	}
+	function ellipsoid(model, size, color, cf) {
+		const p = part(model, size, color, cf);
+		p.makeEllipsoid();
+		return p;
+	}
+	function contrail(p, color, width, life) {
+		const t = Instance.new("Trail");
+		t.Width = width;
+		t.Lifetime = life;
+		t.Color = new ColorSequence(color);
+		t.Transparency = new NumberSequence([NumberSequenceKeypoint.new(0, 0.2), NumberSequenceKeypoint.new(1, 1)]);
+		t.LightEmission = 0.5;
+		t.Parent = p;
+	}
+
+	function airliner() {
+		const m = Instance.new("Model");
+		const cyl = { Shape: "Cylinder" };
+		const body = part(m, V3(96, 14, 14), HULL, ALONG, cyl);
+		part(m, V3(90, 12.6, 12.6), BELLY, CFn(0, -1.3, 0).mul(ALONG), cyl);
+		ellipsoid(m, V3(14, 14, 30), HULL, CFn(0, 0, -48));
+		ellipsoid(m, V3(11, 11, 36), HULL, CFn(0, 1.5, 50));
+		part(m, V3(6, 1.4, 3), DARK, CFn(0, 4.4, -57).mul(Ang(0.5, 0, 0)));
+		for (const side of [-1, 1]) {
+			for (let i = 0; i <= 17; i++) part(m, V3(0.3, 1.2, 1.2), DARK, CFn(side * 7, 2.2, -38 + i * 4.5));
+			part(m, V3(0.3, 1, 92), LIVERY, CFn(side * 7, 0.2, 0));
+			part(m, V3(72, 2, 18), HULL, CFn(side * 40, -4, 8).mul(Ang(0, -side * 0.4, 0)));
+			const tip = part(m, V3(1, 8, 5), LIVERY, CFn(side * 75, 0, 22).mul(Ang(0, 0, side * 0.3)));
+			contrail(tip, new Color3(1, 1, 1), 1, 0.8);
+			part(m, V3(26, 1.2, 9), HULL, CFn(side * 15, 2, 56).mul(Ang(0, -side * 0.45, 0)));
+		}
+		part(m, V3(1.6, 24, 14), LIVERY, CFn(0, 15, 54).mul(Ang(0.45, 0, 0)));
+		const beacon = part(m, Vector3.one.mul(2), RGB(255, 30, 30), CFn(0, -8, 0), { Shape: "Ball", Material: "Neon", _uniqueMat: true });
+		const engines = [];
+		for (const x of [-46, -24, 24, 46]) {
+			const wz = -6 + (Math.abs(x) - 7) * 0.424;
+			const ez = wz - 4;
+			part(m, V3(1.5, 5, 8), BELLY, CFn(x, -6.5, wz - 1));
+			part(m, V3(16, 7.5, 7.5), RGB(215, 218, 225), CFn(x, -10, ez).mul(ALONG), cyl);
+			part(m, V3(0.4, 6.4, 6.4), DARK, CFn(x, -10, ez - 8.1).mul(ALONG), cyl);
+			const glow = part(m, V3(0.5, 5.5, 5.5), RGB(255, 120, 40), CFn(x, -10, ez + 8.2).mul(ALONG), { Shape: "Cylinder", Material: "Neon", _uniqueMat: true });
+			contrail(glow, RGB(255, 230, 210), 3, 1.6);
+			const light = Instance.new("PointLight");
+			light.Color = RGB(255, 120, 40);
+			light.Range = 30;
+			light.Brightness = 3;
+			light.Parent = glow;
+			engines.push({ rear: V3(x, -10, ez + 9), glow, light });
+		}
+		m.WorldPivot = CFn();
+		m.Parent = junk;
+		return [m, body, engines, beacon];
+	}
+
+	function beamPart(color, trans) {
+		const p = Instance.new("Part");
+		p.Anchored = true;
+		p.CanCollide = false;
+		p.CanQuery = false;
+		p.CastShadow = false;
+		p.Material = "Neon";
+		p._uniqueMat = true;
+		p.Color = color;
+		p.Transparency = trans;
+		p.Parent = junk;
+		return p;
+	}
+	function place(p, e, pt, w) {
+		p.Size = V3(w, w, pt.sub(e).Magnitude);
+		p.CFrame = CFrame.lookAt(e.add(pt).div(2), pt);
+	}
+
+	function aim(bm, cf) {
+		const e = cf.mul(bm.from);
+		const q = V3(bm.x, pos.Y, pos.Z);
+		const pt = q.add(q.sub(e).Unit.mul(160));
+		if (bm.live) {
+			const w = 4 * (1 + Math.sin(clock() * 50) * 0.12);
+			place(bm.core, e, pt, w);
+			place(bm.glow, e, pt, w * 2.6);
+			bm.sparkT = (bm.sparkT || 0) + 1;
+			if (bm.sparkT % 4 === 0) {
+				const sp = Instance.new("Part");
+				sp.Size = Vector3.one.mul(random(6, 14) / 10);
+				sp.Material = "Neon";
+				sp.Color = RGB(255, 200, 150);
+				sp.CanQuery = false;
+				sp.CanCollide = false;
+				sp.Position = pt;
+				sp.AssemblyLinearVelocity = V3(random(-40, 40), random(20, 60), random(-40, 40));
+				sp.Parent = junk;
+				Debris.AddItem(sp, 0.8);
+			}
+		} else {
+			const k = bm.t / bm.warn;
+			place(bm.glow, e, pt, 0.4 + k * 0.8);
+			bm.glow.Transparency = Math.floor(clock() * (6 + k * 20)) % 2 === 0 ? 0.2 : 0.7;
+		}
+	}
+
+	function shoot(x, warn) {
+		const b = boss;
+		const e = b.engines[random(1, b.engines.length) - 1];
+		const bm = { glow: beamPart(RGB(255, 50, 50), 0.4), from: e.rear, x, t: 0, warn: warn || 0.75, engine: e };
+		b.beams.push(bm);
+		e.glow.Color = RGB(255, 30, 30);
+		e.light.Color = RGB(255, 30, 30);
+		e.light.Brightness = 8;
+		task.delay(bm.warn + FIRE, () => {
+			e.glow.Color = RGB(255, 120, 40);
+			e.light.Color = RGB(255, 120, 40);
+			e.light.Brightness = 3;
+		});
+	}
+
+	function lead(warn) {
+		const x = pos.X + vx * (warn + 0.1);
+		const c = Game.arenaX || 0, b = 312;
+		return clamp(x, c - b, c + b);
+	}
+
+	function volley() {
+		const b = boss;
+		const t = b.t;
+		b.volleys++;
+		if (t > 10 && b.volleys % 6 === 0) {
+			const mid = lead(1.2);
+			const gap = mid + random(-40, 40);
+			for (let x = mid - 220; x <= mid + 220; x += 26) if (Math.abs(x - gap) > 26) shoot(x, 1.2);
+			sfx("whoosh", 0.8);
+			return;
+		}
+		const moving = Math.abs(vx) > 15;
+		if (moving) {
+			shoot(lead(0.75));
+			if (t > 4) shoot(pos.X);
+		} else {
+			shoot(pos.X);
+			if (t > 8 && Math.random() < 0.5) shoot(pos.X + (Math.random() < 0.5 ? -1 : 1) * random(22, 34));
+		}
+		sfx("whoosh", 1.6);
+	}
+
+	function boom() {
+		const b = boss;
+		boss = null;
+		bossDone = true;
+		stats.bosses++;
+		bossBar.Visible = false;
+		const at = b.p;
+		flash();
+		sfx("crash", 0.3);
+		sfx("crash", 0.5);
+		ball(at, 320, new Color3(1, 1, 0.9), 1.2);
+		ball(at, 220, RGB(255, 120, 30), 2);
+		ball(at.add(V3(0, 60, 0)), 160, RGB(255, 80, 20), 2.4);
+		smoke(at, 18, 70, 55, 3.5);
+		sparks(at, 60, 3, () => RGB(255, 150, 40), 170);
+		for (const p of b.model.GetChildren()) {
+			if (p.IsA("BasePart")) {
+				p.Anchored = false;
+				p.CanCollide = true;
+				p.AssemblyLinearVelocity = b.look.mul(120).add(V3(random(-80, 80), random(20, 120), random(-80, 80)));
+				p.AssemblyAngularVelocity = V3(random(-6, 6), random(-6, 6), random(-6, 6));
+			}
+		}
+		Debris.AddItem(b.model, 12);
+		for (const band of b.bands) band.Destroy();
+		shatter(b.building, at, 2.5, true, 12);
+		shake = 0.9;
+		buff.immortal = Math.max(buff.immortal, 3);
+		for (const r of b.rings) tw(r, 2, { Transparency: 1 });
+		Debris.AddItem(b.halo, 2.2);
+		task.delay(3, () => {
+			if (boss || !bossDone) return;
+			TweenService.Create(Lighting, new TweenInfo(4), { ClockTime: sky.clock, FogColor: sky.fog, OutdoorAmbient: sky.outdoor, ExposureCompensation: sky.exposure }).Play();
+			TweenService.Create(skyObj, new TweenInfo(4), { MoonAngularSize: sky.moonSize }).Play();
+			TweenService.Create(bloom, new TweenInfo(4), { Intensity: 0 }).Play();
+			task.delay(4, () => {
+				if (bossDone) {
+					Lighting.GeographicLatitude = sky.lat;
+					Lighting._moonDir = null;
+				}
+			});
+		});
+		banner("BOSS DOWN", COIN, 3);
+		popup("+" + CONFIG.bossBonus + " ●", COIN);
+		const my = runId;
+		task.delay(2.8, () => {
+			if (runId === my && !dead) Game.flow.startTransfer();
+		});
+	}
+
+	function finale() {
+		const b = boss;
+		b.finale = true;
+		b.ft = 0;
+		for (const bm of b.beams) {
+			bm.glow.Destroy();
+			if (bm.core) bm.core.Destroy();
+		}
+		b.beams = [];
+		Missiles.clear();
+		for (const e of b.engines) e.glow.Color = RGB(40, 40, 40);
+		smoke(b.p, 3, 10, 10, 1);
+		const bx = pos.X + 150, bz = pos.Z - 1100;
+		const bld = Instance.new("Part");
+		bld.Anchored = true;
+		bld.CanQuery = false;
+		bld.Size = V3(80, 280, 80);
+		bld.Color = RGB(40, 50, 65);
+		bld.Position = V3(bx, 140, bz);
+		bld.Parent = junk;
+		b.building = bld;
+		b.bands = [];
+		for (let y = 20; y <= 260; y += 20) {
+			const band = Instance.new("Part");
+			band.Anchored = true;
+			band.CanCollide = false;
+			band.CanQuery = false;
+			band.Material = "Neon";
+			band.Color = RGB(150, 210, 255);
+			band.Transparency = 0.3;
+			band.Size = V3(80.6, 1.5, 80.6);
+			band.Position = V3(bx, y, bz);
+			band.Parent = junk;
+			b.bands.push(band);
+		}
+	}
+
+	// soft glow rings around the moon
+	function makeHalo() {
+		const anchor = Instance.new("Part");
+		anchor.Anchored = true;
+		anchor.CanCollide = false;
+		anchor.CanQuery = false;
+		anchor.Transparency = 1;
+		anchor.Size = Vector3.one;
+		anchor.Parent = junk;
+		const rings = [];
+		[0.94, 0.9, 0.85, 0.78].forEach((t, idx) => {
+			const g = Instance.new("Glow");
+			g.Size = 1400 * (1 - idx * 0.22);
+			g.Color = RGB(190, 210, 255);
+			g.Transparency = 1;
+			g.Parent = anchor;
+			tw(g, 3, { Transparency: t });
+			rings.push(g);
+		});
+		return [anchor, rings];
+	}
+
+	function launch(side, k) {
+		Missiles.fire(boss.cf.mul(V3(side * 30, -12, 10)), 170 + k * 50);
+	}
+
+	const bez = (a, c, d, t) => a.Lerp(c, t).Lerp(c.Lerp(d, t), t);
+
+	Game.skipBoss = () => {
+		if (!boss) return;
+		if (!boss.finale) finale();
+		boom();
+	};
+
+	startBoss = () => {
+		if (boss || bossDone) return;
+		flash();
+		pos = V3(0, ALT, pos.Z);
+		vx = 0;
+		Game.arenaX = 0;
+		banner("5  BOSS", BAD, 2.5);
+		fuel = FUEL.max;
+		sfx("crash", 0.25);
+		sfx("whoosh", 0.3);
+		Lighting.ClockTime = sky.clock;
+		Lighting._moonDir = MOON_DIR;
+		TweenService.Create(Lighting, new TweenInfo(3), { ClockTime: 0, FogColor: RGB(15, 20, 40), OutdoorAmbient: RGB(45, 50, 85), ExposureCompensation: -0.6 }).Play();
+		TweenService.Create(skyObj, new TweenInfo(3), { MoonAngularSize: 32 }).Play();
+		skyObj.StarCount = 5000;
+		TweenService.Create(bloom, new TweenInfo(3), { Intensity: 0.5 }).Play();
+		const [m, body, engines, beacon] = airliner();
+		const [halo, rings] = makeHalo();
+		const start0 = V3(-450, 120, pos.Z + 260);
+		boss = { model: m, body, engines, beacon, t: 0, p: start0, x: 0, look: V3(0.6, -0.2, -1).Unit, roll: 0, beams: [], nextShot: 5, volleys: 0, finale: false };
+		m.PivotTo(CFrame.lookAt(start0, start0.add(boss.look)));
+		bossFill.Size = US(0, 1);
+		boss.halo = halo;
+		boss.rings = rings;
+		bossBar.Visible = true;
+	};
+
+	updateBoss = (dt) => {
+		const b = boss;
+		b.t += dt;
+		const t = b.t;
+		const prev = b.p;
+		if (b.finale) {
+			b.ft += dt;
+			const target = b.building.Position.sub(V3(0, 50, 0));
+			b.p = b.p.add(target.sub(b.p).Unit.mul((speedNow + 150 + b.ft * 220) * dt));
+			if (b.p.sub(target).Magnitude < 60) {
+				boom();
+				return;
+			}
+		} else if (t < 4.5) {
+			const k = t / 4.5;
+			const e = 1 - (1 - k) ** 2;
+			const rel = bez(V3(-450, 140, 260), V3(-60, 90, -60), V3(0, 105, -260), e);
+			b.x = pos.X + rel.X;
+			b.p = V3(b.x, rel.Y, pos.Z + rel.Z);
+			if (Math.abs(rel.Z) < 80) shake = Math.max(shake, 0.5);
+		} else {
+			b.x += (pos.X + Math.sin(t * 0.5) * 70 - b.x) * Math.min(1, dt * 1.5);
+			b.p = V3(b.x, 105 + Math.sin(t * 1.3) * 3, pos.Z - 260 + Math.sin(t * 0.7) * 25);
+		}
+		const vel = b.p.sub(prev).div(Math.max(dt, 1e-3));
+		if (vel.Magnitude > 1) b.look = b.look.Lerp(vel.Unit, Math.min(1, dt * 4)).Unit;
+		const rollT = clamp(-b.look.X * 1.2, -0.7, 0.7);
+		b.roll += (rollT - b.roll) * Math.min(1, dt * 3);
+		const cf = CFrame.lookAt(b.p, b.p.add(b.look)).mul(Ang(0, 0, b.roll));
+		b.model.PivotTo(cf);
+		b.cf = cf;
+		b.beacon.Transparency = Math.floor(clock() * 2) % 2 === 0 ? 0 : 1;
+		b.halo.Position = camera.CFrame.Position.add(Lighting.GetMoonDirection().mul(2000));
+
+		if (b.finale) return;
+
+		const laserEnd = HOLD + 4.5;
+		const missileEnd = laserEnd + MISSILE_TIME;
+		if (t < laserEnd) {
+			if (t >= b.nextShot) {
+				volley();
+				b.nextShot = t + (t < 8 ? 1.2 : 0.95);
+			}
+		} else if (t < missileEnd) {
+			if (!b.phase2) {
+				b.phase2 = true;
+				b.nextMissile = t + 1.5;
+				shake = Math.max(shake, 0.4);
+				sfx("crash", 0.5);
+				for (const e of b.engines) e.glow.Color = RGB(255, 200, 80);
+			}
+			if (t >= b.nextMissile) {
+				const k = (t - laserEnd) / MISSILE_TIME;
+				if (k > 0.5 && Math.random() < 0.4) {
+					launch(-1, k);
+					launch(1, k);
+				} else launch(Math.random() < 0.5 ? -1 : 1, k);
+				b.nextMissile = t + 1.4 - k * 0.5;
+			}
+		}
+
+		for (let i = b.beams.length - 1; i >= 0; i--) {
+			const bm = b.beams[i];
+			bm.t += dt;
+			if (bm.t >= bm.warn + FIRE) {
+				bm.glow.Destroy();
+				if (bm.core) bm.core.Destroy();
+				b.beams.splice(i, 1);
+			} else {
+				if (bm.t >= bm.warn && !bm.live) {
+					bm.live = true;
+					bm.glow.Transparency = 0.55;
+					bm.glow.Color = RGB(255, 40, 40);
+					bm.core = beamPart(RGB(255, 235, 235), 0);
+					bm.core.CanQuery = true;
+					bm.core.Parent = world;
+					if (Math.abs(bm.x - pos.X) < 40) shake = Math.max(shake, 0.3);
+					sfx("portal", 0.35);
+				}
+				aim(bm, cf);
+			}
+		}
+
+		bossFill.Size = US(Math.min(t / missileEnd, 1), 1);
+		if (t >= missileEnd && Missiles.count() === 0) finale();
+	};
+})();
+
+// ------------------------------------------------------------------ missiles
+
+(() => {
+	let list = [];
+	const turrets = new Map();
+	const layer = make("Frame", { Size: US(1, 1), BackgroundTransparency: 1, ZIndex: 25, Parent: Game.screen });
+	layer.el.style.pointerEvents = "none";
+
+	function emitter(parent, props) {
+		const e = Instance.new("ParticleEmitter");
+		for (const k in props) e[k] = props[k];
+		e.Parent = parent;
+		return e;
+	}
+
+	function exhaust(att) {
+		emitter(att, {
+			Texture: "fire",
+			Color: new ColorSequence(RGB(255, 235, 160), RGB(255, 70, 20)),
+			LightEmission: 1,
+			Size: new NumberSequence(1.8, 0),
+			Lifetime: new NumberRange(0.12, 0.22),
+			Rate: 80,
+			Speed: new NumberRange(6, 12),
+			EmissionDirection: "Back",
+			LockedToPart: true,
+		});
+		emitter(att, {
+			Texture: "smoke",
+			Color: new ColorSequence(RGB(215, 215, 220), RGB(90, 90, 95)),
+			Size: new NumberSequence([NumberSequenceKeypoint.new(0, 1.2), NumberSequenceKeypoint.new(1, 7)]),
+			Transparency: new NumberSequence([NumberSequenceKeypoint.new(0, 0.3), NumberSequenceKeypoint.new(1, 1)]),
+			Lifetime: new NumberRange(0.9, 1.6),
+			Rate: 45,
+			Speed: new NumberRange(1, 3),
+			SpreadAngle: V2(18, 18),
+			Rotation: new NumberRange(0, 360),
+			RotSpeed: new NumberRange(-80, 80),
+			EmissionDirection: "Back",
+		});
+		emitter(att, {
+			Texture: "sparkles",
+			Color: new ColorSequence(RGB(255, 200, 90)),
+			LightEmission: 1,
+			Size: new NumberSequence(0.5, 0),
+			Lifetime: new NumberRange(0.2, 0.45),
+			Rate: 30,
+			Speed: new NumberRange(10, 24),
+			SpreadAngle: V2(35, 35),
+			EmissionDirection: "Back",
+		});
+	}
+
+	function dropTrail(m) {
+		if (!m.att) return;
+		const holder = Instance.new("Part");
+		holder.Anchored = true;
+		holder.CanCollide = false;
+		holder.CanQuery = false;
+		holder.Transparency = 1;
+		holder.Size = Vector3.one;
+		holder.CFrame = m.part.CFrame;
+		holder.Parent = junk;
+		m.att.Parent = holder;
+		for (const e of m.att.GetChildren()) if (e.IsA("ParticleEmitter")) e.Enabled = false;
+		Debris.AddItem(holder, 1.8);
+		m.att = null;
+	}
+
+	function blast(at, big) {
+		ball(at, big ? 30 : 18, RGB(255, 170, 70), 0.45);
+		ball(at, big ? 12 : 8, new Color3(1, 1, 0.9), 0.18);
+		const h = Instance.new("Part");
+		h.Anchored = true;
+		h.CanCollide = false;
+		h.CanQuery = false;
+		h.Transparency = 1;
+		h.Size = Vector3.one;
+		h.CFrame = CFrame.fromPos(at);
+		h.Parent = junk;
+		const a = Instance.new("Attachment");
+		a.Parent = h;
+		emitter(a, {
+			Texture: "fire",
+			Color: new ColorSequence(RGB(255, 230, 150), RGB(255, 60, 20)),
+			LightEmission: 1,
+			Size: new NumberSequence(4, 0),
+			Lifetime: new NumberRange(0.3, 0.6),
+			Rate: 0,
+			Speed: new NumberRange(15, 40),
+			SpreadAngle: V2(180, 180),
+		}).Emit(big ? 30 : 16);
+		emitter(a, {
+			Texture: "smoke",
+			Color: new ColorSequence(RGB(120, 115, 110), RGB(50, 50, 50)),
+			Size: new NumberSequence(3, 11),
+			Transparency: new NumberSequence(0.3, 1),
+			Lifetime: new NumberRange(1, 2),
+			Rate: 0,
+			Speed: new NumberRange(4, 12),
+			SpreadAngle: V2(180, 180),
+			Rotation: new NumberRange(0, 360),
+			RotSpeed: new NumberRange(-50, 50),
+		}).Emit(big ? 14 : 8);
+		emitter(a, {
+			Texture: "sparkles",
+			Color: new ColorSequence(RGB(255, 210, 110)),
+			LightEmission: 1,
+			Size: new NumberSequence(0.7, 0),
+			Lifetime: new NumberRange(0.3, 0.7),
+			Rate: 0,
+			Speed: new NumberRange(30, 75),
+			SpreadAngle: V2(180, 180),
+		}).Emit(big ? 40 : 22);
+		const ring = Instance.new("Part");
+		ring.Shape = "Cylinder";
+		ring.Material = "Neon";
+		ring.Color = RGB(255, 205, 130);
+		ring.Transparency = 0.25;
+		ring.Anchored = true;
+		ring.CanCollide = false;
+		ring.CanQuery = false;
+		ring.CastShadow = false;
+		ring.Size = V3(0.3, 2, 2);
+		ring.CFrame = CFrame.lookAt(at, camera.CFrame.Position).mul(Ang(0, Math.PI / 2, 0));
+		ring.Parent = junk;
+		TweenService.Create(ring, new TweenInfo(0.35, "Quad"), { Size: V3(0.3, big ? 46 : 30, big ? 46 : 30), Transparency: 1 }).Play();
+		Debris.AddItem(ring, 0.4);
+		Debris.AddItem(h, 2.2);
+	}
+
+	Missiles.addTurret = (tower) => turrets.set(tower, { next: 0 });
+	Missiles.count = () => list.length;
+	Missiles.hide = () => {
+		layer.Visible = false;
+	};
+	function drop(m) {
+		m.hb.Destroy();
+		m.part.Destroy();
+		m.arrow.Destroy();
+		m.ring.Destroy();
+	}
+	Missiles.kill = (part) => {
+		for (let i = 0; i < list.length; i++) {
+			const m = list[i];
+			if (m.part === part || m.hb === part) {
+				dropTrail(m);
+				blast(m.part.Position, true);
+				drop(m);
+				list.splice(i, 1);
+				return;
+			}
+		}
+	};
+	Missiles.clear = () => {
+		for (const m of list) drop(m);
+		list = [];
+	};
+
+	Missiles.fire = (from, speed) => {
+		const rz = from.Z - pos.Z;
+		const p = Instance.new("Part");
+		p.Anchored = true;
+		p.CanCollide = false;
+		p.CastShadow = false;
+		p.Size = V3(1.8, 1.8, 8);
+		p.Color = RGB(230, 230, 235);
+		p.Material = "Metal";
+		p.CFrame = CFrame.fromPos(from);
+		p.Parent = world;
+
+		const nose = Instance.new("Part");
+		nose.Shape = "Ball";
+		nose.Anchored = true;
+		nose.CanCollide = false;
+		nose.CanQuery = false;
+		nose.Size = Vector3.one.mul(2.2);
+		nose.Material = "Neon";
+		nose._uniqueMat = true;
+		nose.Color = RGB(255, 40, 40);
+		nose.Parent = p;
+		const light = Instance.new("PointLight");
+		light.Color = RGB(255, 40, 40);
+		light.Range = 20;
+		light.Brightness = 4;
+		light.Parent = nose;
+
+		const trail = Instance.new("Trail");
+		trail.Width = 1.4;
+		trail.Offset = V3(0, 0, 4);
+		trail.Lifetime = 0.9;
+		trail.Color = new ColorSequence(RGB(255, 170, 90), RGB(120, 120, 120));
+		trail.Transparency = new NumberSequence(0.1, 1);
+		trail.WidthScale = new NumberSequence(1, 4);
+		trail.Parent = p;
+		const att = Instance.new("Attachment");
+		att.Position = V3(0, 0, 4.2);
+		att.Parent = p;
+		exhaust(att);
+
+		const arrow = make("TextLabel", {
+			AnchorPoint: V2(0.5, 0.5),
+			Size: UO(44, 44),
+			BackgroundTransparency: 1,
+			Font: FONT,
+			Text: "▲",
+			TextSize: 40,
+			TextColor3: BAD,
+			TextStrokeTransparency: 0.3,
+			Visible: false,
+			Parent: layer,
+		});
+		const ring = make("Frame", { AnchorPoint: V2(0.5, 0.5), BackgroundTransparency: 1, Visible: false, Parent: layer });
+		make("UIStroke", { Color: BAD, Thickness: 1, Transparency: 0.4, Parent: ring });
+
+		p.SetAttribute("Missile", true);
+		const hb = Instance.new("Part");
+		hb.Anchored = true;
+		hb.CanCollide = false;
+		hb.Transparency = 1;
+		hb.Size = V3(14, 14, 16);
+		hb.CFrame = p.CFrame;
+		hb.SetAttribute("Missile", true);
+		hb.Parent = Game.guns.targets;
+		list.push({ part: p, hb, nose, att, x: from.X, y: from.Y, rz, vx: 0, dir: rz < 0 ? 1 : -1, speed, arrow, ring });
+		sfx("whoosh", 1.8);
+	};
+
+	function turretsFire() {
+		if (list.length >= 4) return;
+		for (const [tower, st] of turrets) {
+			if (!tower.Parent) turrets.delete(tower);
+			else if (runTime >= st.next) {
+				const rel = tower.Position.Z - pos.Z;
+				const ahead = rel < -180 && rel > -480;
+				const behind = rel > 80 && rel < 260;
+				if (Math.abs(tower.Position.X - pos.X) < 300 && (ahead || behind)) {
+					st.next = runTime + random(35, 55) / 10;
+					Missiles.fire(tower.Position.add(V3(0, tower.Size.Y / 2 + 4, 0)), ahead ? 150 : 110);
+					return;
+				}
+			}
+		}
+	}
+
+	Missiles.update = (dt) => {
+		if ((curStage === "turrets" || curStage === "sea") && runTime >= (Game.fireAfter || 0) && !Game.flow.cine && !Game.flow.approach) turretsFire();
+		layer.Visible = true;
+		const vp = camera.ViewportSize;
+		const cx = vp.X / 2, cy = vp.Y / 2;
+		for (let i = list.length - 1; i >= 0; i--) {
+			const m = list[i];
+			if (!m.part.Parent) {
+				m.hb.Destroy();
+				m.arrow.Destroy();
+				m.ring.Destroy();
+				list.splice(i, 1);
+				continue;
+			}
+			m.rz += m.dir * m.speed * dt;
+			if (Math.abs(m.rz) > 70) {
+				const want = clamp((pos.X - m.x) * 2, -55, 55);
+				m.vx += (want - m.vx) * Math.min(1, dt * 3);
+			}
+			m.x += m.vx * dt;
+			m.y += (pos.Y - m.y) * Math.min(1, dt * 2.5);
+			const p = V3(m.x, m.y, pos.Z + m.rz);
+			const cf = CFrame.lookAt(p, p.add(V3(m.vx / m.speed, 0, m.dir)));
+			m.part.CFrame = cf;
+			m.hb.CFrame = cf;
+			m.nose.CFrame = cf.mul(CFn(0, 0, -4.5));
+
+			const close = 1 - clamp((Math.abs(m.rz) - 60) / 400, 0, 1);
+			const blink = Math.floor(clock() * (4 + close * 14)) % 2 === 0;
+			m.nose.Transparency = blink ? 0 : 0.6;
+
+			const passed = (m.dir === 1 && m.rz > 60) || (m.dir === -1 && m.rz < -60);
+			if (passed) {
+				if (Math.abs(m.x - pos.X) < 30) {
+					shake = Math.max(shake, 0.25);
+					sfx("whoosh", 1.1);
+				}
+				dropTrail(m);
+				blast(p, false);
+				drop(m);
+				list.splice(i, 1);
+			} else {
+				const [v, onScreen] = camera.WorldToViewportPoint(p);
+				if (onScreen) {
+					m.arrow.Visible = false;
+					m.ring.Visible = true;
+					const size = 10 + close * 8;
+					m.ring.Size = UO(size, size);
+					m.ring.Position = UO(v.X, v.Y);
+				} else {
+					m.ring.Visible = false;
+					m.arrow.Visible = true;
+					let dx = v.X - cx, dy = v.Y - cy;
+					if (v.Z < 0) {
+						dx = -dx;
+						dy = -dy;
+					}
+					if (Math.abs(dx) + Math.abs(dy) < 1) dy = 1;
+					const ang = Math.atan2(dy, dx);
+					const c = Math.cos(ang), s = Math.sin(ang);
+					const reach = Math.min((cx - 50) / Math.max(Math.abs(c), 1e-3), (cy - 50) / Math.max(Math.abs(s), 1e-3));
+					m.arrow.Position = UO(cx + c * reach, cy + s * reach);
+					m.arrow.Rotation = deg(ang) + 90;
+					m.arrow.TextTransparency = blink ? 0 : 0.5;
+					m.arrow.TextSize = 32 + close * 20;
+				}
+			}
+		}
+	};
+})();
+
+// ------------------------------------------------------------------ guns
+
+(() => {
+	const G = Game.guns;
+	const targets = Instance.new("Folder");
+	targets.Name = "Targets";
+	targets.Parent = workspace;
+	markQueryRoot(targets);
+	G.targets = targets;
+	const rayParams = OverlapParams.new();
+	rayParams.FilterType = "Include";
+	rayParams.FilterDescendantsInstances = [world, targets];
+	let bullets = [];
+	let cool = 0;
+
+	G.clear = () => {
+		for (const b of bullets) b.part.Destroy();
+		bullets = [];
+	};
+
+	function hitPart(h, at) {
+		const dmg = Game.flow.tier >= 3 ? 1.5 : 1;
+		if (h.GetAttribute("Missile")) Missiles.kill(h);
+		else if (h.GetAttribute("Orb")) {
+			ball(h.Position, 12, RGB(190, 110, 255), 0.3);
+			h.Destroy();
+		} else if (h.GetAttribute("Boss2")) Game.boss2.hit(dmg, h);
+		else if (h.GetAttribute("Toppled") != null) Game.hitToppled(h, at);
+		else if (h.GetAttribute("Glass")) {
+			shatter(h, at, 0.6, true, 4);
+			fuel = Math.min(FUEL.max, fuel + 12);
+			stats.glass++;
+			sfx("crash", 1.5);
+		} else if (h.GetAttribute("Break")) {
+			const hp = (h.GetAttribute("HP") || 5) - dmg;
+			if (hp <= 0) {
+				shatter(h, at, 0.8, true, 4);
+				stats.kills++;
+				sfx("crash", 1.2);
+			} else {
+				h.SetAttribute("HP", hp);
+				ball(at, 4, RGB(255, 220, 120), 0.15);
+			}
+		}
+	}
+
+	G.update = (dt, firing) => {
+		cool -= dt;
+		if (firing && cool <= 0 && fuel > 0) {
+			fuel = Math.max(0, fuel - 0.3);
+			const big = Game.flow.tier >= 3;
+			cool = big ? 0.07 : 0.12;
+			for (const ox of big ? [-3.5, 3.5] : [0]) {
+				const p = Instance.new("Part");
+				p.Anchored = true;
+				p.CanCollide = false;
+				p.CanQuery = false;
+				p.CastShadow = false;
+				p.Material = "Neon";
+				p.Color = big ? RGB(200, 120, 255) : RGB(255, 230, 120);
+				p.Size = V3(0.5, 0.5, 7);
+				p.Parent = junk;
+				const from = pos.add(V3(ox, 0, -8));
+				let target = Game.boss2.aim && Game.boss2.aim();
+				if (target && Math.abs(target.X - from.X) > 40) target = null;
+				const dir = target ? target.sub(from).Unit : V3(0, 0, -1);
+				bullets.push({ part: p, pos: from, dir, life: 1.2 });
+			}
+			sfx("hover", 0.6);
+		}
+		for (let i = bullets.length - 1; i >= 0; i--) {
+			const b = bullets[i];
+			b.life -= dt;
+			const stepV = b.dir.mul(900 * dt).add(V3(0, 0, -speedNow * dt));
+			const hit = workspace.Raycast(b.pos, stepV, rayParams);
+			if (hit || b.life <= 0) {
+				if (hit) hitPart(hit.Instance, hit.Position);
+				b.part.Destroy();
+				bullets.splice(i, 1);
+			} else {
+				b.pos = b.pos.add(stepV);
+				b.part.CFrame = CFrame.lookAt(b.pos, b.pos.add(b.dir));
+			}
+		}
+	};
+})();
+
+// ------------------------------------------------------------------ boss 2: the gunship
+
+(() => {
+	const B = Game.boss2;
+	B.active = false;
+	let orbs = [];
+	let model = null, core = null, shield = null, light = null, hb = null;
+	const HP = 60;
+	const OPEN_TIME = 3.2;
+	const PATTERN_TIME = 5.5;
+	const PATTERNS = ["fan", "walls", "aimed"];
+	const DARK = RGB(38, 40, 48), MID = RGB(70, 74, 86), HOT = RGB(255, 150, 40);
+	const ORB = RGB(190, 90, 255);
+
+	function part(size, color, cf, props) {
+		const p = Instance.new("Part");
+		if (props) for (const k in props) p[k] = props[k];
+		p.Anchored = true;
+		p.CanCollide = false;
+		p.CanQuery = false;
+		p.Size = size;
+		p.Color = color;
+		p.CFrame = cf;
+		p.Parent = model;
+		return p;
+	}
+
+	function build() {
+		model = Instance.new("Model");
+		part(V3(34, 12, 70), MID, CFn());
+		part(V3(24, 6, 30), DARK, CFn(0, 8, -8));
+		part(V3(18, 4, 4), RGB(255, 60, 60), CFn(0, 2, 35.2), { Material: "Neon" });
+		for (const side of [-1, 1]) {
+			part(V3(58, 3, 26), DARK, CFn(side * 45, 0, 4));
+			part(V3(10, 10, 30), MID, CFn(side * 62, -4, 6));
+			part(V3(3, 14, 12), DARK, CFn(side * 72, 6, -2));
+			part(Vector3.one.mul(2), RGB(255, 40, 40), CFn(side * 74, 0, 16), { Shape: "Ball", Material: "Neon" });
+		}
+		core = part(Vector3.one.mul(12), HOT, CFn(0, -9, 30), { Shape: "Ball", Material: "Neon", _uniqueMat: true });
+		light = Instance.new("PointLight");
+		light.Color = HOT;
+		light.Range = 40;
+		light.Brightness = 2;
+		light.Parent = core;
+		shield = part(Vector3.one.mul(24), RGB(120, 200, 255), CFn(0, -9, 30), { Shape: "Ball", Material: "ForceField", _uniqueMat: true });
+		model.WorldPivot = CFn();
+		model.Parent = junk;
+	}
+
+	B.reset = () => {
+		B.active = false;
+		B.done = false;
+		for (const o of orbs) o.part.Destroy();
+		orbs = [];
+		if (model) model.Destroy();
+		if (hb) hb.Destroy();
+		model = null;
+		hb = null;
+	};
+
+	B.aim = () => (B.active && core ? core.Position : null);
+
+	function orb(x, rz, ovx, speed) {
+		const p = Instance.new("Part");
+		p.Shape = "Ball";
+		p.Size = Vector3.one.mul(8);
+		p.Material = "Neon";
+		p.Color = ORB;
+		p.Anchored = true;
+		p.CanCollide = false;
+		p.CastShadow = false;
+		p.SetAttribute("Orb", true);
+		p.Parent = world;
+		orbs.push({ part: p, x, rz, vx: ovx || 0, speed: speed || 150 });
+	}
+
+	function setOpen(on) {
+		B.open = on;
+		TweenService.Create(shield, new TweenInfo(0.3), { Transparency: on ? 1 : 0 }).Play();
+		TweenService.Create(core, new TweenInfo(0.3, "Back"), { Size: Vector3.one.mul(on ? 16 : 12) }).Play();
+		light.Brightness = on ? 7 : 2;
+		if (on) {
+			popup("SHOOT!", HOT);
+			sfx("good", 0.8);
+		} else sfx("whoosh", 0.5);
+	}
+
+	function startPattern() {
+		B.pattern = (B.pattern % PATTERNS.length) + 1;
+		B.state = "pattern";
+		B.stateT = 0;
+		B.emit = 0.4;
+		B.phase = Math.random() * 6;
+		B.gap = 0;
+	}
+
+	B.start = () => {
+		if (B.active || B.done) return;
+		B.active = true;
+		fuel = FUEL.max;
+		B.t = 0;
+		B.x = pos.X;
+		B.hp = HP;
+		B.state = "enter";
+		B.stateT = 0;
+		B.pattern = 0;
+		B.open = false;
+		Game.arenaX = pos.X;
+		Game.mood(17.6, RGB(255, 150, 100), 3);
+		build();
+		hb = Instance.new("Part");
+		hb.Shape = "Ball";
+		hb.Size = Vector3.one.mul(30);
+		hb.Transparency = 1;
+		hb.Anchored = true;
+		hb.CanCollide = false;
+		hb.SetAttribute("Boss2", true);
+		hb.Parent = Game.guns.targets;
+		bossFill.Size = US(1, 1);
+		bossBar.Visible = true;
+		banner("DODGE, THEN SHOOT WHEN THE SHIELD DROPS", HOT, 3);
+	};
+
+	function die() {
+		B.active = false;
+		B.done = true;
+		stats.bosses++;
+		const at = core.Position;
+		flash();
+		sfx("crash", 0.3);
+		sfx("crash", 0.5);
+		ball(at, 240, new Color3(1, 1, 0.9), 1);
+		ball(at, 160, HOT, 1.8);
+		smoke(at, 14, 50, 45, 3);
+		sparks(at, 50, 2.5, () => RGB(255, 170, 60), 150);
+		for (const p of model.GetChildren()) {
+			if (p.IsA("BasePart")) {
+				p.Anchored = false;
+				p.CanCollide = true;
+				p.AssemblyLinearVelocity = V3(random(-70, 70), random(10, 90), random(-120, -20));
+				p.AssemblyAngularVelocity = V3(random(-8, 8), random(-8, 8), random(-8, 8));
+			}
+		}
+		Debris.AddItem(model, 12);
+		model = null;
+		hb.Destroy();
+		hb = null;
+		for (const o of orbs) o.part.Destroy();
+		orbs = [];
+		bossBar.Visible = false;
+		shake = 0.8;
+		banner("BOSS DOWN", COIN, 3);
+		popup("+" + CONFIG.bossBonus + " ●", COIN);
+		Game.marks.sea = (maxRow + 1) * CHUNK + 1200;
+		Game.mood(Game.sky.clock, RGB(170, 200, 230), 4);
+	}
+
+	B.hit = (dmg, h) => {
+		if (!B.active) return;
+		if (h == null) B.hp = 0;
+		else if (!B.open) {
+			ball(core.Position.add(V3(0, 0, 12)), 5, RGB(150, 220, 255), 0.15);
+			return;
+		} else {
+			B.hp -= dmg;
+			core.Color = new Color3(1, 1, 1);
+			task.delay(0.05, () => {
+				if (core) core.Color = HOT;
+			});
+		}
+		bossFill.Size = US(Math.max(B.hp, 0) / HP, 1);
+		if (B.hp <= 0) die();
+	};
+
+	function runPattern(dt, rage) {
+		B.emit -= dt;
+		if (B.emit > 0) return;
+		const kind = PATTERNS[B.pattern - 1];
+		const rz = B.zOff + 30;
+		if (kind === "fan") {
+			B.emit = rage ? 0.3 : 0.38;
+			B.phase += 0.16;
+			for (let i = -2; i <= 1; i++) {
+				const ang = Math.sin(B.phase) * 0.5 + (i + 0.5) * 0.44;
+				orb(B.x, rz, Math.sin(ang) * 150, Math.cos(ang) * 150);
+			}
+			sfx("hover", 1.6);
+		} else if (kind === "walls") {
+			B.emit = rage ? 0.8 : 1;
+			B.gap = clamp(B.gap + random(-70, 70), -160, 160);
+			const mid = pos.X + vx * (Math.abs(rz) / 165) * 0.8;
+			const gx = mid + B.gap;
+			for (let x = mid - 300; x <= mid + 300; x += 26) if (Math.abs(x - gx) > 46) orb(x, rz, 0, 165);
+			sfx("whoosh", 0.7);
+		} else {
+			B.emit = rage ? 0.5 : 0.7;
+			const time = Math.abs(rz) / 210;
+			const ahead = pos.X + vx * time;
+			for (const x of [pos.X, ahead, ahead + vx * time * 0.5]) orb(B.x, rz, (x - B.x) / time, 210);
+			sfx("whoosh", 1.4);
+		}
+	}
+
+	B.update = (dt) => {
+		B.t += dt;
+		const t = B.t;
+		const rage = B.hp <= HP / 3;
+		B.zOff = t < 3 ? -900 + 660 * (1 - (1 - t / 3) ** 3) : -240;
+		B.x += (pos.X + vx * 0.6 + Math.sin(t * 0.5) * 25 - B.x) * Math.min(1, dt * 2.2);
+		const cf = CFn(B.x, 42 + Math.sin(t * 1.4) * 3, pos.Z + B.zOff).mul(Ang(0, 0, Math.sin(t * 0.8) * 0.05));
+		model.PivotTo(cf);
+		hb.CFrame = CFrame.fromPos(core.Position);
+		if (t >= 3) {
+			B.stateT += dt;
+			if (B.state === "enter") startPattern();
+			else if (B.state === "pattern") {
+				runPattern(dt, rage);
+				if (B.stateT >= PATTERN_TIME) {
+					B.state = "open";
+					B.stateT = 0;
+					setOpen(true);
+				}
+			} else if (B.state === "open" && B.stateT >= OPEN_TIME) {
+				setOpen(false);
+				startPattern();
+			}
+		}
+		for (let i = orbs.length - 1; i >= 0; i--) {
+			const o = orbs[i];
+			o.x += o.vx * dt;
+			o.rz += o.speed * dt;
+			if (o.rz > 60 || Math.abs(o.x - pos.X) > 450 || !o.part.Parent) {
+				if (o.part.Parent) o.part.Destroy();
+				orbs.splice(i, 1);
+			} else o.part.Position = V3(o.x, pos.Y, pos.Z + o.rz);
+		}
+	};
+})();
+
+// ------------------------------------------------------------------ flow: jet swap after boss 1, carrier landing, launch into space
+// in the browser there's no character, so the jump over and the walk on deck happen on their own
+
+(() => {
+	const F = Game.flow;
+	const DECK = 31;
+	const SEA_ALT = 70;
+
+	const ease = (k) => {
+		k = clamp(k, 0, 1);
+		return k < 0.5 ? 2 * k * k : 1 - (-2 * k + 2) ** 2 / 2;
+	};
+
+	const barTop = make("Frame", { Size: U2(1, 0, 0, 0), BackgroundColor3: BLACK, ZIndex: 40, Parent: gui });
+	const barBot = make("Frame", { AnchorPoint: V2(0, 1), Position: US(0, 1), Size: U2(1, 0, 0, 0), BackgroundColor3: BLACK, ZIndex: 40, Parent: gui });
+	F.bars = (on) => {
+		const h = on ? US(1, 0.11) : US(1, 0);
+		tw(barTop, 0.6, { Size: h });
+		tw(barBot, 0.6, { Size: h });
+	};
+
+	const hint = text(gui, "", UO(700, 30), U2(0.5, -350, 0.86, 0), 26, WHITE);
+	hint.TextTransparency = 1;
+	hint.TextStrokeTransparency = 1;
+	hint.ZIndex = 41;
+	function showHint(str) {
+		if (str) hint.Text = str;
+		tw(hint, 0.4, { TextTransparency: str ? 0 : 1, TextStrokeTransparency: str ? 0.4 : 1 });
+	}
+
+	function swap(c) {
+		planeModel.Parent = junk;
+		c.old = planeModel;
+		c.oldMain = planeMain;
+		c.oldParts = planeParts;
+		c.jet.Parent = workspace;
+		planeModel = c.jet;
+		planeMain = c.jmain;
+		planeParts = c.jparts;
+	}
+
+	function neonPart(size, color, cf, trans) {
+		const p = Instance.new("Part");
+		p.Anchored = true;
+		p.CanCollide = false;
+		p.CanQuery = false;
+		p.CastShadow = false;
+		p.Material = "Neon";
+		p._uniqueMat = true;
+		p.Size = size;
+		p.Color = color;
+		p.CFrame = cf;
+		p.Transparency = trans || 0;
+		p.Parent = junk;
+		return p;
+	}
+
+	F.reset = () => {
+		if (F.cine && F.cine.shell) F.cine.shell.Destroy();
+		F.holdCam = false;
+		F.approach = false;
+		F.bars(false);
+		showHint(null);
+		F.tier = 1;
+		F.cine = null;
+		F.cam = null;
+		if (F.carrier) F.carrier.model.Destroy();
+		F.carrier = null;
+		if (F.marker) F.marker.Destroy();
+		F.marker = null;
+	};
+
+	const chase = (x, p) => CFrame.lookAt(V3(x, p.Y + 10, p.Z + 28), V3(x, p.Y + 2, p.Z - 60));
+
+	F.startTransfer = () => {
+		if (F.cine || dead) return;
+		Missiles.clear();
+		vx = 0;
+		const [jet, jmain, jparts] = Game.makePlane("TeamJet", junk);
+		jmain.CFrame = CFrame.fromPos(pos.add(V3(60, 14, 140)));
+		sfx("whoosh", 0.4);
+		F.holdCam = true;
+		F.cine = { kind: "transfer", t: 0, jet, jmain, jparts, speed: speedNow, off: V3(19, 0, 0), camX: pos.X };
+	};
+
+	function oldPlaneDown(c, k) {
+		if (!c.old) return;
+		const at = pos.add(V3(-19 - k * 16, -12 * k * k, 8 * k));
+		c.oldMain.CFrame = CFrame.fromPos(at).mul(Ang(-0.6 * k, 0, k * 2.4));
+		if (Math.random() < 0.6) smoke(at, 1, 2, 4, 0.8);
+		if (at.Y <= 5) {
+			ball(at, 60, RGB(255, 240, 180), 0.4);
+			ball(at, 45, RGB(255, 120, 30), 0.9);
+			smoke(at, 6, 12, 16, 1.6);
+			sparks(at, 18, 1, () => (Math.random() < 0.5 ? RGB(255, 140, 40) : RGB(40, 40, 40)), 80);
+			sfx("crash", 0.7);
+			shake = Math.max(shake, 0.4);
+			c.old.Destroy();
+			c.old = null;
+		}
+	}
+
+	function doSwap(c) {
+		c.swapped = true;
+		c.swapT = c.t;
+		swap(c);
+		pos = pos.add(c.off);
+		beyondStart = (maxRow + 1) * CHUNK + 300;
+		shake = Math.max(shake, 0.3);
+		sfx("good");
+		sfx("crash", 1.8);
+	}
+
+	function transfer(c, dt) {
+		const t = c.t;
+		const slow = c.swapped ? 0.4 : 1 - 0.6 * ease(Math.min(t / 2.4, 1));
+		speedNow = c.speed * slow;
+		const move = V3(0, 0, -speedNow * dt);
+		pos = V3(pos.X, pos.Y + (ALT - pos.Y) * Math.min(1, dt * 2), pos.Z).add(move);
+		Game.from = (Game.from || 0) + speedNow * dt;
+
+		if (t < 2.4) {
+			const e = ease(t / 2.4);
+			const off = V3(60, 14, 140).Lerp(c.off, e);
+			planeMain.CFrame = CFrame.fromPos(pos);
+			c.jmain.CFrame = CFrame.fromPos(pos.add(off)).mul(Ang(0, 0, (1 - e) * 0.5));
+			c.camX = pos.X;
+			F.cam = chase(c.camX, pos);
+			return;
+		}
+
+		if (!c.swapped) {
+			// side by side for a moment, the camera pans over, then you're in
+			const jetCF = CFrame.fromPos(pos.add(c.off).add(V3(0, Math.sin(t * 2 + 1) * 0.3, 0))).mul(Ang(0, 0, Math.sin(t * 1.1 + 2) * 0.02));
+			planeMain.CFrame = CFrame.fromPos(pos.add(V3(0, Math.sin(t * 2) * 0.3, 0))).mul(Ang(0, 0, Math.sin(t * 1.3) * 0.02));
+			c.jmain.CFrame = jetCF;
+			if (!c.ready) {
+				c.ready = true;
+				showHint("SWITCHING TO THE JET");
+			}
+			if (t >= 2.9) c.camX += (pos.X + c.off.X - c.camX) * Math.min(1, dt * 4);
+			F.cam = chase(c.camX, pos);
+			if (t >= 3.6) {
+				showHint(null);
+				smoke(jetCF.mul(CFn(0, 1.2, -2.5)).Position, 3, 2, 3, 0.6);
+				sfx("whoosh", 1.4);
+				doSwap(c);
+			}
+			return;
+		}
+
+		planeMain.CFrame = CFrame.fromPos(pos);
+		c.camX += (pos.X - c.camX) * Math.min(1, dt * 4);
+		F.cam = chase(c.camX, pos);
+		oldPlaneDown(c, t - c.swapT);
+		if (t - c.swapT >= 2) {
+			if (c.old) c.old.Destroy();
+			F.cine = null;
+			F.cam = null;
+			F.holdCam = false;
+			F.tier = 2;
+			Game.spd = 0;
+			banner(Game.touch.on ? "FIRE = SHOOT" : Game.keyName("shoot") + " = SHOOT", WHITE, 2.5);
+		}
+	}
+
+	// ---------------- the carrier
+
+	F.spawnCarrier = () => {
+		const x = pos.X, z = pos.Z - 1800;
+		const m = Instance.new("Model");
+		function p(size, color, at, neon, trans, collide) {
+			const b = Instance.new("Part");
+			b.Anchored = true;
+			b.CanCollide = collide || false;
+			b.CanQuery = false;
+			b.Size = size;
+			b.Color = color;
+			b.Position = at;
+			if (neon) b.Material = "Neon";
+			if (trans) b._uniqueMat = true;
+			b.Transparency = trans || 0;
+			b.Parent = m;
+			return b;
+		}
+		p(V3(90, 30, 420), RGB(70, 75, 85), V3(x, 15, z), false, 0, true);
+		p(V3(88, 1, 416), RGB(55, 58, 65), V3(x, DECK - 0.5, z), false, 0, true);
+		p(V3(1.4, 0.2, 400), new Color3(1, 1, 1), V3(x, DECK + 0.1, z), true);
+		for (const side of [-1, 1]) {
+			p(V3(0.8, 0.2, 400), RGB(255, 220, 80), V3(x + side * 20, DECK + 0.1, z), true);
+			for (let i = 0; i <= 12; i++) p(V3(1.2, 0.6, 1.2), RGB(255, 240, 200), V3(x + side * 43, DECK + 0.3, z - 200 + i * 33), true);
+		}
+		for (let i = 0; i <= 3; i++) p(V3(40, 0.3, 0.3), RGB(40, 40, 40), V3(x, DECK + 0.2, z + 150 - i * 12));
+		p(V3(22, 50, 70), RGB(90, 95, 105), V3(x + 34, DECK + 25, z - 40), false, 0, true);
+		p(V3(22.4, 2, 70.4), RGB(150, 220, 255), V3(x + 34, DECK + 44, z - 40), true);
+		p(V3(2, 30, 2), RGB(70, 70, 75), V3(x + 34, DECK + 65, z - 40));
+		p(V3(3, 3, 3), RGB(255, 40, 40), V3(x + 34, DECK + 81, z - 40), true);
+		const beam = p(V3(10, 700, 10), RGB(60, 255, 120), V3(x, 350, z), true, 0.5);
+		const lights = [];
+		for (let i = 0; i <= 9; i++) lights.push(p(V3(4, 0.6, 4), RGB(60, 255, 120), V3(x, DECK + 0.2, z + 205 - i * 16), true, 0.0001));
+		const hl = Instance.new("Highlight");
+		hl.FillColor = RGB(60, 255, 120);
+		hl.FillTransparency = 0.85;
+		hl.OutlineColor = RGB(60, 255, 120);
+		hl.OutlineTransparency = 0;
+		hl.Parent = m;
+		m.Parent = junk;
+		F.carrier = { model: m, x, z, stern: z + 210, lights, beam, hl };
+		sfx("good", 0.8);
+	};
+
+	F.startApproach = () => {
+		Missiles.clear();
+		F.approach = true;
+		F.bars(true);
+		sfx("whoosh", 0.5);
+	};
+
+	F.approachUpdate = () => {
+		const c = F.carrier;
+		const k = clamp((pos.Z - c.stern) / 1300, 0, 1);
+		c.lights.forEach((l, idx) => {
+			l.Transparency = Math.floor(clock() * 10) % c.lights.length === c.lights.length - (idx + 1) ? 0 : 0.75;
+		});
+		if (pos.Z <= c.stern) {
+			if (Math.abs(pos.X - c.x) < 38) {
+				F.approach = false;
+				Missiles.clear();
+				tw(c.beam, 0.8, { Transparency: 1 });
+				Debris.AddItem(c.beam, 0.9);
+				tw(c.hl, 0.8, { FillTransparency: 1, OutlineTransparency: 1 });
+				Debris.AddItem(c.hl, 0.9);
+				shake = Math.max(shake, 0.7);
+				sfx("crash", 1.6);
+				sfx("crash", 0.8);
+				smoke(pos.add(V3(0, -1, 3)), 6, 5, 6, 1.2);
+				sparks(pos.add(V3(0, -1, 0)), 20, 0.6, () => RGB(255, 200, 120), 50);
+				F.cine = { kind: "land", t: 0, speed: speedNow, touch: V3(pos.X, DECK + 1.5, pos.Z), stop: V3(c.x, DECK + 1.5, c.z + 60) };
+			} else {
+				F.approach = false;
+				F.bars(false);
+				sfx("bad");
+				const nz = pos.Z - 1800, nx = pos.X + random(-150, 150);
+				c.model.TranslateBy(V3(nx - c.x, 0, nz - c.z));
+				c.x = nx;
+				c.z = nz;
+				c.stern = nz + 210;
+			}
+		}
+		return [DECK + 1.5 + (SEA_ALT - DECK - 1.5) * k, 0.55 + 0.45 * k];
+	};
+
+	function startLaunch(c) {
+		showHint(null);
+		if (F.marker) F.marker.Destroy();
+		F.marker = null;
+		if (c.jhl) c.jhl.Destroy();
+		swap(c);
+		pos = c.spot;
+		sfx("whoosh", 0.4);
+		sfx("crash", 0.5);
+		F.cine = { kind: "launch", t: 0, v: 0, jparts: c.jparts };
+	}
+
+	function land(c, dt) {
+		const t = c.t;
+		if (!c.jet) {
+			const [jet, jmain, jparts] = Game.makePlane("Stealth", junk);
+			c.jet = jet;
+			c.jmain = jmain;
+			c.jparts = jparts;
+			c.spot = V3(F.carrier.x - 18, DECK + 1.5, c.stop.Z - 90);
+			jmain.CFrame = CFrame.fromPos(c.spot);
+			const hl = Instance.new("Highlight");
+			hl.FillColor = RGB(170, 80, 255);
+			hl.FillTransparency = 0.7;
+			hl.OutlineColor = RGB(220, 170, 255);
+			hl.Parent = jet;
+			c.jhl = hl;
+		}
+
+		if (t < 1.8) {
+			const k = t / 1.8;
+			pos = c.touch.Lerp(c.stop, 1 - (1 - k) ** 3);
+			speedNow = c.speed * (1 - k);
+			planeMain.CFrame = CFrame.fromPos(pos).mul(Ang(Math.max(0, 0.5 - t) * 0.3, 0, Math.sin(t * 20) * 0.02 * (1 - k)));
+			if (Math.random() < 0.5) sparks(pos.add(V3(0, -1, 4)), 2, 0.5, () => RGB(255, 190, 90), 30);
+			if (Math.random() < 0.3) smoke(pos.add(V3(0, -1, 5)), 1, 2, 4, 0.9);
+			shake = Math.max(shake, 0.2 * (1 - k));
+			F.cam = CFrame.lookAt(pos.add(V3(-40, 12, 36)), pos.add(V3(0, 0, -10)));
+			return;
+		}
+
+		if (t < 4.4) {
+			speedNow = 0;
+			const a = rad(-150 + ease((t - 1.8) / 2.6) * 130);
+			F.cam = CFrame.lookAt(pos.add(V3(Math.cos(a) * 30, 9, Math.sin(a) * 30)), pos.add(V3(0, 1, 0)));
+			if (!c.cooled) {
+				c.cooled = true;
+				smoke(pos.add(V3(0, 1, 5)), 4, 3, 4, 2);
+			}
+			return;
+		}
+
+		if (!c.parked) {
+			c.parked = true;
+			fuel = FUEL.max;
+			F.marker = neonPart(V3(0.4, 14, 14), RGB(200, 140, 255), CFrame.fromPos(c.spot.add(V3(0, 8, 0))).mul(Ang(0, 0, Math.PI / 2)), 0.2);
+			F.marker.Shape = "Cylinder";
+			const pillar = neonPart(V3(60, 6, 6), RGB(200, 140, 255), CFrame.fromPos(c.spot.add(V3(0, 30, 0))).mul(Ang(0, 0, Math.PI / 2)), 0.85);
+			pillar.Shape = "Cylinder";
+			pillar.Parent = F.marker;
+			c.taxiFrom = pos;
+			c.taxiT0 = t;
+			c.taxiTo = c.spot.add(V3(14, 0, 10));
+			showHint("TAXIING OVER TO THE JET");
+		}
+
+		if (F.marker) F.marker.CFrame = CFrame.fromPos(c.spot.add(V3(0, 8 + Math.sin(t * 2), 0))).mul(Ang(0, t, Math.PI / 2));
+
+		// your plane rolls over next to the stealth jet, then you swap into it
+		const k = clamp((t - c.taxiT0) / 2.6, 0, 1);
+		const e = ease(k);
+		const prevPos = pos;
+		pos = c.taxiFrom.Lerp(c.taxiTo, e);
+		const dir = pos.sub(prevPos);
+		if (dir.Magnitude > 0.01) c.taxiDir = dir.Unit;
+		planeMain.CFrame = c.taxiDir ? CFrame.lookAt(pos, pos.add(c.taxiDir)) : CFrame.fromPos(pos);
+		F.cam = CFrame.lookAt(pos.add(V3(-26, 12, 30)), pos.add(V3(-8, 1, -16)));
+		if (t - c.taxiT0 >= 3.1) startLaunch(c);
+	}
+
+	function launch(c, dt) {
+		const t = c.t;
+		if (t < 2.2) {
+			c.v = Math.min(c.v + 150 * dt, 300);
+			pos = pos.add(V3(0, 0, -c.v * dt));
+			planeMain.CFrame = CFrame.fromPos(pos);
+			c.camA = c.camA || V3(pos.X - 24, DECK + 4, pos.Z - 280);
+			F.cam = CFrame.lookAt(c.camA, pos).mul(Ang(0, 0, 0.05));
+			shake = Math.max(shake, 0.1);
+			if (Math.random() < 0.4) smoke(pos.add(V3(0, 0, 6)), 1, 2, 3, 0.6);
+		} else {
+			c.pitch = Math.min((c.pitch || 0) + dt * 0.8, 1.25);
+			c.v = Math.min(c.v + 160 * dt, 700);
+			const dir = V3(0, Math.sin(c.pitch), -Math.cos(c.pitch));
+			pos = pos.add(dir.mul(c.v * dt));
+			planeMain.CFrame = CFrame.lookAt(pos, pos.add(dir));
+			if (t < 4.8) F.cam = CFrame.lookAt(pos.sub(dir.mul(36)).add(V3(7, -5, 0)), pos.add(dir.mul(40)));
+			else {
+				c.camC = c.camC || pos.add(V3(-60, -90, 90));
+				F.cam = CFrame.lookAt(c.camC, pos);
+			}
+			if (t >= 3 && !c.spaced) {
+				c.spaced = true;
+				Game.space();
+			}
+			if (t >= 7.2 && !c.fading) {
+				c.fading = true;
+				fade(() => {
+					Game.marks.final = (maxRow + 1) * CHUNK;
+					pos = V3(pos.X, ALT, -(Game.marks.final + 60));
+					planeMain.CFrame = CFrame.fromPos(pos);
+					Game.cam.last = null;
+					F.cine = null;
+					F.cam = null;
+					F.tier = 3;
+					F.bars(false);
+					fuel = FUEL.max;
+				});
+			}
+		}
+		speedNow = c.v;
+	}
+
+	F.startDescent = () => {
+		if (F.cine || dead) return;
+		Missiles.clear();
+		F.bars(true);
+		sfx("whoosh", 0.35);
+		banner("RE-ENTRY", COIN, 2);
+		F.cine = { kind: "descent", t: 0, v: Math.max(speedNow, 200), pitch: 0 };
+	};
+
+	function descent(c, dt) {
+		const t = c.t;
+		c.pitch = Math.min(c.pitch + dt * 0.6, 1.15);
+		c.v = Math.min(c.v + 140 * dt, 650);
+		const dir = V3(0, -Math.sin(c.pitch), -Math.cos(c.pitch));
+		pos = pos.add(dir.mul(c.v * dt));
+		speedNow = c.v;
+		planeMain.CFrame = CFrame.lookAt(pos, pos.add(dir)).mul(Ang(0, 0, Math.sin(t * 9) * 0.04 * Math.min(t, 2)));
+		if (!c.shell) {
+			c.shell = neonPart(Vector3.one.mul(6), RGB(255, 140, 50), CFrame.fromPos(pos), 1);
+			c.shell.Shape = "Ball";
+			const att = Instance.new("Attachment");
+			att.Parent = c.shell;
+			const fire = Instance.new("ParticleEmitter");
+			fire.Texture = "fire";
+			fire.Color = new ColorSequence(RGB(255, 240, 180), RGB(255, 70, 20));
+			fire.LightEmission = 1;
+			fire.Size = new NumberSequence(5, 0);
+			fire.Lifetime = new NumberRange(0.25, 0.45);
+			fire.Speed = new NumberRange(20, 40);
+			fire.SpreadAngle = V2(25, 25);
+			fire.EmissionDirection = "Back";
+			fire.Rate = 0;
+			fire.Parent = att;
+			c.fire = fire;
+		}
+		const heat = clamp((t - 0.8) / 1.5, 0, 1) * (1 - clamp((t - 4.2) / 1, 0, 1));
+		c.shell.CFrame = CFrame.lookAt(pos.add(dir.mul(3)), pos.add(dir.mul(10)));
+		c.shell.Size = Vector3.one.mul(8 * (0.6 + heat * 0.8));
+		c.shell.Transparency = 1 - heat * 0.55;
+		c.fire.Rate = heat * 120;
+		shake = Math.max(shake, heat * 0.35);
+		if (t >= 1.5 && !c.sky) {
+			c.sky = true;
+			Game.daySky(3);
+		}
+		if (t > 2.6 && Math.random() < 0.6) {
+			const cl = neonPart(Vector3.one.mul(random(30, 70)), new Color3(1, 1, 1), CFrame.fromPos(pos.add(dir.mul(500)).add(V3(random(-160, 160), random(-100, 100), random(-100, 100)))), 0.55);
+			cl.Shape = "Ball";
+			cl.Material = "SmoothPlastic";
+			Debris.AddItem(cl, 2);
+		}
+		F.cam = CFrame.lookAt(pos.sub(dir.mul(36)).add(V3(0, 10, 0)), pos.add(dir.mul(30)));
+		if (t >= 5.2 && !c.fading) {
+			c.fading = true;
+			fade(() => {
+				if (c.shell) c.shell.Destroy();
+				Game.loopAround();
+			});
+		}
+	}
+
+	F.update = (dt) => {
+		const c = F.cine;
+		c.t += dt;
+		if (c.kind === "transfer") transfer(c, dt);
+		else if (c.kind === "land") land(c, dt);
+		else if (c.kind === "launch") launch(c, dt);
+		else if (c.kind === "descent") descent(c, dt);
+	};
+})();
+
+// ------------------------------------------------------------------ first run tips
+
+(() => {
+	const box = make("CanvasGroup", {
+		AnchorPoint: V2(0.5, 0),
+		Position: U2(0.5, 0, 0.26, 0),
+		Size: UO(900, 150),
+		BackgroundTransparency: 1,
+		GroupTransparency: 1,
+		Visible: false,
+		ZIndex: 30,
+		Parent: gui,
+	});
+	box.el.style.pointerEvents = "none";
+	const head = text(box, "", U2(1, 0, 0, 50), null, 44, WHITE);
+	head.TextStrokeTransparency = 0.4;
+	const row_ = make("Frame", { Position: UO(0, 64), Size: U2(1, 0, 0, 72), BackgroundTransparency: 1, Parent: box });
+	make("UIListLayout", { FillDirection: "row", HorizontalAlignment: "center", Padding: UDim.new(0, 14), Parent: row_ });
+
+	const STEPS = [
+		{ text: () => Game.keyName("left") + " AND " + Game.keyName("right") + " TO STEER", touch: "LEFT AND RIGHT TO STEER", keys: ["A", "D"] },
+		{ text: () => Game.keyName("dashL") + " AND " + Game.keyName("dashR") + " TO ROLL", touch: "« AND » TO ROLL", keys: ["Q", "E"] },
+		{ text: () => Game.keyName("nitro") + " FOR BOOST", touch: "NITRO FOR BOOST", keys: ["W"] },
+		{ text: "YOU'RE INVINCIBLE WHILE BOOSTING!", hold: 2.6 },
+		{ text: "YOU CAN USE IT TO FLY THROUGH DEAD ENDS", hold: 3.2 },
+		{ text: "IT USES A LOT OF FUEL!", hold: 2.6 },
+	];
+	const TOUCH = { A: "LEFT", D: "RIGHT", Q: "«", E: "»", W: "NITRO" };
+	const ACT = { A: "left", D: "right", Q: "dashL", E: "dashR", W: "nitro" };
+
+	let show;
+	async function nextStep(tut) {
+		if (Game.tut !== tut) return;
+		tw(box, 0.25, { GroupTransparency: 1 });
+		await task.wait(0.3);
+		if (Game.tut !== tut) return;
+		tut.step++;
+		if (tut.step > STEPS.length) {
+			Game.tut = null;
+			box.Visible = false;
+			data.tutDone = true;
+			request("tut_done");
+			Game.endIntro();
+			return;
+		}
+		show(tut);
+	}
+
+	show = (tut) => {
+		const st = STEPS[tut.step - 1];
+		for (const c of row_.GetChildren()) if (c.IsA("Frame")) c.Destroy();
+		tut.caps = {};
+		tut.left = 0;
+		tut.busy = false;
+		let tx = st.text;
+		if (typeof tx === "function") tx = tx();
+		head.Text = Game.touch.on && st.touch ? st.touch : tx;
+		for (const k of st.keys || []) {
+			const label = Game.touch.on ? TOUCH[k] : Game.keyName(ACT[k]);
+			const cap = make("Frame", { Size: UO(Math.max(72, [...label].length * 24 + 32), 72), BackgroundColor3: BLACK, BackgroundTransparency: 0.35, Parent: row_ });
+			const stroke = make("UIStroke", { Color: WHITE, Thickness: 2, Transparency: 0.3, Parent: cap });
+			const l = text(cap, label, US(1, 1), null, 40, WHITE);
+			tut.caps[k] = { f: cap, stroke, l, sc: make("UIScale", { Parent: cap }) };
+			tut.left++;
+		}
+		box.Visible = true;
+		box.GroupTransparency = 1;
+		box.Position = U2(0.5, 0, 0.26, 16);
+		tw(box, 0.35, { GroupTransparency: 0, Position: U2(0.5, 0, 0.26, 0) });
+		sfx("open");
+		if (st.hold) {
+			const my = tut.step;
+			task.delay(st.hold, () => {
+				if (Game.tut === tut && tut.step === my) nextStep(tut);
+			});
+		}
+	};
+
+	Game.startTut = () => {
+		const tut = { step: 1 };
+		Game.tut = tut;
+		task.delay(0.8, () => {
+			if (Game.tut === tut) show(tut);
+		});
+	};
+	Game.stopTut = () => {
+		Game.tut = null;
+		box.Visible = false;
+	};
+	Game.tutPress = (k) => {
+		const tut = Game.tut;
+		if (!tut || tut.busy || !tut.caps) return;
+		const c = tut.caps[k];
+		if (!c || c.done) return;
+		c.done = true;
+		tut.left--;
+		tw(c.f, 0.2, { BackgroundColor3: GOOD, BackgroundTransparency: 0.05 });
+		c.stroke.Color = GOOD;
+		c.l.TextColor3 = BLACK;
+		c.sc.Scale = 1.25;
+		tw(c.sc, 0.35, { Scale: 1 }, "Back");
+		sfx("good", 1.3 + tut.left * 0.15);
+		if (tut.left <= 0) {
+			tut.busy = true;
+			task.delay(0.7, () => nextStep(tut));
+		}
+	};
+})();
+
+// ------------------------------------------------------------------ run
+
+function runCoins() {
+	const c = idiv(stats.dist, 10) + stats.maps * CONFIG.mapBonus + stats.bosses * CONFIG.bossBonus + stats.glass * 10 + stats.kills * 5;
+	return Math.floor(c * boostMult() * (1 + 0.25 * (data.power.coins || 0)));
+}
+
+function collect(p) {
+	const m = p.FindFirstAncestorOfClass("Model");
+	const kind = m && m.GetAttribute("Kind");
+	if (!kind || !m.Parent || m.GetAttribute("Taken")) return;
+	Game.pickupFx(m, kind);
+	if (kind === "fuel") {
+		sfx("portal", 1.3);
+		const wasEmpty = fuel <= 0;
+		fuel = Math.min(FUEL.max, fuel + FUEL.pad);
+		if (wasEmpty) popup("SAVED", GOOD);
+	} else if (kind === "gem") {
+		sfx("portal", 1);
+		stats.gems++;
+		popup(PAD.gem[1], PAD.gem[0]);
+	} else if (kind === "key") {
+		sfx("good", 1.1);
+		stats.keys++;
+		popup(PAD.key[1], PAD.key[0]);
+	} else if (kind === "heart") {
+		sfx("good", 0.9);
+		sfx("good", 1.4);
+		stats.hearts = (stats.hearts || 0) + 1;
+		popup(PAD.heart[1], PAD.heart[0]);
+		shake = Math.max(shake, 0.2);
+	}
+}
+
+Game.pickupFx = (m, kind) => {
+	m.SetAttribute("Taken", true);
+	m.Parent = junk;
+	pads.delete(m);
+	const color = PAD[kind][0];
+	const start0 = m.GetPivot().Position;
+	const info = new TweenInfo(0.35, "Quad", "Out");
+	for (const d of m.GetDescendants()) {
+		if (d.IsA("BasePart")) {
+			d.CanQuery = false;
+			TweenService.Create(d, info, { Size: d.Size.mul(1.7), Transparency: 1 }).Play();
+		} else if (d.IsA("PointLight")) {
+			d.Brightness = 8;
+			TweenService.Create(d, info, { Brightness: 0 }).Play();
+		} else if (d.IsA("ParticleEmitter")) d.Enabled = false;
+	}
+	const t0 = clock();
+	const conn = RunService.Heartbeat.Connect(() => {
+		const k = Math.min((clock() - t0) / 0.35, 1);
+		if (!m.Parent || k >= 1) {
+			conn.Disconnect();
+			m.Destroy();
+			return;
+		}
+		const e = 1 - (1 - k) ** 3;
+		m.PivotTo(CFrame.fromPos(start0.Lerp(pos.add(V3(0, 4, -3)), e).add(V3(0, Math.sin(k * Math.PI) * 5, 0))).mul(Ang(0, k * 12, 0)));
+	});
+
+	const ring = Instance.new("Part");
+	ring.Shape = "Cylinder";
+	ring.Material = "Neon";
+	ring.Color = color;
+	ring.Transparency = 0.2;
+	ring.Anchored = true;
+	ring.CanCollide = false;
+	ring.CanQuery = false;
+	ring.CastShadow = false;
+	ring.Size = V3(0.3, 4, 4);
+	ring.CFrame = CFrame.fromPos(pos).mul(Ang(0, 0, Math.PI / 2));
+	ring.Parent = junk;
+	TweenService.Create(ring, new TweenInfo(0.4, "Quint"), { Size: V3(0.3, 26, 26), Transparency: 1 }).Play();
+	Debris.AddItem(ring, 0.45);
+
+	const h = Instance.new("Part");
+	h.Anchored = true;
+	h.CanCollide = false;
+	h.CanQuery = false;
+	h.Transparency = 1;
+	h.Size = Vector3.one;
+	h.CFrame = CFrame.fromPos(pos);
+	h.Parent = junk;
+	const burst = Instance.new("ParticleEmitter");
+	burst.Texture = "sparkles";
+	burst.Color = new ColorSequence(new Color3(1, 1, 1), color);
+	burst.LightEmission = 1;
+	burst.Size = new NumberSequence(1.2, 0);
+	burst.Lifetime = new NumberRange(0.3, 0.6);
+	burst.Speed = new NumberRange(25, 50);
+	burst.SpreadAngle = V2(180, 180);
+	burst.Drag = 4;
+	burst.Rate = 0;
+	burst.Parent = h;
+	burst.Emit(26);
+	Debris.AddItem(h, 1);
+	ball(pos, 9, color, 0.25);
+};
+
+Game.shiftStages = (at) => {
+	Game.shift = at;
+	let acc = at;
+	for (const st of CONFIG.stages) {
+		st.start = acc;
+		acc += st.len;
+		st.finish = acc;
+	}
+	BOSS_START = acc;
+};
+
+Game.endIntro = () => {
+	if (Game.introEnd !== Infinity) return;
+	Game.introEnd = (maxRow + 1) * CHUNK;
+	Game.shiftStages(Game.introEnd);
+};
+
+function onStage(nw, old) {
+	Lighting.GlobalShadows = !settings.low && nw !== "city";
+	if (old && MAP_STAGES[old]) {
+		stats.maps++;
+		popup("MAP CLEAR  +" + CONFIG.mapBonus + " ●", COIN);
+	}
+	if (nw === "boss") startBoss();
+	else if (nw === "boss2") {
+		banner(stageName(nw), BAD, 2.5);
+		Game.boss2.start();
+	} else if (nw === "beyond") {
+		banner(stageName(nw), GEM, 2.5);
+		Game.space();
+	} else {
+		if (!Game.tut) banner(stageName(nw), WHITE, 2);
+		if (nw === "smash") {
+			task.delay(2.2, () => {
+				if (curStage === "smash" && !dead) banner("NO FUEL CANS HERE, SMASH THE GLASS FOR FUEL!", RGB(255, 90, 70), 3);
+			});
+		}
+		if (nw === "city") Game.mood(0.3, RGB(30, 30, 70), 4, RGB(150, 150, 195), 0.25);
+		if (nw === "sea") Game.mood(Game.sky.clock, RGB(170, 200, 230), 3);
+	}
+}
+
+Game.cityTick = (dt) => {
+	for (const [b, f] of Game.fallers) {
+		if (!b.Parent) Game.fallers.delete(b);
+		else if (f.t == null) {
+			f.warn.Transparency = Math.floor(clock() * 4) % 2 === 0 ? 0 : 0.7;
+			const ahead = pos.Z - b.Position.Z;
+			if (ahead > 500 && ahead < 700 && Math.abs(b.Position.X - pos.X) < 260) {
+				f.t = 0;
+				f.dir = pos.X >= b.Position.X ? 1 : -1;
+				f.base = b.CFrame;
+				f.pivot = CFn(b.Position.X + (f.dir * b.Size.X) / 2, 0, b.Position.Z);
+				f.offs = new Map();
+				for (const c of b.GetChildren()) if (c.IsA("BasePart")) f.offs.set(c, b.CFrame.ToObjectSpace(c.CFrame));
+				sfx("crash", 0.3);
+				smoke(V3(b.Position.X, 4, b.Position.Z), 5, 20, 20, 2);
+			}
+		} else if (f.t < 1) {
+			f.t = Math.min(f.t + dt / 1.7, 1);
+			const a = f.t * f.t * (Math.PI / 2) * -f.dir;
+			const rel = f.pivot.ToObjectSpace(f.base);
+			const cf = f.pivot.mul(Ang(0, 0, a)).mul(rel);
+			b.CFrame = cf;
+			for (const [c, off] of f.offs) if (c.Parent) c.CFrame = cf.mul(off);
+			if (f.t >= 1) {
+				const hit = b.Position;
+				shake = Math.max(shake, clamp(1 - hit.sub(pos).Magnitude / 900, 0, 1) * 0.8);
+				sfx("crash", 0.45);
+				smoke(V3(hit.X, 6, hit.Z), 10, 60, 30, 2.5);
+				sparks(V3(hit.X, 6, hit.Z), 12, 2, () => RGB(120, 115, 110), 60);
+				Game.fallers.delete(b);
+				b.SetAttribute("Toppled", 0);
+			}
+		}
+	}
+};
+
+Game.hitToppled = (b, at) => {
+	const n = (b.GetAttribute("Toppled") || 0) + 1;
+	b.SetAttribute("Toppled", n);
+	ball(at, 5, RGB(255, 220, 120), 0.15);
+	if (n < 5) {
+		sfx("hover", 0.7 + n * 0.15);
+		return;
+	}
+	b.SetAttribute("Toppled", null);
+	b.SetAttribute("Break", null);
+	b.CanQuery = false;
+	stats.kills++;
+	const cen = b.CFrame;
+	const info = new TweenInfo(0.6, "Back", "In");
+	for (const c of b.GetDescendants()) {
+		if (c.IsA("BasePart")) {
+			c.CanQuery = false;
+			TweenService.Create(c, info, { Size: Vector3.one.mul(0.05), CFrame: cen }).Play();
+		}
+	}
+	TweenService.Create(b, info, { Size: Vector3.one.mul(0.05) }).Play();
+	sfx("portal", 0.5);
+	task.delay(0.6, () => {
+		ball(cen.Position, 36, RGB(0, 220, 255), 0.35);
+		ball(cen.Position, 14, new Color3(1, 1, 1), 0.2);
+		b.Destroy();
+	});
+};
+
+Game.alt = () => {
+	if (curStage === "sea" || (curStage === "boss2" && Game.boss2.done)) return 70;
+	return ALT;
+};
+
+Game.tierPlane = () => {
+	const t = Game.flow.tier;
+	return t >= 3 ? "Stealth" : t === 2 ? "TeamJet" : data.skin;
+};
+
+Game.roll = (dir) => {
+	if (roll.cd > 0 || dead || mode !== "run" || Game.flow.cine || Game.hold) return;
+	roll.dir = dir;
+	roll.t = 0;
+	roll.cd = 0.7;
+	roll.kick = 1;
+	sfx("whoosh", 1.3);
+	if (Game.tut) Game.tutPress(dir < 0 ? "Q" : "E");
+};
+
+Game.startAt = (id) => {
+	let st = null;
+	for (const x of CONFIG.starts) if (x.id === id) st = x;
+	if (!st) return;
+	const at = st.at;
+	Game.safeRow = Math.floor(at / CHUNK);
+	if (["turrets", "city", "boss2", "sea", "space"].includes(id)) {
+		bossDone = true;
+		beyondStart = CONFIG.beyondAt;
+		Game.flow.tier = id === "space" ? 3 : 2;
+	}
+	if (id === "sea" || id === "space") {
+		Game.boss2.done = true;
+		Game.marks.sea = CONFIG.seaAt;
+	}
+	if (id === "space") Game.marks.final = at;
+	pos = V3(0, id === "sea" ? 70 : ALT, -(at + (id === "space" ? 60 : 5)));
+	Game.from = Math.floor(-pos.Z);
+	buff.immortal = 3;
+};
+
+async function crash(hits) {
+	if (dead) return;
+	dead = true;
+	const inTut = Game.introEnd === Infinity;
+	if (!inTut) Game.stopTut();
+	setVignette(0);
+	Missiles.clear();
+	const my = runId;
+	const at = pos;
+	sfx("crash");
+	wreck(vx);
+	const blastK = deathEffect(at);
+	for (const h of hits) if (h.GetAttribute("Break") && h.Parent) shatter(h, at, blastK);
+	for (const t of workspace.GetPartBoundsInRadius(at, BLAST_RADIUS * 0.5 * blastK, params)) {
+		if (t.GetAttribute("Break") && t.Parent) shatter(t, at, blastK);
+	}
+	crater(at);
+	bossBar.Visible = false;
+	tw(topBox, 0.4, { BackgroundTransparency: 1 });
+
+	await task.wait(inTut ? 1.2 : 2);
+	if (runId !== my) return;
+	if (inTut) {
+		Game.revive(true);
+		return;
+	}
+	if (await Game.offerRevive(my)) {
+		Game.revive();
+		return;
+	}
+	if (runId !== my) return;
+	const [ok, award] = request("run_end", stats);
+	if (runId !== my) return;
+	showResults(ok && typeof award === "object" ? award : null, {
+		stage: stageName(curStage || "towers"),
+		time: runTime,
+		prevBest: stats.prevBest,
+		dist: stats.dist,
+		maps: stats.maps,
+		bosses: stats.bosses,
+		kills: stats.kills,
+		glass: stats.glass,
+		pads: stats.gems + stats.keys,
+	});
+}
+
+Game.quitRun = () => {
+	if (mode !== "run" || dead) return;
+	dead = true;
+	Game.stopTut();
+	setVignette(0);
+	Missiles.clear();
+	if (planeModel) planeModel.Parent = null;
+	bossBar.Visible = false;
+	tw(topBox, 0.4, { BackgroundTransparency: 1 });
+	const my = runId;
+	const [ok, award] = request("run_end", stats);
+	if (runId !== my) return;
+	showResults(ok && typeof award === "object" ? award : null, {
+		stage: stageName(curStage || "towers"),
+		time: runTime,
+		prevBest: stats.prevBest,
+		dist: stats.dist,
+		maps: stats.maps,
+		bosses: stats.bosses,
+		kills: stats.kills,
+		glass: stats.glass,
+		pads: stats.gems + stats.keys,
+	});
+};
+
+Game.revive = (quiet) => {
+	dead = false;
+	Missiles.clear();
+	buildPlane(Game.tierPlane());
+	pos = V3(pos.X, Game.alt(), pos.Z);
+	vx = 0;
+	fuel = FUEL.max;
+	nitroK = 0;
+	Game.voidT = 0;
+	buff.immortal = 4;
+	ghost = true;
+	stats.revives++;
+	Game.fireAfter = runTime + 3;
+	topBox.BackgroundTransparency = T.hud;
+	bossBar.Visible = boss != null || Game.boss2.active;
+	Game.cam.last = null;
+	flash();
+	sfx("good", 0.9);
+	if (!quiet) {
+		// a 3 2 1 so you're ready before it goes on
+		Game.hold = true;
+		const my = runId;
+		task.spawn(async () => {
+			for (let i = 3; i >= 1; i--) {
+				if (runId !== my) return;
+				banner(String(i), WHITE, 0.8);
+				sfx("hover", 0.7 + (3 - i) * 0.2);
+				await task.wait(1);
+			}
+			if (runId !== my) return;
+			Game.hold = false;
+			buff.immortal = Math.max(buff.immortal, 3);
+			banner("GO!", GOOD, 1);
+			sfx("good");
+		});
+	}
+};
+
+Game.loopAround = () => {
+	Game.loop++;
+	Game.loopBase += Math.floor(-pos.Z);
+	Game.fireAfter = runTime + 5;
+	Missiles.clear();
+	Game.flow.reset();
+	Game.boss2.reset();
+	Game.guns.clear();
+	for (const k in Game.marks) delete Game.marks[k];
+	resetSky();
+	Game.safeRow = null;
+	Game.introEnd = null;
+	Game.shiftStages(0);
+	boss = null;
+	bossDone = false;
+	beyondStart = null;
+	curStage = null;
+	pos = V3(0, ALT, 0);
+	vx = 0;
+	fuel = FUEL.max;
+	nitroK = 0;
+	Game.voidT = 0;
+	buff.immortal = 3;
+	Game.cam.last = null;
+	Game.cam.blend = null;
+	regenerate(0, 0);
+	buildPlane(data.skin);
+	banner("LOOP " + (Game.loop + 1) + ", FASTER", COIN, 3);
+};
+
+startRun = (startId) => {
+	runId++;
+	Game.cam.last = null;
+	Game.cam.blend = null;
+	resetSky();
+	Game.flow.reset();
+	Game.boss2.reset();
+	Game.guns.clear();
+	for (const k in Game.marks) delete Game.marks[k];
+	closePanels();
+	mode = "run";
+	dead = false;
+	boss = null;
+	bossDone = false;
+	beyondStart = null;
+	curStage = null;
+	Game.loop = 0;
+	Game.loopBase = 0;
+	Game.voidT = 0;
+	Game.safeRow = null;
+	Game.hold = false;
+	Game.spd = null;
+	Game.from = 0;
+	ghost = false;
+	fuel = FUEL.max;
+	nitroK = 0;
+	roll.t = null;
+	roll.cd = 0;
+	roll.kick = 0;
+	setVignette(0);
+	Missiles.clear();
+	devK = 0;
+	menu.Visible = false;
+	results.Visible = false;
+	results.GroupTransparency = 1;
+	wallet.Visible = false;
+	hud.Visible = true;
+	topBox.BackgroundTransparency = T.hud;
+	bossBar.Visible = false;
+	pos = V3(0, ALT, 0);
+	vx = 0;
+	runTime = 0;
+	shake = 0;
+	stats = { dist: 0, from: 0, maps: 0, bosses: 0, revives: 0, gems: 0, keys: 0, hearts: 0, glass: 0, kills: 0, prevBest: data.best };
+	buff.immortal = 0;
+	Game.stopTut();
+	Game.introEnd = null;
+	Game.shiftStages(0);
+	if ((startId == null || startId === "towers") && !data.tutDone) {
+		Game.introEnd = Infinity;
+		Game.startTut();
+	}
+	Game.startAt(startId);
+	Game.fireAfter = 5;
+	regenerate(pos.X, pos.Z);
+	buildPlane(Game.tierPlane());
+	camera.FieldOfView = settings.fov;
+};
+
+toMenu = () => {
+	runId++;
+	Game.cam.last = null;
+	Game.cam.blend = null;
+	setVignette(0);
+	Missiles.clear();
+	Game.flow.reset();
+	Game.boss2.reset();
+	Game.guns.clear();
+	for (const k in Game.marks) delete Game.marks[k];
+	resetSky();
+	closePanels();
+	mode = "menu";
+	dead = false;
+	boss = null;
+	bossDone = false;
+	beyondStart = null;
+	Game.safeRow = null;
+	Game.hold = false;
+	Game.stopTut();
+	Game.introEnd = null;
+	Game.shiftStages(0);
+	hud.Visible = false;
+	results.Visible = false;
+	results.GroupTransparency = 1;
+	bossBar.Visible = false;
+	menu.Visible = true;
+	wallet.Visible = true;
+	if (planeModel) {
+		planeModel.Destroy();
+		planeModel = null;
+	}
+	menuX = 0;
+	menuZ = 0;
+	Game.menuCam = null;
+	runTime = 0;
+	regenerate(0);
+	updateWalls(false);
+	camera.FieldOfView = settings.fov;
+	refreshUI();
+	animateMenu();
+};
+
+function step(dt) {
+	if (Game.hold) return;
+	runTime += dt;
+	for (const k in buff) buff[k] = Math.max(0, buff[k] - dt);
+	const dist = -pos.Z;
+
+	const [stage] = stageFor(dist);
+	if (stage !== curStage) {
+		const old = curStage;
+		curStage = stage;
+		onStage(stage, old);
+	}
+
+	if (Game.flow.cine) {
+		Game.flow.update(dt);
+		trackChunks(pos.X, pos.Z);
+		updateMovers();
+		updatePads(pos.Y, pos.Z);
+		Game.guns.update(dt, false);
+		Missiles.hide();
+		setVignette(0);
+		stats.dist = Math.max(0, Math.floor(Game.loopBase + Math.floor(-pos.Z) - (Game.from || 0)));
+		distL.Text = fmt(stats.dist);
+		return;
+	}
+
+	if (stage === "sea" && Game.marks.final == null) {
+		const F = Game.flow;
+		if (!F.carrier && dist - Game.marks.sea > Game.SEA_LEN - 1500) F.spawnCarrier();
+		if (F.carrier && !F.approach && F.carrier.z - pos.Z > -1400) F.startApproach();
+	}
+
+	if (stage === "beyond" && Game.marks.final != null && dist - Game.marks.final > 4000) {
+		Game.flow.startDescent();
+		return;
+	}
+
+	let diff = 1;
+	if (mode === "run") {
+		const shift = Game.shift || 0;
+		diff = 1 + clamp((dist - shift) / (BOSS_START - shift), 0, 1) * 0.55;
+		if (beyondStart != null) diff += Math.min(Math.max(0, dist - beyondStart) / 40000, 0.3);
+		if (Game.marks.final != null) diff += Math.max(0, dist - Game.marks.final) / 40000;
+		diff += Game.loop * 0.25;
+	}
+
+	const typing = UIS.GetFocusedTextBox() != null;
+	const cheat = false;
+	const nitro = ((!typing && Game.down("nitro")) || Game.touch.nitro) && fuel > 0 && !boss && !Game.boss2.active && !Game.flow.approach && !typing;
+	devK += ((cheat ? 1 : 0) - devK) * Math.min(1, dt * 3);
+	nitroK += ((nitro ? 1 : 0) - nitroK) * Math.min(1, dt * (nitro ? 4 : 2));
+	speedNow = BASE_SPEED * diff * (Game.flow.tier >= 3 ? 0.75 : 1) * (1 + (FUEL.mult - 1) * nitroK) * (1 + 19 * devK);
+	if (Game.spd != null && Game.spd < 1) {
+		Game.spd = Math.min(1, Game.spd + dt / 1.6);
+		speedNow *= 0.4 + 0.6 * Game.spd;
+	}
+	const strafe = STRAFE * (0.75 + 0.25 * diff) * (1 + 0.6 * nitroK);
+
+	if (!boss && !Game.boss2.active && !cheat) {
+		const before = fuel;
+		fuel = Math.max(0, fuel - (FUEL.drain + (nitro ? FUEL.nitro : 0)) * dt);
+		if (before > 0 && fuel <= 0) {
+			sfx("bad");
+			popup("OUT OF FUEL", BAD);
+		}
+	}
+
+	let y = pos.Y;
+	let approachY = null, approachK = null;
+	if (Game.flow.approach) {
+		[approachY, approachK] = Game.flow.approachUpdate();
+		if (Game.flow.cine) return;
+	}
+	if (approachY != null) {
+		fuel = Math.max(fuel, 20);
+		y += (approachY - y) * Math.min(1, dt * 3);
+		speedNow *= approachK;
+	} else if (fuel <= 0 && stage !== "beyond") y -= FUEL.sink * dt;
+	else y += (Game.alt() - y) * Math.min(1, dt * 2);
+
+	if (stage === "beyond" && fuel <= 0 && !Game.god) {
+		const before = Game.voidT;
+		Game.voidT += dt;
+		if (Math.floor(before * 2) !== Math.floor(Game.voidT * 2)) sfx("bad", 1.2 + Game.voidT * 0.3);
+		if (Game.voidT >= 3) {
+			task.spawn(crash, []);
+			return;
+		}
+	} else Game.voidT = 0;
+
+	let input = 0;
+	if (Game.down("left")) input -= 1;
+	if (Game.down("right")) input += 1;
+	if (Game.touch.left) input -= 1;
+	if (Game.touch.right) input += 1;
+	input = clamp(input, -1, 1);
+	if (Game.tut) {
+		if (input < 0) Game.tutPress("A");
+		else if (input > 0) Game.tutPress("D");
+		if (nitro) Game.tutPress("W");
+	}
+
+	roll.cd = Math.max(0, roll.cd - dt);
+	roll.kick = Math.max(0, roll.kick - dt * 2.5);
+	let target = input * strafe, spin = 0;
+	if (roll.t != null) {
+		roll.t += dt;
+		const k = Math.min(roll.t / 0.45, 1);
+		const e = k < 0.5 ? 2 * k * k : 1 - (-2 * k + 2) ** 2 / 2;
+		spin = -roll.dir * Math.PI * 2 * e;
+		if (roll.t < 0.35) target = roll.dir * strafe * 2.3;
+		if (k >= 1) roll.t = null;
+	}
+	vx += (target - vx) * Math.min(1, STEER * dt * (roll.t != null ? 2 : 1));
+	pos = V3(pos.X + vx * dt, y, pos.Z - speedNow * dt);
+	if (stage === "intro") Game.from = (Game.from || 0) + speedNow * dt;
+	const b = bound() - 8;
+	const c = center();
+	if (Math.abs(pos.X - c) > b) {
+		pos = V3(clamp(pos.X, c - b, c + b), pos.Y, pos.Z);
+		vx = 0;
+	}
+
+	if (stage === "canyon") {
+		const [hg, funnel] = canyonHalfGap(-pos.Z);
+		if (funnel) {
+			const cc = canyonPath(-pos.Z);
+			const x = clamp(pos.X, cc - hg + 8, cc + hg - 8);
+			if (x !== pos.X) {
+				pos = V3(x, pos.Y, pos.Z);
+				vx = 0;
+			}
+		}
+	}
+
+	trackChunks(pos.X, pos.Z);
+	updateMovers();
+	updatePads(pos.Y, pos.Z);
+	if (boss) updateBoss(dt);
+	if (stage === "city") Game.cityTick(dt);
+	if (Game.boss2.active) Game.boss2.update(dt);
+	Missiles.update(dt);
+	Game.guns.update(dt, Game.flow.tier >= 2 && !typing && (Game.down("shoot") || Game.touch.shoot));
+	updateWalls(true);
+
+	planeMain.CFrame = CFrame.fromPos(pos).mul(Ang(fuel <= 0 ? -0.15 : 0, 0, -clamp(vx / strafe, -1, 1) * 0.6 + spin));
+	if (nitroK > 0.1) shake = Math.max(shake, 0.1 * nitroK);
+	setVignette(Math.max(nitroK, devK) * 0.8);
+
+	for (const p of workspace.GetPartBoundsInBox(CFrame.fromPos(pos), PICKBOX, pickParams)) collect(p);
+
+	const phasing = nitroK > 0.2 || cheat || Game.flow.approach || Game.god;
+	if (buff.immortal > 0 || phasing) ghost = true;
+	const hits = [];
+	for (const h of workspace.GetPartBoundsInBox(CFrame.fromPos(pos), HITBOX, params)) {
+		if (h.GetAttribute("Glass")) {
+			if (h.Parent) {
+				const wasEmpty = fuel <= 0;
+				shatter(h, pos.add(V3(0, 0, 8)), 0.8, true, 4);
+				fuel = Math.min(FUEL.max, fuel + 12);
+				stats.glass++;
+				shake = Math.max(shake, 0.35);
+				sfx("crash", 1.4);
+				popup(wasEmpty ? "SAVED" : "+FUEL   +10 ●", wasEmpty ? GOOD : RGB(255, 90, 70));
+				Game.fuelFlash = clock();
+			}
+		} else if (!(h.GetAttribute("Floor") && fuel > 0)) hits.push(h);
+	}
+
+	if (hits.length === 0 && !phasing && buff.immortal <= 0 && curStage !== "canyon" && clock() > (Game.nearT || 0)) {
+		for (const h of workspace.GetPartBoundsInBox(CFrame.fromPos(pos), V3(24, 8, 6), params)) {
+			if (!h.GetAttribute("Floor") && !h.GetAttribute("Glass")) {
+				Game.nearT = clock() + 1.2;
+				popup("CLOSE!", WHITE);
+				sfx("whoosh", 1.9);
+				shake = Math.max(shake, 0.12);
+				break;
+			}
+		}
+	}
+
+	if (fuel <= 0 && pos.Y <= 4 && !Game.god) {
+		task.spawn(crash, hits);
+		return;
+	}
+
+	if (hits.length > 0) {
+		if (phasing) {
+			// nitro just phases through
+		} else if (ghost) {
+			for (const h of hits) {
+				if (h.GetAttribute("Break") && h.Parent) {
+					shatter(h, pos.add(V3(0, 0, 6)), 0.6);
+					shake = Math.max(shake, 0.25);
+				}
+			}
+		} else {
+			task.spawn(crash, hits);
+			return;
+		}
+	} else if (buff.immortal <= 0 && !phasing) ghost = false;
+
+	const flick = ghost && !phasing && Math.floor(clock() * 12) % 2 === 0 ? 0.6 : 0;
+	for (const p of planeParts) if (p.LocalTransparencyModifier !== flick) p.LocalTransparencyModifier = flick;
+
+	stats.dist = Math.max(0, Math.floor(Game.loopBase + Math.floor(-pos.Z) - (Game.from || 0)));
+
+	distL.Text = fmt(stats.dist);
+	stageL.Text = stageName(stage);
+	let [, prog] = stageFor(dist);
+	const onMap = MAP_STAGES[stage] && !boss && !Game.boss2.active && !Game.flow.cine;
+	Game.mapBar.Visible = !!onMap;
+	if (onMap) {
+		prog = clamp(prog || 0, 0, 1);
+		Game.mapFill.Size = US(prog, 1);
+		Game.mapPct.Text = Math.floor(prog * 100) + "%";
+	}
+	coinBox.Visible = mode === "run";
+	runCoinL.Text = "● " + fmt(runCoins());
+	fuelFill.Size = US(fuel / FUEL.max, 1);
+	fuelFill.BackgroundColor3 = clock() - (Game.fuelFlash || 0) < 0.4 ? GOOD : fuel < 25 && Math.floor(clock() * 6) % 2 === 0 ? BAD : WHITE;
+
+	const fx = [];
+	if (nitroK > 0.2) fx.push("NITRO");
+	if (fuel <= 0) fx.push(stage === "beyond" ? "NO FUEL, BOOM IN " + Math.max(0, 3 - Game.voidT).toFixed(1) : "OUT OF FUEL");
+	if (buff.immortal > 0) fx.push("IMMORTAL " + buff.immortal.toFixed(1));
+	effectL.Text = fx.join("     ");
+	effectL.TextColor3 = fuel <= 0 ? BAD : COIN;
+}
+
+// dev only (?dev in the url): L skips ahead, O toggles god mode
+Game.skip = () => {
+	const F = Game.flow;
+	if (F.cine) return;
+	if (boss) {
+		Game.skipBoss();
+		return;
+	}
+	if (Game.boss2.active) {
+		Game.boss2.hit(1e6);
+		return;
+	}
+	if (F.approach) {
+		pos = V3(F.carrier.x, pos.Y, F.carrier.stern + 1);
+		return;
+	}
+	const [stage] = stageFor(-pos.Z);
+	let nextD = null;
+	if (stage === "intro") {
+		Game.stopTut();
+		Game.endIntro();
+		nextD = Game.introEnd;
+	} else if (STAGE_BY_ID[stage]) nextD = STAGE_BY_ID[stage].finish;
+	else if (stage === "turrets") nextD = beyondStart + (CONFIG.turretsLen || 4000);
+	else if (stage === "city") nextD = beyondStart + (CONFIG.turretsLen || 4000) + (CONFIG.cityLen || 4000);
+	else if (stage === "sea") {
+		if (!F.carrier) F.spawnCarrier();
+		flash();
+		Missiles.clear();
+		Game.cam.last = null;
+		pos = V3(F.carrier.x, 70, F.carrier.z + 1400);
+		return;
+	} else if (stage === "boss2" && Game.boss2.done && Game.marks.sea != null) nextD = Game.marks.sea;
+	else if (stage === "beyond") {
+		F.startDescent();
+		return;
+	}
+	if (nextD == null) return;
+	flash();
+	Missiles.clear();
+	Game.cam.last = null;
+	pos = V3(pos.X, Game.alt(), -(nextD + 5));
+	buff.immortal = Math.max(buff.immortal, 2);
+	fuel = FUEL.max;
+};
+const DEV = /[?&]dev\b/.test(location.search);
+
+UIS.InputBegan.Connect((input, gp) => {
+	if (gp || dead || mode !== "run" || UIS.GetFocusedTextBox()) return;
+	if (Game.isBind("dashL", input)) Game.roll(-1);
+	else if (Game.isBind("dashR", input)) Game.roll(1);
+	if (DEV && input.KeyCode === "O") {
+		Game.god = !Game.god;
+		popup(Game.god ? "GOD ON" : "GOD OFF", COIN);
+	}
+	if (DEV && input.KeyCode === "L") Game.skip();
+});
+
+RunService.RenderStepped.Connect((dt) => {
+	dt = Math.min(dt, 0.05);
+	const TC = Game.touch;
+	TC.ui.Visible = TC.on && mode === "run" && !dead && !Game.flow.cine;
+	TC.fireBtn.Visible = Game.flow.tier >= 2;
+
+	if (wallet.Visible) {
+		const k = Math.min(1, dt * 8);
+		for (const [name, label] of [["coins", coinL], ["gems", gemL], ["keys", keyL]]) {
+			shown[name] += (data[name] - shown[name]) * k;
+			if (Math.abs(data[name] - shown[name]) < 0.5) shown[name] = data[name];
+		}
+		coinL.Text = "● " + fmt(shown.coins + 0.5);
+		gemL.Text = "◆ " + fmt(shown.gems + 0.5);
+		keyL.Text = "✦ " + fmt(shown.keys + 0.5);
+	}
+
+	if (mode === "menu") {
+		runTime += dt;
+		menuZ -= 45 * dt;
+		let mc = Game.menuCam;
+		if (!mc) {
+			mc = { x: menuX, tx: menuX, y: 75, ty: 75, scan: 0, vx: 0, vy: 0, lookX: menuX };
+			Game.menuCam = mc;
+		}
+		mc.scan -= dt;
+		if (mc.scan <= 0) {
+			mc.scan = 0.5;
+			let found = null;
+			outer: for (let i = 0; i <= 14; i++) {
+				for (const sgn of i === 0 ? [1] : [1, -1]) {
+					let x = mc.tx + sgn * i * 18;
+					x -= sign(x) * Math.min(Math.abs(x), 6);
+					if (Math.abs(x) < 520 && workspace.GetPartBoundsInBox(CFn(x, 78, menuZ - 70), V3(34, 40, 260), params).length === 0) {
+						found = x;
+						break outer;
+					}
+				}
+			}
+			if (found != null) {
+				mc.tx = found;
+				mc.ty = 75;
+			} else mc.ty = 150;
+		}
+		mc.vx += ((mc.tx - mc.x) * 1.2 - mc.vx * 2.2) * dt;
+		mc.vy += ((mc.ty - mc.y) * 1.0 - mc.vy * 2.0) * dt;
+		mc.vx = clamp(mc.vx, -20, 20);
+		mc.vy = clamp(mc.vy, -16, 16);
+		mc.x += mc.vx * dt;
+		mc.y += mc.vy * dt;
+		mc.lookX += (mc.x - mc.lookX) * Math.min(1, dt * 0.6);
+		menuX = mc.x;
+		updateMovers();
+		updatePads(ALT, menuZ);
+		trackChunks(menuX, menuZ);
+		if (-menuZ > BOSS_START - 400) {
+			menuZ = 0;
+			regenerate(menuX);
+		}
+		camera.CFrame = CFrame.lookAt(V3(menuX, mc.y, menuZ + 40), V3(mc.lookX + Math.sin(clock() * 0.25) * 25, 25, menuZ - 250));
+		return;
+	}
+
+	if (!dead) step(dt);
+
+	let cam;
+	if (dead) cam = CFrame.lookAt(pos.add(V3(0, 35, 80)), pos.add(V3(0, 15, -20)));
+	else if (Game.flow.cam) {
+		cam = Game.flow.cam;
+		camera.FieldOfView += (settings.fov - camera.FieldOfView) * Math.min(1, dt * 3);
+	} else {
+		cam = CFrame.lookAt(pos.add(V3(0, 10, 28)), pos.add(V3(0, 2, -60)));
+		const target = Math.min(120, settings.fov + clamp((speedNow / BASE_SPEED - 1) * 14, -10, 12) + nitroK * 30 + devK * 20 + Math.sin(roll.kick * Math.PI) * 14);
+		camera.FieldOfView += (target - camera.FieldOfView) * Math.min(1, dt * 4);
+	}
+	const C = Game.cam;
+	if (C.last && cam.Position.sub(C.last.Position).Magnitude > 8 + speedNow * dt * 3) {
+		C.blend = { rel: CFrame.fromPos(pos).ToObjectSpace(camera.CFrame), t: 0 };
+	}
+	C.last = cam;
+	if (C.blend) {
+		C.blend.t += dt / 0.8;
+		let k = Math.min(C.blend.t, 1);
+		k = k < 0.5 ? 2 * k * k : 1 - (-2 * k + 2) ** 2 / 2;
+		cam = CFrame.fromPos(pos).mul(C.blend.rel).Lerp(cam, k);
+		if (C.blend.t >= 1) C.blend = null;
+	}
+	if (shake > 0) {
+		shake -= dt;
+		const m = settings.shake === false ? 0 : shake * 0.1;
+		cam = cam.mul(Ang((random(-100, 100) / 100) * m, (random(-100, 100) / 100) * m, 0));
+	}
+	camera.CFrame = cam;
+});
+
+task.spawn(async () => {
+	while (true) {
+		await task.wait(1);
+		if (mode === "menu") updateRewards();
+	}
+});
+
+// ------------------------------------------------------------------ pause
+
+(() => {
+	const pp = make("CanvasGroup", {
+		AnchorPoint: V2(0.5, 0.5),
+		Position: US(0.5, 0.5),
+		Size: UO(420, 300),
+		BackgroundColor3: BLACK,
+		BackgroundTransparency: T.panel,
+		Visible: false,
+		ZIndex: 30,
+		Parent: gui,
+	});
+	text(pp, "PAUSED", U2(1, 0, 0, 70), UO(0, 16), 56, WHITE);
+	button(pp, "RESUME", UO(320, 58), U2(0.5, -160, 0, 104), () => Game.setPause(false), 0.1);
+	button(pp, "END RUN", UO(320, 58), U2(0.5, -160, 0, 172), () => {
+		Game.setPause(false);
+		Game.quitRun();
+	});
+	const pHint = text(pp, "P TO RESUME, YOU KEEP WHAT YOU EARNED IF YOU END IT", U2(1, -20, 0, 24), UO(10, 250), 16, DIM);
+
+	const pauseBtn = button(hud, "II", UO(50, 50), U2(1, -66, 0, 74), () => Game.setPause(true));
+	pauseBtn.TextSize = 24;
+	pauseBtn.el.style.pointerEvents = "auto";
+
+	const canPause = () => mode === "run" && !dead && !Game.flow.cine && !Game.hold;
+
+	Game.setPause = (on) => {
+		if (on) {
+			if (Game.paused || !canPause()) return;
+			Game.paused = true;
+			Game.hold = true;
+			pp.Visible = true;
+			pp.GroupTransparency = 1;
+			tw(pp, 0.2, { GroupTransparency: 0 });
+			pHint.Text = Game.keyName("pause") + " TO RESUME, YOU KEEP WHAT YOU EARNED IF YOU END IT";
+			pHint.Visible = !Game.touch.on;
+			sfx("open");
+		} else {
+			if (!Game.paused) return;
+			Game.paused = false;
+			Game.hold = false;
+			pp.Visible = false;
+			buff.immortal = Math.max(buff.immortal, 1);
+			sfx("close");
+		}
+	};
+
+	UIS.InputBegan.Connect((input, gp) => {
+		if (gp || UIS.GetFocusedTextBox()) return;
+		if (Game.rebinding) return;
+		if (Game.isBind("pause", input)) {
+			if (Game.paused) Game.setPause(false);
+			else Game.setPause(true);
+		} else if (input.KeyCode === "Escape" && Game.paused) {
+			Game.setPause(false);
+		} else if (input.KeyCode === "Return" && mode === "menu" && !overlay.Visible) {
+			Game.go("towers");
+		} else if (input.KeyCode === "R" && mode === "run" && dead && results.Visible) {
+			Game.go("towers");
+		}
+	});
+
+	UIS.WindowFocusReleased.Connect(() => Game.setPause(true));
+	document.addEventListener("visibilitychange", () => {
+		if (document.hidden) Game.setPause(true);
+	});
+
+	RunService.Heartbeat.Connect(() => {
+		pauseBtn.Visible = canPause() || Game.paused === true;
+		if (Game.paused && (mode !== "run" || dead)) {
+			Game.paused = false;
+			Game.hold = false;
+			pp.Visible = false;
+		}
+	});
+})();
+
+// the skin showcase turns slowly
+RunService.RenderStepped.Connect(() => {
+	const m = Game.skinModel;
+	if (m && m.Parent) {
+		const t = clock();
+		m.PivotTo(Ang(0, t * 0.9, 0).mul(Ang(Math.sin(t * 1.3) * 0.08, 0, Math.sin(t * 0.9) * 0.15)));
+	}
+});
+
+Lighting.FogColor = RGB(190, 205, 225);
+applySettings();
+toMenu();
+start();
+document.getElementById("boot").remove();
+if (DEV) window.__dev = { crash: () => task.spawn(crash, []), data: () => data, stats: () => stats };
