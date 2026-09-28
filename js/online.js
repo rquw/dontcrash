@@ -1,8 +1,8 @@
 // the online leaderboard: firebase realtime database over plain REST, anonymous sign-in so
 // everyone can only write their own entry. paste your project's values in here (see README)
 export const FIREBASE = {
-	apiKey: "",
-	databaseURL: "",
+	apiKey: "AIzaSyDbXhlHYOlbbTTU2xm7QfytbQXiT58uIDw",
+	databaseURL: "https://dontcrash-7a1db-default-rtdb.europe-west1.firebasedatabase.app",
 };
 
 export const enabled = () => !!(FIREBASE.apiKey && FIREBASE.databaseURL);
