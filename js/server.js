@@ -4,17 +4,17 @@ const KEY = "dontcrash_save_v1";
 export const CONFIG = {
 	title: "DON'T CRASH!",
 	stages: [
-		// towers is 6000, every map after it is 1.3x the one before
+		// towers is 6000, every map after it is 1.2x the one before
 		{ id: "towers", name: "1  TOWERS", len: 6000 },
-		{ id: "moving", name: "2  MOVING", len: 7800 },
-		{ id: "canyon", name: "3  CANYON", len: 10100 },
-		{ id: "smash", name: "4  SMASH", len: 13200 },
+		{ id: "moving", name: "2  MOVING", len: 7200 },
+		{ id: "canyon", name: "3  CANYON", len: 8600 },
+		{ id: "smash", name: "4  SMASH", len: 10400 },
 	],
-	turretsLen: 17100,
-	cityLen: 22300,
+	turretsLen: 12400,
+	cityLen: 14900,
 	mapBonus: 250,
 	bossBonus: 750,
-	seaLen: 29000,
+	seaLen: 17900,
 	beyondGap: 3000,
 	starts: [
 		{ id: "moving", name: "MOVING", keys: 6, coins: 500 },

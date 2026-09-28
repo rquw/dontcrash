@@ -1870,7 +1870,20 @@ let openPanel, closePanels, startRun, toMenu;
 			sfx("bad");
 			return;
 		}
+		Game.lastStart = id || "towers";
 		fade(() => startRun(id));
+	};
+
+	// retry goes back to wherever you started this run, paying for it again
+	Game.retryStart = () => {
+		const id = Game.lastStart;
+		if (!id || id === "towers" || !data.starts[id]) return null;
+		return CONFIG.starts.find((st) => st.id === id) || null;
+	};
+	Game.retry = () => {
+		const st = Game.retryStart();
+		if (st && Game.topUp("coins", st.coins)) return;
+		Game.go(st ? st.id : "towers");
 	};
 
 	const strip = make("ScrollingFrame", {
@@ -2844,8 +2857,25 @@ let showResults;
 	const noteL = text(results, "", U2(1, -40, 0, 22), UO(20, 432), 18, DIM);
 	Game.xpRow = make("Frame", { Position: UO(40, 466), Size: U2(1, -80, 0, 40), BackgroundTransparency: 1, Visible: false, Parent: results });
 
-	Game.retryBtn = button(results, "RETRY", UO(250, 58), U2(0, 30, 1, -80), () => Game.go("towers"), 0.1);
-	button(results, "MENU", UO(250, 58), U2(1, -280, 1, -80), () => fade(toMenu));
+	Game.retryBtn = button(results, "RETRY", UO(300, 58), U2(0, 30, 1, -80), () => Game.retry(), 0.1);
+	const retryL = Icons.text(Game.retryBtn, U2(1, -16, 1, 0), UO(8, 0), 18, WHITE);
+	button(results, "MENU", UO(210, 58), U2(1, -240, 1, -80), () => fade(toMenu));
+	RunService.RenderStepped.Connect(() => {
+		if (!results.Visible) return;
+		const st = Game.retryStart();
+		const rb = Game.retryBtn;
+		if (st) {
+			if (rb.Text !== "") rb.Text = "";
+			const t = "RETRY FROM " + st.name + "  ● " + fmt(st.coins);
+			if (retryL.Text !== t) retryL.Text = t;
+			const c = data.coins >= st.coins ? WHITE : DIM;
+			if (retryL.TextColor3 !== c) retryL.TextColor3 = c;
+		} else {
+			const t = Game.touch.on ? "RETRY" : "RETRY  (R)";
+			if (rb.Text !== t) rb.Text = t;
+			if (retryL.Text !== "") retryL.Text = "";
+		}
+	});
 
 	let token = 0;
 	function countUp(label, target, dur, fmtFn, my) {
@@ -5954,7 +5984,6 @@ task.spawn(async () => {
 			Game.paused = false;
 			Game.hold = false;
 			pp.Visible = false;
-			buff.immortal = Math.max(buff.immortal, 1);
 			sfx("close");
 		}
 	};
@@ -5970,7 +5999,7 @@ task.spawn(async () => {
 		} else if (input.KeyCode === "Return" && mode === "menu" && !overlay.Visible) {
 			Game.go("towers");
 		} else if (input.KeyCode === "R" && mode === "run" && dead && results.Visible) {
-			Game.go("towers");
+			Game.retry();
 		}
 	});
 
