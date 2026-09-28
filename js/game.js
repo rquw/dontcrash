@@ -284,6 +284,11 @@ function stageFor(d) {
 		if (k < tl) return ["turrets", k / tl];
 		if (k < tl + cl) return ["city", (k - tl) / cl];
 		const m = Game.marks;
+		// boss 2 switched off: a short beach after the city, then the sea
+		if (m.sea == null && CONFIG.boss2 === false) {
+			m.sea = beyondStart + tl + cl + 100;
+			Game.boss2.done = true;
+		}
 		if (m.sea == null || d < m.sea) return ["boss2", 0];
 		if (m.final == null || d < m.final) return ["sea", Math.min((d - m.sea) / Game.SEA_LEN, 1)];
 		return ["beyond", (d - m.final) / 1000];
@@ -292,7 +297,7 @@ function stageFor(d) {
 }
 
 function stageName(id) {
-	const n = STAGE_BY_ID[id] ? STAGE_BY_ID[id].name : { boss: "BOSS", turrets: "TURRETS", city: "CITY", boss2: "BOSS", sea: "SEA", beyond: "SPACE", intro: "" }[id];
+	const n = STAGE_BY_ID[id] ? STAGE_BY_ID[id].name : { boss: "BOSS", turrets: "TURRETS", city: "CITY", boss2: CONFIG.boss2 === false ? "SEA" : "BOSS", sea: "SEA", beyond: "SPACE", intro: "" }[id];
 	return (n === undefined ? String(id) : n).replace(/^\d+\s*/, "");
 }
 
@@ -321,6 +326,7 @@ let trackChunks, updateMovers, regenerate, canyonPath, canyonHalfGap, updatePads
 		if (stage === "beyond") return RGB(20, 25 + h * 3, 45 + h * 4);
 		if (stage === "turrets") return RGB(s * 0.55, s * 0.75, s * 0.45);
 		if (stage === "city") return RGB(35 + h * 2, 35 + h * 2, 42 + h * 2);
+		if (stage === "boss2" && CONFIG.boss2 === false) return RGB(s * 0.95, s * 0.85, s * 0.6);
 		if (stage === "boss2") return RGB(s * 0.6, s * 0.45, s * 0.35);
 		if (stage === "sea") return RGB(20 + h * 8, 70 + h * 14, 140 + h * 12);
 		return RGB(s * 0.6, s, s * 0.5);
@@ -2509,6 +2515,55 @@ function applySettings() {
 	for (const pg of PAGES) block2(pg[0], pg[1], pg[2]);
 })();
 
+// ------------------------------------------------------------------ hidden codes
+// only the names live here, what they give is up to the server. lower weight = shows up less
+(() => {
+	const HINTS = {
+		COINS: 1, GEMS: 1, KEYS: 1, MOREKEYS: 0.7, REVIVE: 0.8, TURRETS: 1, UNLOCK: 0.5, FABIO: 1, BLASCHEGG: 1, ARTHUR: 1,
+		FUCHSI: 1, MATTHEO: 1, NIKLAS: 1, JONAS: 1, SECRET: 0.6, VERYSECRETCODE: 0.3, FREESTUFF: 0.7, PIETROPIZZI: 0.4, HOFFELBOI: 0.25,
+	};
+	const used = (c) => data.codes && data.codes[c];
+	function pick() {
+		const list = Object.entries(HINTS).filter(([c]) => !used(c));
+		let r = Math.random() * list.reduce((t, e) => t + e[1], 0);
+		for (const [c, w] of list) if ((r -= w) <= 0) return c;
+		return list.length ? list[list.length - 1][0] : null;
+	}
+	// every time a spot comes on screen it gets a small chance to show a code
+	const spots = [];
+	Game.codeSpot = (label, shown, fmtFn, chance) => {
+		label.Visible = false;
+		spots.push({ label, shown, fmt: fmtFn, chance, was: false });
+	};
+	setInterval(() => {
+		for (const s of spots) {
+			const on = !!s.shown();
+			if (on && !s.was) {
+				s.code = Math.random() < s.chance ? pick() : null;
+				s.label.Visible = !!s.code;
+				if (s.code) s.label.Text = s.fmt(s.code);
+			} else if (!on || (s.code && used(s.code))) s.label.Visible = false;
+			s.was = on;
+		}
+	}, 150);
+
+	const corner = text(menu, "", UO(300, 18), U2(0, 56, 1, -30), 14, WHITE, LEFT);
+	corner.TextTransparency = 0.78;
+	Game.codeSpot(corner, () => menu.Visible && mode === "menu", (c) => "CODE: " + c, 0.05);
+
+	const sr = row(panels.settings.body, 30, 1);
+	sr.LayoutOrder = 1e6;
+	const sl = text(sr, "", US(1, 1), null, 14, DIM, RIGHT);
+	sl.TextTransparency = 0.5;
+	Game.codeSpot(sl, () => panels.settings.frame.Visible, (c) => "SECRET CODE: " + c, 0.05);
+
+	const hr = row(panels.howto.body, 30, 1);
+	hr.LayoutOrder = 1e6;
+	const hl = text(hr, "", US(1, 1), null, 15, DIM);
+	hl.TextTransparency = 0.45;
+	Game.codeSpot(hl, () => panels.howto.frame.Visible, (c) => "psst... TRY THE CODE " + c, 0.05);
+})();
+
 // ------------------------------------------------------------------ rewards
 
 function result(ok, msg) {
@@ -2530,24 +2585,6 @@ const rewardRefs = { play: [] };
 		Icons.text(r, U2(0.62, 0, 0, 22), UO(16, 36), 18, DIM, LEFT).Text = sub;
 		return button(r, "", UO(170, 44), U2(1, -184, 0.5, -22), fn, 0.3);
 	}
-	header(rewardsPanel.body, "CHESTS");
-	rewardRefs.daily = rewardRow(rewardsPanel.body, "DAILY GOLD CHEST", describe(CONFIG.daily), (b) => {
-		if (serverNow() - data.lastDaily >= 86400) result(Game.claim(b, "claim_daily"));
-		else sfx("bad");
-	});
-	rewardRefs.hourly = rewardRow(rewardsPanel.body, "HOURLY SMALL CHEST", describe(CONFIG.hourly), (b) => {
-		if (serverNow() - data.lastHourly >= 3600) result(Game.claim(b, "claim_hourly"));
-		else sfx("bad");
-	});
-	header(rewardsPanel.body, "GAMEPLAY REWARDS (STAY WITHOUT LEAVING)");
-	CONFIG.playRewards.forEach((r, idx) => {
-		const i = idx + 1;
-		const label = r.min < 60 ? r.min + " MIN" : idiv(r.min, 60) + "H" + (r.min % 60 > 0 ? " " + (r.min % 60) + "M" : "");
-		rewardRefs.play[idx] = rewardRow(rewardsPanel.body, label, describe(r), (b) => {
-			if (!claimed["p" + i] && sessionTime() >= r.min * 60) result(Game.claim(b, "claim_play", i));
-			else sfx("bad");
-		});
-	});
 	header(rewardsPanel.body, "CODES");
 	{
 		const r = row(rewardsPanel.body, 64);
@@ -2574,6 +2611,24 @@ const rewardRefs = { play: [] };
 		});
 		button(r, "REDEEM", UO(170, 44), U2(1, -184, 0.5, -22), redeem, 0.1);
 	}
+	header(rewardsPanel.body, "CHESTS");
+	rewardRefs.daily = rewardRow(rewardsPanel.body, "DAILY GOLD CHEST", describe(CONFIG.daily), (b) => {
+		if (serverNow() - data.lastDaily >= 86400) result(Game.claim(b, "claim_daily"));
+		else sfx("bad");
+	});
+	rewardRefs.hourly = rewardRow(rewardsPanel.body, "HOURLY SMALL CHEST", describe(CONFIG.hourly), (b) => {
+		if (serverNow() - data.lastHourly >= 3600) result(Game.claim(b, "claim_hourly"));
+		else sfx("bad");
+	});
+	header(rewardsPanel.body, "GAMEPLAY REWARDS (STAY WITHOUT LEAVING)");
+	CONFIG.playRewards.forEach((r, idx) => {
+		const i = idx + 1;
+		const label = r.min < 60 ? r.min + " MIN" : idiv(r.min, 60) + "H" + (r.min % 60 > 0 ? " " + (r.min % 60) + "M" : "");
+		rewardRefs.play[idx] = rewardRow(rewardsPanel.body, label, describe(r), (b) => {
+			if (!claimed["p" + i] && sessionTime() >= r.min * 60) result(Game.claim(b, "claim_play", i));
+			else sfx("bad");
+		});
+	});
 })();
 
 function setState(b, state, label) {
@@ -2927,6 +2982,27 @@ function deathView(vp, kind) {
 		hi.Position = U2(0, 30, 0.5, 0);
 		text(r, "REVIVES  " + (data.revives || 0), UO(400, 32), UO(110, 16), 28, RGB(255, 100, 130), LEFT);
 		text(r, "SUPER RARE RED HEARTS WHILE FLYING. USE ONE WHEN YOU CRASH TO KEEP GOING.", U2(1, -130, 0, 40), UO(110, 50), 16, DIM, LEFT);
+		// a random secret code for a key, only 5 times
+		const bought = data.bought || [];
+		const left = 5 - bought.length;
+		const cr = row(shopItems, 66);
+		text(cr, "MYSTERY CODE", U2(0.6, 0, 0, 30), UO(16, 7), 24, WHITE, LEFT);
+		text(cr, left > 0 ? "one of the hidden codes, " + left + " of 5 left" : "sold out", U2(0.6, 0, 0, 22), UO(16, 37), 18, DIM, LEFT);
+		const cb = button(cr, "", UO(180, 44), U2(1, -194, 0.5, -22), () => {
+			if (left <= 0) sfx("bad");
+			else if (!Game.topUp("keys", 1)) {
+				const [ok, msg] = request("buy_code");
+				notify(msg, ok ? KEY : BAD);
+				sfx(ok ? "buy" : "bad");
+				rebuildShop();
+			}
+		}, 0.3);
+		Icons.text(cb, US(1, 1), null, 22, left > 0 && data.keys >= 1 ? KEY : DIM).Text = left > 0 ? "1 ✦" : "SOLD OUT";
+		const unused = bought.filter((c) => !data.codes[c]);
+		if (unused.length) {
+			const ur = row(shopItems, 40, 0.6);
+			text(ur, "YOUR CODES:  " + unused.join("   "), U2(1, -32, 1, 0), UO(16, 0), 20, KEY, LEFT);
+		}
 		// what leveling up gives you
 		const lr = row(shopItems, 96, 0.45);
 		make("UICorner", { CornerRadius: UDim.new(0, 10), Parent: lr });
@@ -3022,6 +3098,9 @@ let showResults;
 	const rewardL = Icons.text(results, U2(1, -40, 0, 36), UO(20, 394), 32, COIN);
 	const noteL = text(results, "", U2(1, -40, 0, 22), UO(20, 432), 18, DIM);
 	Game.xpRow = make("Frame", { Position: UO(40, 466), Size: U2(1, -80, 0, 40), BackgroundTransparency: 1, Visible: false, Parent: results });
+	const codeL = text(results, "", U2(1, -40, 0, 18), UO(20, 509), 15, KEY);
+	codeL.TextTransparency = 0.35;
+	Game.codeSpot(codeL, () => results.Visible, (c) => 'USE CODE "' + c + '"', 0.05);
 
 	Game.retryBtn = button(results, "RETRY", UO(300, 58), U2(0, 30, 1, -80), () => Game.retry(), 0.1);
 	const retryL = Icons.text(Game.retryBtn, U2(1, -16, 1, 0), UO(8, 0), 18, WHITE);
@@ -3577,7 +3656,7 @@ Game.showXp = (award, my, alive) => {
 
 let startBoss, updateBoss, resetSky;
 (() => {
-	const HOLD = 12;
+	const HOLD = 15;
 	const MISSILE_TIME = 16;
 	const FIRE = 0.35;
 	const HULL = RGB(242, 244, 248);
@@ -3651,6 +3730,18 @@ let startBoss, updateBoss, resetSky;
 		p.makeEllipsoid();
 		return p;
 	}
+	// long exhaust that widens and fades out slowly, so it doesn't end in a hard edge
+	function exhaust(p, width, life) {
+		const t = Instance.new("Trail");
+		t.Width = width;
+		t.Lifetime = life;
+		t.MaxPoints = 260;
+		t.WidthScale = new NumberSequence([NumberSequenceKeypoint.new(0, 0.6), NumberSequenceKeypoint.new(0.15, 1), NumberSequenceKeypoint.new(1, 2.6)]);
+		t.Color = new ColorSequence([ColorSequenceKeypoint.new(0, RGB(255, 190, 140)), ColorSequenceKeypoint.new(0.12, RGB(235, 232, 228)), ColorSequenceKeypoint.new(1, RGB(170, 172, 180))]);
+		t.Transparency = new NumberSequence([NumberSequenceKeypoint.new(0, 0.35), NumberSequenceKeypoint.new(0.35, 0.6), NumberSequenceKeypoint.new(0.75, 0.85), NumberSequenceKeypoint.new(1, 1)]);
+		t.LightEmission = 0.25;
+		t.Parent = p;
+	}
 	function contrail(p, color, width, life) {
 		const t = Instance.new("Trail");
 		t.Width = width;
@@ -3687,7 +3778,7 @@ let startBoss, updateBoss, resetSky;
 			part(m, V3(16, 7.5, 7.5), RGB(215, 218, 225), CFn(x, -10, ez).mul(ALONG), cyl);
 			part(m, V3(0.4, 6.4, 6.4), DARK, CFn(x, -10, ez - 8.1).mul(ALONG), cyl);
 			const glow = part(m, V3(0.5, 5.5, 5.5), RGB(255, 120, 40), CFn(x, -10, ez + 8.2).mul(ALONG), { Shape: "Cylinder", Material: "Neon", _uniqueMat: true });
-			contrail(glow, RGB(255, 230, 210), 3, 1.6);
+			exhaust(glow, 4, 3.5);
 			const light = Instance.new("PointLight");
 			light.Color = RGB(255, 120, 40);
 			light.Range = 30;
@@ -3767,16 +3858,43 @@ let startBoss, updateBoss, resetSky;
 		return clamp(x, c - b, c + b);
 	}
 
+	const clampX = (x) => clamp(x, (Game.arenaX || 0) - 312, (Game.arenaX || 0) + 312);
+
+	// returns how long until the next attack, so nothing new starts while a big one is still charging
 	function volley() {
 		const b = boss;
 		const t = b.t;
 		b.volleys++;
-		if (t > 10 && b.volleys % 6 === 0) {
+		const n = b.volleys;
+		if (t > 9 && n % 5 === 0) {
+			// wall with one gap, later ones get a second wall right after
 			const mid = lead(1.2);
 			const gap = mid + random(-40, 40);
 			for (let x = mid - 220; x <= mid + 220; x += 26) if (Math.abs(x - gap) > 26) shoot(x, 1.2);
 			sfx("laser_charge", 0.8);
-			return;
+			if (t > 14) {
+				task.delay(1.2 + FIRE + 0.25, () => {
+					if (boss !== b || b.finale) return;
+					const gap2 = clampX(pos.X + (Math.random() < 0.5 ? -1 : 1) * random(70, 110));
+					for (let x = pos.X - 220; x <= pos.X + 220; x += 26) if (Math.abs(x - gap2) > 26) shoot(x, 1);
+					sfx("laser_charge", 0.8);
+				});
+				return 1.2 + FIRE + 0.25 + 1 + FIRE + 0.6;
+			}
+			return 1.2 + FIRE + 0.6;
+		}
+		if (t > 5 && n % 5 === 3) {
+			// sweep: beams march across toward you, get out of the way or outrun it
+			const dir = Math.random() < 0.5 ? -1 : 1;
+			const start = pos.X - dir * 100;
+			for (let i = 0; i <= 8; i++) {
+				task.delay(i * 0.14, () => {
+					if (boss !== b || b.finale) return;
+					shoot(clampX(start + dir * i * 30), 1.05);
+				});
+			}
+			sfx("laser_charge", 0.9);
+			return 1.05 + 8 * 0.14 + FIRE + 0.4;
 		}
 		const moving = Math.abs(vx) > 15;
 		if (moving) {
@@ -3787,6 +3905,14 @@ let startBoss, updateBoss, resetSky;
 			if (t > 8 && Math.random() < 0.5) shoot(pos.X + (Math.random() < 0.5 ? -1 : 1) * random(22, 34));
 		}
 		sfx("laser_charge", 1.05);
+		// later on it follows up with a quick second shot where you dodged to
+		if (t > 13 && Math.random() < 0.5) {
+			task.delay(0.45, () => {
+				if (boss !== b || b.finale) return;
+				shoot(lead(0.6), 0.6);
+			});
+		}
+		return t < 8 ? 1.2 : t < 14 ? 0.95 : 0.85;
 	}
 
 	function boom() {
@@ -3991,8 +4117,7 @@ let startBoss, updateBoss, resetSky;
 		const missileEnd = laserEnd + MISSILE_TIME;
 		if (t < laserEnd) {
 			if (t >= b.nextShot) {
-				volley();
-				b.nextShot = t + (t < 8 ? 1.2 : 0.95);
+				b.nextShot = t + volley();
 			}
 		} else if (t < missileEnd) {
 			if (!b.phase2) {
@@ -4008,7 +4133,14 @@ let startBoss, updateBoss, resetSky;
 					launch(-1, k);
 					launch(1, k);
 				} else launch(Math.random() < 0.5 ? -1 : 1, k);
-				b.nextMissile = t + 1.4 - k * 0.5;
+				b.nextMissile = t + 1.3 - k * 0.5;
+			}
+			// lasers don't stop completely while the missiles fly
+			if (b.nextSnipe == null) b.nextSnipe = t + 2.5;
+			if (t >= b.nextSnipe) {
+				shoot(lead(0.9), 0.9);
+				sfx("laser_charge", 1.05);
+				b.nextSnipe = t + 2.8 - (t - laserEnd) / MISSILE_TIME;
 			}
 		}
 
@@ -4729,6 +4861,8 @@ let startBoss, updateBoss, resetSky;
 		planeModel = c.jet;
 		planeMain = c.jmain;
 		planeParts = c.jparts;
+		fuel = FUEL.max;
+		Game.fuelFlash = clock();
 	}
 
 	function neonPart(size, color, cf, trans) {
@@ -4962,6 +5096,8 @@ let startBoss, updateBoss, resetSky;
 			planeModel = c.jet;
 			planeMain = c.jmain;
 			planeParts = c.jparts;
+			fuel = FUEL.max;
+			Game.fuelFlash = clock();
 			pos = c.jetPos;
 			sfx("launch", 0.8);
 			F.cine = { kind: "launch", t: 2.2, v, pitch: 0 };
@@ -5206,7 +5342,7 @@ let startBoss, updateBoss, resetSky;
 // ------------------------------------------------------------------ run
 
 function runCoins() {
-	const c = idiv(stats.dist, 10) + stats.maps * CONFIG.mapBonus + stats.bosses * CONFIG.bossBonus + stats.glass * 10 + stats.kills * 5;
+	const c = idiv(stats.dist, 10) + stats.maps * CONFIG.mapBonus + stats.bosses * CONFIG.bossBonus + stats.glass * 10 + stats.kills * 5 + (stats.close || 0) * (CONFIG.closeBonus || 15);
 	return Math.floor(c * boostMult() * (1 + 0.25 * (data.power.coins || 0)));
 }
 
@@ -5329,17 +5465,18 @@ function onStage(nw, old) {
 		sfx("map_clear");
 	}
 	if (nw === "boss") startBoss();
-	else if (nw === "boss2") {
+	else if (nw === "boss2" && CONFIG.boss2 === false) {
+		// boss 2 is switched off: straight to the runway before the sea
+		Game.mood(Game.sky.clock, RGB(170, 200, 230), 4);
+	} else if (nw === "boss2") {
 		banner(stageName(nw), BAD, 2.5);
 		Game.boss2.start();
 	} else if (nw === "beyond") {
 		banner(stageName(nw), GEM, 2.5);
-		sfx("stage", 0.8);
 		Game.space();
 	} else {
 		if (!Game.tut) {
 			banner(stageName(nw), WHITE, 2);
-			if (nw !== "intro") sfx("stage");
 		}
 		if (nw === "smash") {
 			task.delay(2.2, () => {
@@ -5647,7 +5784,7 @@ startRun = (startId) => {
 	vx = 0;
 	runTime = 0;
 	shake = 0;
-	stats = { dist: 0, from: 0, maps: 0, bosses: 0, revives: 0, gems: 0, keys: 0, hearts: 0, glass: 0, kills: 0, prevBest: data.best };
+	stats = { dist: 0, from: 0, maps: 0, bosses: 0, revives: 0, gems: 0, keys: 0, hearts: 0, glass: 0, kills: 0, close: 0, prevBest: data.best };
 	buff.immortal = 0;
 	Game.stopTut();
 	Game.introEnd = null;
@@ -5878,7 +6015,8 @@ function step(dt) {
 		for (const h of workspace.GetPartBoundsInBox(CFrame.fromPos(pos), V3(24, 8, 6), params)) {
 			if (!h.GetAttribute("Floor") && !h.GetAttribute("Glass")) {
 				Game.nearT = clock() + 1.2;
-				popup("CLOSE!", WHITE);
+				stats.close = (stats.close || 0) + 1;
+				popup("CLOSE!  +" + (CONFIG.closeBonus || 15) + " ●", WHITE);
 				sfx("near", 1, 1, clamp((h.Position.X - pos.X) / 20, -0.7, 0.7));
 				shake = Math.max(shake, 0.12);
 				break;
@@ -6108,6 +6246,9 @@ task.spawn(async () => {
 	});
 	text(pp, "PAUSED", U2(1, 0, 0, 70), UO(0, 16), 56, WHITE);
 	button(pp, "RESUME", UO(320, 58), U2(0.5, -160, 0, 104), () => Game.setPause(false), 0.1);
+	const pauseCode = text(pp, "", U2(1, 0, 0, 18), U2(0, 0, 1, -26), 14, DIM);
+	pauseCode.TextTransparency = 0.5;
+	Game.codeSpot(pauseCode, () => pp.Visible, (c) => "CODE: " + c, 0.05);
 	button(pp, "END RUN", UO(320, 58), U2(0.5, -160, 0, 172), () => {
 		Game.setPause(false);
 		Game.quitRun();

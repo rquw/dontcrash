@@ -1517,7 +1517,7 @@ export class Trail extends Instance {
 			this._scene = sc;
 			if (!this.mesh) {
 				const g = new THREE.BufferGeometry();
-				this.maxPts = 40;
+				this.maxPts = this.MaxPoints || 40;
 				g.setAttribute("position", new THREE.BufferAttribute(new Float32Array(this.maxPts * 2 * 3), 3));
 				g.setAttribute("color", new THREE.BufferAttribute(new Float32Array(this.maxPts * 2 * 4), 4));
 				const idx = [];

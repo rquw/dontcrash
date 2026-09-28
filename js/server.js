@@ -14,6 +14,9 @@ export const CONFIG = {
 	cityLen: 14900,
 	mapBonus: 250,
 	bossBonus: 750,
+	// boss 2 is out until it's reworked, flip this back on and it's all there again
+	boss2: false,
+	closeBonus: 15,
 	seaLen: 17900,
 	beyondGap: 3000,
 	starts: [
@@ -66,7 +69,30 @@ const CODES = {
 	RQUW: { coins: 500 },
 	XRACER: { gems: 15 },
 	TOWERS: { coins: 1000, keys: 1 },
+	COINS: { coins: 1000 },
+	GEMS: { gems: 2 },
+	KEYS: { keys: 1 },
+	MOREKEYS: { keys: 2 },
+	REVIVE: { revives: 1 },
+	TURRETS: { coins: 100, gems: 10 },
+	UNLOCK: { keys: 5 },
+	FABIO: { coins: 67 },
+	BLASCHEGG: { coins: 125, gems: 41 },
+	ARTHUR: { coins: 123, gems: 3, keys: 1 },
+	FUCHSI: { coins: 88, gems: 2 },
+	MATTHEO: { coins: 1 },
+	NIKLAS: { gems: 1 },
+	JONAS: { keys: 1 },
+	SECRET: { coins: 100, gems: 10, keys: 1 },
+	VERYSECRETCODE: { keys: 3 },
+	FREESTUFF: { coins: 450, gems: 10 },
+	PIETROPIZZI: { coins: 1000, gems: 20, keys: 1 },
+	HOFFELBOI: { coins: 4600, gems: 16, keys: 1 },
+	HOFFELBOY: { coins: 1 },
 };
+// the ones hidden around the game, the shop sells these too
+const HIDDEN = ["COINS", "GEMS", "KEYS", "MOREKEYS", "REVIVE", "TURRETS", "UNLOCK", "FABIO", "BLASCHEGG", "ARTHUR", "FUCHSI", "MATTHEO", "NIKLAS", "JONAS", "SECRET", "VERYSECRETCODE", "FREESTUFF", "PIETROPIZZI", "HOFFELBOI"];
+const CODE_BUYS = 5;
 
 let acc = 0;
 for (const s of CONFIG.stages) {
@@ -76,12 +102,13 @@ for (const s of CONFIG.stages) {
 }
 const BOSS_START = acc;
 const BEYOND = BOSS_START + CONFIG.beyondGap;
-const SEA_AT = BEYOND + CONFIG.turretsLen + CONFIG.cityLen + 1500;
+const SEA_AT = BEYOND + CONFIG.turretsLen + CONFIG.cityLen + (CONFIG.boss2 ? 1500 : 100);
 CONFIG.beyondAt = BEYOND;
 CONFIG.seaAt = SEA_AT;
 const AT = { boss: BOSS_START, turrets: BEYOND, city: BEYOND + CONFIG.turretsLen, boss2: BEYOND + CONFIG.turretsLen + CONFIG.cityLen, sea: SEA_AT, space: SEA_AT + CONFIG.seaLen + 1500 };
 for (const st of CONFIG.stages) AT[st.id] = st.start;
 const startById = {};
+if (!CONFIG.boss2) CONFIG.starts = CONFIG.starts.filter((st) => st.id !== "boss2");
 for (const st of CONFIG.starts) {
 	st.at = AT[st.id];
 	startById[st.id] = st;
@@ -107,6 +134,7 @@ const DEFAULT = {
 	deaths: { Default: true }, death: "Default",
 	lastDaily: 0, lastHourly: 0,
 	codes: {},
+	bought: [],
 	boost: 1, boostUntil: 0,
 	starts: {},
 	tutDone: false,
@@ -162,6 +190,7 @@ function describe(r) {
 	if (r.coins > 0) parts.push("+" + r.coins + " coins");
 	if (r.gems > 0) parts.push("+" + r.gems + " gems");
 	if (r.keys > 0) parts.push("+" + r.keys + " keys");
+	if (r.revives > 0) parts.push("+" + r.revives + (r.revives === 1 ? " revive" : " revives"));
 	if (r.boost) parts.push(r.boost + "x coins for 1h");
 	return parts.join("  ");
 }
@@ -212,6 +241,18 @@ handlers.redeem = (code) => {
 	s.data.codes[code] = true;
 	grant(s.data, r);
 	return [true, "code redeemed: " + describe(r)];
+};
+handlers.buy_code = () => {
+	const d = s.data;
+	d.bought = d.bought || [];
+	if (d.bought.length >= CODE_BUYS) return [false, "sold out"];
+	if (d.keys < 1) return [false, "not enough keys"];
+	const left = HIDDEN.filter((c) => !d.codes[c] && !d.bought.includes(c));
+	if (!left.length) return [false, "you already found every code"];
+	const c = left[Math.floor(Math.random() * left.length)];
+	d.keys -= 1;
+	d.bought.push(c);
+	return [true, "your code: " + c];
 };
 handlers.buy_power = (id) => {
 	const d = s.data;
@@ -337,10 +378,11 @@ handlers.run_end = (r) => {
 	const kills = num(r.kills, cap * 4);
 	const gemPads = num(r.gems, cap), keyPads = num(r.keys, cap);
 	const glass = num(r.glass, cap * 3);
+	const closes = num(r.close, Math.floor(elapsed / 1.1) + 1);
 	const hearts = num(r.hearts, Math.floor(traveled / 4000) + 1);
 	const mult = 1 + 0.25 * (d.power.coins || 0);
 	const award = {
-		coins: Math.floor((Math.floor(traveled / 10) + maps * CONFIG.mapBonus + bosses * CONFIG.bossBonus + glass * 10 + kills * 5) * mult),
+		coins: Math.floor((Math.floor(traveled / 10) + maps * CONFIG.mapBonus + bosses * CONFIG.bossBonus + glass * 10 + kills * 5 + closes * CONFIG.closeBonus) * mult),
 		gems: gemPads * 5,
 		keys: keyPads,
 	};
