@@ -27,7 +27,7 @@ const SFX = {
 	good: ["ui_good", 1, 0.6, 0], bad: ["ui_bad", 1, 0.6, 0], tick: ["ui_tick", 1, 0.15, 0], whoosh: ["whoosh_ui", 1, 0.5, 0.05],
 	portal: ["pick_fuel", 1, 0.8, 0], crash: ["crash", 1, 1, 0],
 	crash_confetti: ["crash_confetti", 1, 1, 0], crash_pixel: ["crash_pixel", 1, 1, 0], crash_nuke: ["crash_nuke", 1, 1, 0],
-	pick_fuel: ["pick_fuel", 1, 0.8, 0.06], pick_gem: ["pick_gem", 1, 0.8, 0.04], pick_key: ["pick_key", 1, 0.9, 0], pick_heart: ["pick_heart", 1, 1, 0],
+	coin_land: ["coin_land", 1, 0.3, 0.04], pick_fuel: ["pick_fuel", 1, 0.8, 0.06], pick_gem: ["pick_gem", 1, 0.8, 0.04], pick_key: ["pick_key", 1, 0.9, 0], pick_heart: ["pick_heart", 1, 1, 0],
 	nitro_on: ["nitro_on", 1, 0.45, 0.05], roll: ["roll", 1, 0.45, 0.08], near: ["near", 1, 0.45, 0.08],
 	stage: ["stage", 1, 0.45, 0], map_clear: ["map_clear", 1, 0.7, 0], loop_banner: ["loop_banner", 1, 0.9, 0],
 	glass: ["glass", 1, 0.85, 0.1], shatter: ["shatter", 1, 0.5, 0.12], hit: ["hit", 1, 0.2, 0.15], shield: ["shield", 1, 0.5, 0.1],
@@ -175,7 +175,7 @@ let speedNow = BASE_SPEED;
 let fuel = FUEL.max, nitroK = 0;
 const roll = { dir: 0, cd: 0, kick: 0 };
 const Missiles = {};
-const Game = { flow: { tier: 1 }, boss2: {}, guns: {}, marks: {}, cam: {}, fallers: new Map(), SEA_LEN: CONFIG.seaLen || 5000, loop: 0, loopBase: 0, voidT: 0, gravity: workspace.Gravity, touch: {} };
+const Game = { SPACE_LEN: 8000, flow: { tier: 1 }, boss2: {}, guns: {}, marks: {}, cam: {}, fallers: new Map(), SEA_LEN: CONFIG.seaLen || 5000, loop: 0, loopBase: 0, voidT: 0, gravity: workspace.Gravity, touch: {} };
 window.Game = Game;
 let devK = 0;
 
@@ -292,9 +292,8 @@ function stageFor(d) {
 }
 
 function stageName(id) {
-	if (STAGE_BY_ID[id]) return STAGE_BY_ID[id].name;
-	const n = { boss: "5  BOSS", turrets: "6  TURRETS", city: "7  CITY", boss2: "8  BOSS", sea: "9  SEA", beyond: "10  SPACE", intro: "" }[id];
-	return n === undefined ? id : n;
+	const n = STAGE_BY_ID[id] ? STAGE_BY_ID[id].name : { boss: "BOSS", turrets: "TURRETS", city: "CITY", boss2: "BOSS", sea: "SEA", beyond: "SPACE", intro: "" }[id];
+	return (n === undefined ? String(id) : n).replace(/^\d+\s*/, "");
 }
 
 function block(size, p, color, parent) {
@@ -406,12 +405,27 @@ let trackChunks, updateMovers, regenerate, canyonPath, canyonHalfGap, updatePads
 		}
 	}
 
+	// every ship's footprint, so a new one never lands inside another one
+	const shipRects = new Map();
+	function shipFits(key, x0, x1, z0, z1) {
+		for (const [k, r] of shipRects) {
+			if (k === key) continue;
+			if (!r.parts[0].Parent) shipRects.delete(k);
+			else if (r.x1 + 30 > x0 && r.x0 - 30 < x1 && r.z1 + 40 > z0 && r.z0 - 40 < z1) return false;
+		}
+		return true;
+	}
+
 	function ships(folder, rng, x0, z0, count) {
 		const hullC = RGB(88, 94, 104), deckC = RGB(62, 66, 74), superC = RGB(122, 128, 138);
 		for (let i = 0; i < count; i++) {
 			const x = x0 + rng.NextNumber(30, CHUNK - 30);
 			const z = z0 - rng.NextNumber(0, CHUNK);
 			const L = rng.NextInteger(220, 300), W = rng.NextInteger(40, 56);
+			const key = x0 + ":" + z0 + ":" + i;
+			const rx0 = x - W / 2, rx1 = x + W / 2, rz0 = z - L / 2 - 50, rz1 = z + L / 2;
+			if (!shipFits(key, rx0, rx1, rz0, rz1)) continue;
+			const before = folder.GetChildren().length;
 
 			const hull = block(V3(W, 26, L), V3(x, 13, z), hullC, folder);
 			hull.SetAttribute("Floor", true);
@@ -466,6 +480,7 @@ let trackChunks, updateMovers, regenerate, canyonPath, canyonHalfGap, updatePads
 				}
 				Missiles.addTurret(launcher);
 			}
+			shipRects.set(key, { x0: rx0, x1: rx1, z0: rz0, z1: rz1, parts: folder.GetChildren().slice(before) });
 		}
 	}
 
@@ -706,8 +721,8 @@ let trackChunks, updateMovers, regenerate, canyonPath, canyonHalfGap, updatePads
 				towers(folder, rng, x0, z0, amount(rng, (1 + t * 2.5) * mult), RGB(35, 35, 45));
 				glassTowers(folder, rng, x0, z0, amount(rng, 0.8 - t * 0.3));
 			} else if (stage === "turrets") {
-				towers(folder, rng, x0, z0, amount(rng, (1.5 + t * 2.5) * mult));
-				turretTowers(folder, rng, x0, z0, amount(rng, 0.25 + t * 0.35));
+				towers(folder, rng, x0, z0, amount(rng, (1.2 + t * 1.8) * mult));
+				turretTowers(folder, rng, x0, z0, amount(rng, 0.15 + t * 0.2));
 			} else if (stage === "city") {
 				const far = Math.abs(x0 + CHUNK / 2 - pos.X) > 900;
 				cityBlocks(folder, rng, x0, z0, far ? Math.min(1, amount(rng, 0.7)) : amount(rng, (0.6 + t * 0.8) * mult), far);
@@ -736,10 +751,13 @@ let trackChunks, updateMovers, regenerate, canyonPath, canyonHalfGap, updatePads
 		const row = Math.floor(-z / CHUNK);
 		const col = Math.floor(x / CHUNK);
 		const keep = new Set();
-		const view = settings.low ? Math.min(settings.view, 4) : settings.view;
-		for (let r = row - 1; r <= row + view; r++) {
+		let view = settings.low ? Math.min(settings.view, 4) : settings.view;
+		// cutscenes swing the camera around, so build a lot more around you there
+		const cine = !!Game.flow.cine;
+		if (cine) view = Math.max(view, 9);
+		for (let r = row - (cine ? 3 : 1); r <= row + view; r++) {
 			const ahead = Math.max(0, r - row) * CHUNK;
-			const half = Math.min(400 + ahead * (settings.low ? 0.8 : 1.25), SOFT + 400);
+			const half = Math.min((cine ? 1000 : 400) + ahead * (settings.low ? 0.8 : 1.25), SOFT + 400);
 			for (let cx = Math.floor((x - half) / CHUNK); cx <= Math.floor((x + half) / CHUNK); cx++) {
 				const k = key(cx, r);
 				keep.add(k);
@@ -768,12 +786,13 @@ let trackChunks, updateMovers, regenerate, canyonPath, canyonHalfGap, updatePads
 	}
 
 	trackChunks = (x, z) => {
-		const k = key(Math.floor(x / CHUNK), Math.floor(-z / CHUNK));
+		const cine = !!Game.flow.cine;
+		const k = key(Math.floor(x / CHUNK), Math.floor(-z / CHUNK)) + (cine ? "c" : "");
 		if (k !== lastKey) {
 			lastKey = k;
 			updateChunks(x, z);
 		}
-		processQueue(0.004);
+		processQueue(cine ? 0.01 : 0.004);
 	};
 
 	updateMovers = () => {
@@ -818,20 +837,25 @@ const walls = {};
 	const wallFolder = Instance.new("Folder");
 	wallFolder.Name = "Walls";
 	wallFolder.Parent = workspace;
+	// each wall is a row of segments that get fainter further out, so it fades into the distance instead of ending hard
 	for (const side of [-1, 1]) {
-		const w = Instance.new("Part");
-		w.Anchored = true;
-		w.CanCollide = false;
-		w.CanQuery = false;
-		w.CastShadow = false;
-		w.Material = "Neon";
-		w.Color = RGB(170, 220, 255);
-		w.Size = V3(2, 300, 3000);
-		w.Transparency = 1;
-		w._uniqueMat = true;
-		w.SetAttribute("Side", side);
-		w.Parent = wallFolder;
-		walls[side] = w;
+		const segs = [];
+		for (let i = 0; i < 18; i++) {
+			const w = Instance.new("Part");
+			w.Anchored = true;
+			w.CanCollide = false;
+			w.CanQuery = false;
+			w.CastShadow = false;
+			w.Material = "Neon";
+			w.Color = RGB(170, 220, 255);
+			w.Size = V3(2, 400, 300);
+			w.Transparency = 1;
+			w._uniqueMat = true;
+			w.SetAttribute("Side", side);
+			w.Parent = wallFolder;
+			segs.push(w);
+		}
+		walls[side] = segs;
 	}
 })();
 
@@ -842,12 +866,13 @@ const center = () => (boss || Game.boss2.active ? Game.arenaX || 0 : 0);
 function updateWalls(show) {
 	const b = bound();
 	for (const side of [-1, 1]) {
-		const w = walls[side];
-		if (!show) w.Transparency = 1;
-		else {
-			w.CFrame = CFn(center() + side * b, 150, pos.Z - 1200);
-			w.Transparency = b < SOFT ? 0.8 : 1;
-		}
+		walls[side].forEach((w, i) => {
+			if (!show || b >= SOFT) w.Transparency = 1;
+			else {
+				w.CFrame = CFn(center() + side * b, 190, pos.Z + 150 - (i + 0.5) * 300);
+				w.Transparency = 0.8 + 0.2 * (i / 17) ** 0.8;
+			}
+		});
 	}
 }
 
@@ -1389,6 +1414,15 @@ const Icons = {};
 		put(0.677, 0.36, 0.5, 0.5, c, { round: true });
 		put(0.3, 0.3, 0.14, 0.08, WHITE, { round: true, rot: -40, alpha: 0.3 });
 	};
+	DRAW.fuel = (put, s) => {
+		const c = RGB(255, 70, 55), dark = RGB(150, 25, 20);
+		put(0.62, 0.14, 0.2, 0.16, RGB(70, 70, 75), { round: 0.2 });
+		put(0.36, 0.2, 0.3, 0.14, c, { round: true, stroke: Math.max(1, s * 0.07) });
+		put(0.5, 0.6, 0.72, 0.72, c, { round: 0.14, grad: SHADE });
+		put(0.5, 0.6, 0.5, 0.06, dark, { rot: 45, alpha: 0.35 });
+		put(0.5, 0.6, 0.5, 0.06, dark, { rot: -45, alpha: 0.35 });
+		put(0.3, 0.36, 0.14, 0.07, WHITE, { round: true, alpha: 0.35 });
+	};
 	DRAW.gift = (put, s) => {
 		const box = RGB(255, 95, 95), rib = RGB(255, 205, 60);
 		put(0.37, 0.2, 0.24, 0.2, rib, { round: true, rot: -30 });
@@ -1643,9 +1677,11 @@ const wallet = make("CanvasGroup", {
 make("UIListLayout", { FillDirection: "row", HorizontalAlignment: "flex-end", Padding: UDim.new(0, 6), Parent: wallet });
 
 let coinL, gemL, keyL;
+Game.pills = {};
 (() => {
-	function pill(color) {
+	function pill(color, kind) {
 		const f = make("Frame", { Size: UO(130, 40), BackgroundColor3: BLACK, BackgroundTransparency: T.pill, Parent: wallet });
+		Game.pills[kind] = { frame: f, scale: make("UIScale", { Parent: f }) };
 		const hit = make("TextButton", { Size: US(1, 1), BackgroundTransparency: 1, Text: "", ZIndex: 2, Parent: f });
 		hit.MouseEnter.Connect(() => tw(f, 0.15, { BackgroundTransparency: 0.1 }));
 		hit.MouseLeave.Connect(() => tw(f, 0.2, { BackgroundTransparency: T.pill }));
@@ -1655,11 +1691,75 @@ let coinL, gemL, keyL;
 		});
 		return Icons.text(f, US(1, 1), null, 22, color);
 	}
-	coinL = pill(COIN);
-	gemL = pill(GEM);
-	keyL = pill(KEY);
+	coinL = pill(COIN, "coins");
+	gemL = pill(GEM, "gems");
+	keyL = pill(KEY, "keys");
 })();
 const shown = { coins: data.coins, gems: data.gems, keys: data.keys };
+
+// stuff you just earned flies out of where you got it and into the counters up top. the counters wait for it
+const pending = { coins: 0, gems: 0, keys: 0 };
+(() => {
+	const ICON = { coins: "coin", gems: "gem", keys: "key" };
+	Game.holdWallet = (gain) => {
+		for (const k in pending) pending[k] += Math.max(0, Math.floor(gain[k] || 0));
+	};
+	Game.releaseWallet = (gain) => {
+		for (const k in pending) pending[k] = Math.max(0, pending[k] - Math.max(0, Math.floor(gain[k] || 0)));
+	};
+	// from = a gui object, gain = { coins, gems, keys }. held = already on hold
+	Game.flyReward = (from, gain, held) => {
+		const obj = from._holder || from;
+		const ap = obj.AbsolutePosition, as = obj.AbsoluteSize, gp = gui.AbsolutePosition;
+		const origin = { X: ap.X + as.X / 2 - gp.X, Y: ap.Y + as.Y / 2 - gp.Y };
+		let order = 0, landed = 0;
+		for (const kind of ["coins", "gems", "keys"]) {
+			const amt = Math.max(0, Math.floor(gain[kind] || 0));
+			if (amt <= 0) continue;
+			if (!held) pending[kind] += amt;
+			const n = clamp(Math.ceil(Math.sqrt(amt) / (kind === "coins" ? 2.5 : 1)), 3, 14);
+			let left = amt;
+			for (let i = 1; i <= n; i++) {
+				const share = i === n ? left : Math.floor(amt / n);
+				left -= share;
+				order++;
+				task.delay(order * 0.04, async () => {
+					const ic = Icons.make(ICON[kind], gui, 34);
+					ic.AnchorPoint = V2(0.5, 0.5);
+					ic.ZIndex = 40;
+					ic.Position = UO(origin.X, origin.Y);
+					const sc = make("UIScale", { Scale: 0.3, Parent: ic });
+					const a = Math.random() * Math.PI * 2, r = random(50, 120);
+					tw(sc, 0.22, { Scale: 1.15 }, "Back");
+					tw(ic, 0.3, { Position: UO(origin.X + Math.cos(a) * r, origin.Y + Math.sin(a) * r - 40), Rotation: random(-40, 40) }, "Quad", "Out");
+					await task.wait(0.3 + Math.random() * 0.15);
+					const p = Game.pills[kind];
+					const fp = p.frame.AbsolutePosition, g2 = gui.AbsolutePosition;
+					const tgt = { X: fp.X + 28 - g2.X, Y: fp.Y + p.frame.AbsoluteSize.Y / 2 - g2.Y };
+					const dur = 0.42 + Math.random() * 0.1;
+					tw(ic, dur, { Position: UO(tgt.X, tgt.Y), Rotation: 0 }, "Quad", "In");
+					tw(sc, dur, { Scale: 0.6 }, "Quad", "In");
+					await task.wait(dur);
+					ic.Destroy();
+					pending[kind] = Math.max(0, pending[kind] - share);
+					landed++;
+					if (kind === "coins") sfx("coin_land", Math.min(1 + landed * 0.05, 1.7));
+					else if (kind === "gems") sfx("pick_gem", 1.1 + Math.min(landed * 0.04, 0.5), 0.5);
+					else sfx("pick_key", null, 0.6);
+					p.scale.Scale = 1.08;
+					tw(p.scale, 0.25, { Scale: 1 }, "Back");
+				});
+			}
+		}
+	};
+	// claim something and send whatever changed flying
+	Game.claim = (from, action, arg) => {
+		const before = { coins: data.coins, gems: data.gems, keys: data.keys };
+		const res = request(action, arg);
+		if (res[0]) Game.flyReward(from, { coins: data.coins - before.coins, gems: data.gems - before.gems, keys: data.keys - before.keys });
+		return res;
+	};
+})();
 
 // ------------------------------------------------------------------ hud
 
@@ -1728,18 +1828,78 @@ let setVignette;
 
 let fuelFill;
 (() => {
+	// a proper tank gauge: rounded pill, colour runs green to red, a white ghost shows what you just burned,
+	// it pops when you refuel and pulses red when you're about to run dry
 	const bar = make("Frame", {
 		AnchorPoint: V2(0.5, 1),
-		Position: U2(0.5, 0, 1, -34),
-		Size: UO(420, 14),
-		BackgroundColor3: BLACK,
-		BackgroundTransparency: 0.35,
+		Position: U2(0.5, 0, 1, -30),
+		Size: UO(440, 26),
+		BackgroundColor3: RGB(12, 14, 20),
+		BackgroundTransparency: 0.25,
 		Parent: hud,
 	});
-	fuelFill = make("Frame", { Size: US(1, 1), BackgroundColor3: WHITE, Parent: bar });
-	text(bar, "FUEL", UO(70, 24), UO(-80, -5), 22, WHITE, RIGHT);
-	Game.nitroHint = text(bar, "HOLD " + Game.keyName("nitro") + " FOR NITRO", UO(200, 24), U2(1, 12, 0, -5), 20, DIM, LEFT);
+	make("UICorner", { CornerRadius: UDim.new(0, 13), Parent: bar });
+	const stroke = make("UIStroke", { Color: WHITE, Thickness: 2, Transparency: 0.7, ApplyStrokeMode: "Border", Parent: bar });
+	const scale = make("UIScale", { Parent: bar });
+	const inner = make("CanvasGroup", { Position: UO(4, 4), Size: U2(1, -8, 1, -8), BackgroundTransparency: 1, Parent: bar });
+	make("UICorner", { CornerRadius: UDim.new(0, 9), Parent: inner });
+	const ghost = make("Frame", { Size: US(1, 1), BackgroundColor3: WHITE, BackgroundTransparency: 0.6, BorderSizePixel: 0, Parent: inner });
+	make("UICorner", { CornerRadius: UDim.new(0, 9), Parent: ghost });
+	fuelFill = make("Frame", { Size: US(1, 1), BackgroundColor3: GOOD, BorderSizePixel: 0, Parent: inner });
+	make("UICorner", { CornerRadius: UDim.new(0, 9), Parent: fuelFill });
+	const grad = make("UIGradient", { Rotation: 90, Parent: fuelFill });
+	const gloss = make("Frame", { Position: US(0, 0.08), Size: U2(1, 0, 0.38, 0), BackgroundColor3: WHITE, BackgroundTransparency: 0.72, BorderSizePixel: 0, Parent: fuelFill });
+	make("UICorner", { CornerRadius: UDim.new(0, 4), Parent: gloss });
+	for (let i = 1; i <= 9; i++) {
+		make("Frame", { AnchorPoint: V2(0.5, 0), Position: US(i / 10, 0), Size: U2(0, 2, 1, 0), BackgroundColor3: BLACK, BackgroundTransparency: 0.55, BorderSizePixel: 0, ZIndex: 3, Parent: inner });
+	}
+	const sweep = make("Frame", { Position: U2(-0.3, 0, 0, 0), Size: US(0.25, 1), BackgroundColor3: WHITE, BorderSizePixel: 0, ZIndex: 4, Parent: inner });
+	make("UIGradient", { Transparency: new NumberSequence([NumberSequenceKeypoint.new(0, 1), NumberSequenceKeypoint.new(0.5, 0.25), NumberSequenceKeypoint.new(1, 1)]), Parent: sweep });
+
+	const icon = Icons.make("fuel", bar, 40);
+	icon.AnchorPoint = V2(1, 0.5);
+	icon.Position = U2(0, -8, 0.5, -2);
+	const iconScale = make("UIScale", { Parent: icon });
+	const pct = text(bar, "100", UO(64, 26), U2(1, 10, 0, 0), 24, WHITE, LEFT);
+	pct.TextStrokeTransparency = 0.5;
+	Game.nitroHint = text(bar, "HOLD " + Game.keyName("nitro") + " FOR NITRO", UO(240, 22), U2(0.5, -120, 0, -26), 18, DIM);
 	Game.fuelBar = bar;
+
+	const RED = RGB(255, 70, 55), YELLOW = RGB(255, 200, 60);
+	let ghostK = 1, lastFlash = 0, lastT = clock();
+	Game.fuelTick = () => {
+		const now = clock();
+		const dt = Math.min(now - lastT, 0.1);
+		lastT = now;
+		const k = clamp(fuel / FUEL.max, 0, 1);
+		fuelFill.Size = US(k, 1);
+		fuelFill.Visible = k > 0.005;
+		if (k > ghostK) ghostK = k;
+		else ghostK = Math.max(k, ghostK - dt * 0.35);
+		ghost.Size = US(ghostK, 1);
+		ghost.Visible = ghostK > 0.005;
+		let c = k > 0.5 ? YELLOW.Lerp(GOOD, (k - 0.5) * 2) : RED.Lerp(YELLOW, k * 2);
+		if (nitroK > 0.2) c = c.Lerp(GEM, 0.35 + 0.15 * Math.sin(now * 30));
+		fuelFill.BackgroundColor3 = c;
+		grad.Color = new ColorSequence(c.Lerp(WHITE, 0.25), c.Lerp(BLACK, 0.3));
+		pct.Text = String(Math.ceil(k * 100));
+		const low = k < 0.25 && mode === "run" && !dead;
+		const pulse = low ? 0.5 + 0.5 * Math.sin(now * (k < 0.1 ? 16 : 9)) : 0;
+		stroke.Color = low ? RED : nitroK > 0.2 ? GEM : WHITE;
+		stroke.Transparency = low ? 0.6 - pulse * 0.6 : nitroK > 0.2 ? 0.3 : 0.7;
+		stroke.Thickness = low ? 2 + pulse * 2 : 2;
+		pct.TextColor3 = low ? RED.Lerp(WHITE, 1 - pulse) : WHITE;
+		iconScale.Scale = 1 + pulse * 0.15;
+		const flash = Game.fuelFlash || 0;
+		if (flash !== lastFlash) {
+			lastFlash = flash;
+			scale.Scale = 1.12;
+			tw(scale, 0.35, { Scale: 1 }, "Back");
+			iconScale.Scale = 1.4;
+			sweep.Position = U2(-0.3, 0, 0, 0);
+			tw(sweep, 0.45, { Position: U2(1.05, 0, 0, 0) });
+		}
+	};
 })();
 
 // ------------------------------------------------------------------ touch controls
@@ -1949,8 +2109,14 @@ let openPanel, closePanels, startRun, toMenu;
 		});
 	};
 
+	// once you've flown far enough, the first click on play opens fast travel and the second one starts from the beginning.
+	// new players just start
+	const canTravel = () => {
+		const first = CONFIG.starts[0];
+		return !!first && Math.max(data.farthest || 0, data.best) >= (first.at ?? Infinity);
+	};
 	const playBtn = menuButton("PLAY", "play", () => {
-		if (strip.Visible) Game.go("towers");
+		if (strip.Visible || !canTravel()) Game.go("towers");
 		else Game.openStrip();
 	}, 0.1);
 
@@ -2365,20 +2531,20 @@ const rewardRefs = { play: [] };
 		return button(r, "", UO(170, 44), U2(1, -184, 0.5, -22), fn, 0.3);
 	}
 	header(rewardsPanel.body, "CHESTS");
-	rewardRefs.daily = rewardRow(rewardsPanel.body, "DAILY GOLD CHEST", describe(CONFIG.daily), () => {
-		if (serverNow() - data.lastDaily >= 86400) result(request("claim_daily"));
+	rewardRefs.daily = rewardRow(rewardsPanel.body, "DAILY GOLD CHEST", describe(CONFIG.daily), (b) => {
+		if (serverNow() - data.lastDaily >= 86400) result(Game.claim(b, "claim_daily"));
 		else sfx("bad");
 	});
-	rewardRefs.hourly = rewardRow(rewardsPanel.body, "HOURLY SMALL CHEST", describe(CONFIG.hourly), () => {
-		if (serverNow() - data.lastHourly >= 3600) result(request("claim_hourly"));
+	rewardRefs.hourly = rewardRow(rewardsPanel.body, "HOURLY SMALL CHEST", describe(CONFIG.hourly), (b) => {
+		if (serverNow() - data.lastHourly >= 3600) result(Game.claim(b, "claim_hourly"));
 		else sfx("bad");
 	});
 	header(rewardsPanel.body, "GAMEPLAY REWARDS (STAY WITHOUT LEAVING)");
 	CONFIG.playRewards.forEach((r, idx) => {
 		const i = idx + 1;
 		const label = r.min < 60 ? r.min + " MIN" : idiv(r.min, 60) + "H" + (r.min % 60 > 0 ? " " + (r.min % 60) + "M" : "");
-		rewardRefs.play[idx] = rewardRow(rewardsPanel.body, label, describe(r), () => {
-			if (!claimed["p" + i] && sessionTime() >= r.min * 60) result(request("claim_play", i));
+		rewardRefs.play[idx] = rewardRow(rewardsPanel.body, label, describe(r), (b) => {
+			if (!claimed["p" + i] && sessionTime() >= r.min * 60) result(Game.claim(b, "claim_play", i));
 			else sfx("bad");
 		});
 	});
@@ -2400,7 +2566,7 @@ const rewardRefs = { play: [] };
 		});
 		function redeem() {
 			if (box.Text === "") return;
-			result(request("redeem", box.Text));
+			result(Game.claim(box, "redeem", box.Text));
 			box.Text = "";
 		}
 		box.el.addEventListener("keydown", (e) => {
@@ -2927,8 +3093,8 @@ let showResults;
 		tw(results, 0.5, { GroupTransparency: 0, Position: US(0.5, 0.53) });
 
 		const record = award && info.prevBest != null && award.dist > info.prevBest && award.dist > 0;
-		title.Text = record ? "NEW RECORD" : "CRASHED";
-		title.TextColor3 = record ? COIN : BAD;
+		title.Text = record ? "NEW RECORD" : info.stopped ? "STOPPED" : "CRASHED";
+		title.TextColor3 = record ? COIN : info.stopped ? WHITE : BAD;
 		titleScale.Scale = 1.4;
 		tw(titleScale, 0.6, { Scale: 1 }, "Back");
 		if (record) {
@@ -2962,6 +3128,12 @@ let showResults;
 		if (award) {
 			countUp(distL2, award.dist, 1.2, fmt, my);
 			rewardL.Text = "";
+			const gain = { coins: award.coins || 0, gems: award.gems || 0, keys: award.keys || 0 };
+			Game.holdWallet(gain);
+			task.delay(2.15, () => {
+				if (token !== my) return Game.releaseWallet(gain);
+				Game.flyReward(rewardL, gain, true);
+			});
 			task.delay(1.2, () => {
 				if (token !== my) return;
 				const coins = award.coins || 0, gems = award.gems || 0, keys = award.keys || 0;
@@ -3678,7 +3850,13 @@ let startBoss, updateBoss, resetSky;
 		Missiles.clear();
 		for (const e of b.engines) e.glow.Color = RGB(40, 40, 40);
 		smoke(b.p, 3, 10, 10, 1);
-		const bx = pos.X + 150, bz = pos.Z - 1100;
+		// the tower it crashes into has been standing out there the whole fight, now it stops drifting with you
+		b.buildingPinned = true;
+	}
+
+	// the skyscraper on the horizon. it rides along with you during the fight so it's always in view
+	function makeBuilding(b) {
+		const bx = (Game.arenaX || 0) + 150, bz = pos.Z - 1100;
 		const bld = Instance.new("Part");
 		bld.Anchored = true;
 		bld.CanQuery = false;
@@ -3701,6 +3879,13 @@ let startBoss, updateBoss, resetSky;
 			band.Parent = junk;
 			b.bands.push(band);
 		}
+	}
+	function driftBuilding(b) {
+		if (b.buildingPinned || !b.building) return;
+		const at = V3((Game.arenaX || 0) + 150, 140, pos.Z - 1100);
+		const d = at.sub(b.building.Position);
+		b.building.Position = at;
+		for (const band of b.bands) band.Position = band.Position.add(d);
 	}
 
 	// soft glow rings around the moon
@@ -3743,7 +3928,7 @@ let startBoss, updateBoss, resetSky;
 		pos = V3(0, ALT, pos.Z);
 		vx = 0;
 		Game.arenaX = 0;
-		banner("5  BOSS", BAD, 2.5);
+		banner("BOSS", BAD, 2.5);
 		fuel = FUEL.max;
 		sfx("boss_in");
 		task.delay(1.2, () => sfx("boss_flyover"));
@@ -3757,6 +3942,7 @@ let startBoss, updateBoss, resetSky;
 		const [halo, rings] = makeHalo();
 		const start0 = V3(-450, 120, pos.Z + 260);
 		boss = { model: m, body, engines, beacon, t: 0, p: start0, x: 0, look: V3(0.6, -0.2, -1).Unit, roll: 0, beams: [], nextShot: 5, volleys: 0, finale: false };
+		makeBuilding(boss);
 		m.PivotTo(CFrame.lookAt(start0, start0.add(boss.look)));
 		bossFill.Size = US(0, 1);
 		boss.halo = halo;
@@ -3769,6 +3955,7 @@ let startBoss, updateBoss, resetSky;
 		b.t += dt;
 		const t = b.t;
 		const prev = b.p;
+		driftBuilding(b);
 		if (b.finale) {
 			b.ft += dt;
 			const target = b.building.Position.sub(V3(0, 50, 0));
@@ -4081,8 +4268,12 @@ let startBoss, updateBoss, resetSky;
 		sfxAt("missile_launch", from, 700);
 	};
 
+	let lastLaunch = -Infinity;
 	function turretsFire() {
-		if (list.length >= 4) return;
+		// turrets map: at most 2 in the air and a breather between launches
+		const turretsMap = curStage === "turrets";
+		if (list.length >= (turretsMap ? 2 : 4)) return;
+		if (turretsMap && runTime - lastLaunch < 2.2) return;
 		for (const [tower, st] of turrets) {
 			if (!tower.Parent) turrets.delete(tower);
 			else if (runTime >= st.next) {
@@ -4090,8 +4281,9 @@ let startBoss, updateBoss, resetSky;
 				const ahead = rel < -180 && rel > -480;
 				const behind = rel > 80 && rel < 260;
 				if (Math.abs(tower.Position.X - pos.X) < 300 && (ahead || behind)) {
-					st.next = runTime + random(35, 55) / 10;
-					Missiles.fire(tower.Position.add(V3(0, tower.Size.Y / 2 + 4, 0)), ahead ? 150 : 110);
+					st.next = runTime + random(turretsMap ? 55 : 35, turretsMap ? 80 : 55) / 10;
+					lastLaunch = runTime;
+					Missiles.fire(tower.Position.add(V3(0, tower.Size.Y / 2 + 4, 0)), (ahead ? 150 : 110) * (turretsMap ? 0.85 : 1));
 					return;
 				}
 			}
@@ -4193,8 +4385,8 @@ let startBoss, updateBoss, resetSky;
 		const dmg = Game.flow.tier >= 3 ? 1.5 : 1;
 		if (h.GetAttribute("Missile")) Missiles.kill(h);
 		else if (h.GetAttribute("Orb")) {
-			ball(h.Position, 12, RGB(190, 110, 255), 0.3);
-			h.Destroy();
+			// orbs just soak up shots, holding fire won't clear the way
+			ball(at, 4, RGB(190, 110, 255), 0.12);
 		} else if (h.GetAttribute("Boss2")) Game.boss2.hit(dmg, h);
 		else if (h.GetAttribute("Toppled") != null) Game.hitToppled(h, at);
 		else if (h.GetAttribute("Glass")) {
@@ -4662,168 +4854,119 @@ let startBoss, updateBoss, resetSky;
 		}
 	}
 
-	// ---------------- the carrier
-
-	F.spawnCarrier = () => {
-		const x = pos.X, z = pos.Z - 1800;
-		const m = Instance.new("Model");
-		function p(size, color, at, neon, trans, collide) {
-			const b = Instance.new("Part");
-			b.Anchored = true;
-			b.CanCollide = collide || false;
-			b.CanQuery = false;
-			b.Size = size;
-			b.Color = color;
-			b.Position = at;
-			if (neon) b.Material = "Neon";
-			if (trans) b._uniqueMat = true;
-			b.Transparency = trans || 0;
-			b.Parent = m;
-			return b;
-		}
-		p(V3(90, 30, 420), RGB(70, 75, 85), V3(x, 15, z), false, 0, true);
-		p(V3(88, 1, 416), RGB(55, 58, 65), V3(x, DECK - 0.5, z), false, 0, true);
-		p(V3(1.4, 0.2, 400), new Color3(1, 1, 1), V3(x, DECK + 0.1, z), true);
-		for (const side of [-1, 1]) {
-			p(V3(0.8, 0.2, 400), RGB(255, 220, 80), V3(x + side * 20, DECK + 0.1, z), true);
-			for (let i = 0; i <= 12; i++) p(V3(1.2, 0.6, 1.2), RGB(255, 240, 200), V3(x + side * 43, DECK + 0.3, z - 200 + i * 33), true);
-		}
-		for (let i = 0; i <= 3; i++) p(V3(40, 0.3, 0.3), RGB(40, 40, 40), V3(x, DECK + 0.2, z + 150 - i * 12));
-		p(V3(22, 50, 70), RGB(90, 95, 105), V3(x + 34, DECK + 25, z - 40), false, 0, true);
-		p(V3(22.4, 2, 70.4), RGB(150, 220, 255), V3(x + 34, DECK + 44, z - 40), true);
-		p(V3(2, 30, 2), RGB(70, 70, 75), V3(x + 34, DECK + 65, z - 40));
-		p(V3(3, 3, 3), RGB(255, 40, 40), V3(x + 34, DECK + 81, z - 40), true);
-		const beam = p(V3(10, 700, 10), RGB(60, 255, 120), V3(x, 350, z), true, 0.5);
-		const lights = [];
-		for (let i = 0; i <= 9; i++) lights.push(p(V3(4, 0.6, 4), RGB(60, 255, 120), V3(x, DECK + 0.2, z + 205 - i * 16), true, 0.0001));
-		const hl = Instance.new("Highlight");
-		hl.FillColor = RGB(60, 255, 120);
-		hl.FillTransparency = 0.85;
-		hl.OutlineColor = RGB(60, 255, 120);
-		hl.OutlineTransparency = 0;
-		hl.Parent = m;
-		m.Parent = junk;
-		F.carrier = { model: m, x, z, stern: z + 210, lights, beam, hl };
-		sfx("carrier");
-	};
-
-	F.startApproach = () => {
-		Missiles.clear();
-		F.approach = true;
-		F.bars(true);
-		sfx("whoosh", 0.7);
-	};
-
-	F.approachUpdate = () => {
-		const c = F.carrier;
-		const k = clamp((pos.Z - c.stern) / 1300, 0, 1);
-		c.lights.forEach((l, idx) => {
-			l.Transparency = Math.floor(clock() * 10) % c.lights.length === c.lights.length - (idx + 1) ? 0 : 0.75;
-		});
-		if (pos.Z <= c.stern) {
-			if (Math.abs(pos.X - c.x) < 38) {
-				F.approach = false;
-				Missiles.clear();
-				tw(c.beam, 0.8, { Transparency: 1 });
-				Debris.AddItem(c.beam, 0.9);
-				tw(c.hl, 0.8, { FillTransparency: 1, OutlineTransparency: 1 });
-				Debris.AddItem(c.hl, 0.9);
-				shake = Math.max(shake, 0.7);
-				sfx("land");
-				smoke(pos.add(V3(0, -1, 3)), 6, 5, 6, 1.2);
-				sparks(pos.add(V3(0, -1, 0)), 20, 0.6, () => RGB(255, 200, 120), 50);
-				F.cine = { kind: "land", t: 0, speed: speedNow, touch: V3(pos.X, DECK + 1.5, pos.Z), stop: V3(c.x, DECK + 1.5, c.z + 60) };
-			} else {
-				F.approach = false;
-				F.bars(false);
-				sfx("bad");
-				const nz = pos.Z - 1800, nx = pos.X + random(-150, 150);
-				c.model.TranslateBy(V3(nx - c.x, 0, nz - c.z));
-				c.x = nx;
-				c.z = nz;
-				c.stern = nz + 210;
-			}
-		}
-		return [DECK + 1.5 + (SEA_ALT - DECK - 1.5) * k, 0.55 + 0.45 * k];
-	};
-
-	function startLaunch(c) {
-		showHint(null);
-		if (F.marker) F.marker.Destroy();
-		F.marker = null;
-		if (c.jhl) c.jhl.Destroy();
-		swap(c);
-		pos = c.spot;
-		sfx("launch");
-		F.cine = { kind: "launch", t: 0, v: 0, jparts: c.jparts };
+	function boom(at, big) {
+		ball(at, big ? 70 : 40, RGB(255, 240, 180), 0.4);
+		ball(at, big ? 50 : 30, RGB(255, 120, 30), 0.9);
+		smoke(at, 6, 12, 16, 1.6);
+		sparks(at, 22, 1, () => (Math.random() < 0.5 ? RGB(255, 140, 40) : RGB(40, 40, 40)), 90);
 	}
 
-	function land(c, dt) {
+	// ---------------- end of the sea: a missile takes you out and the camera hands over to the stealth jet climbing next to you
+
+	F.carrierRect = () => null;
+
+	F.startApproach = () => {
+		if (F.cine || dead) return;
+		Missiles.clear();
+		vx = 0;
+		F.holdCam = true;
+		F.bars(true);
+		const c = { kind: "shot", t: 0, speed: Math.max(speedNow, 160) };
+		// the stealth jet is already up ahead on the right
+		const [jet, jmain, jparts] = Game.makePlane("Stealth", junk);
+		c.jet = jet;
+		c.jmain = jmain;
+		c.jparts = jparts;
+		c.jetPos = pos.add(V3(70, 22, -150));
+		jmain.CFrame = CFrame.fromPos(c.jetPos);
+		// fired from a ship out in front, coming straight at you
+		c.mPos = pos.add(V3(-170, -45, -760));
+		c.missile = neonPart(V3(1.6, 1.6, 8), RGB(255, 80, 60), CFrame.fromPos(c.mPos), 0);
+		F.cine = c;
+		sfx("missile_launch", 0.9);
+	};
+
+	// kept so nothing else breaks, the whole ending is scripted now
+	F.approachUpdate = () => [SEA_ALT, 1];
+
+	// the camera never looks back: behind you the map is already gone
+	const chaseCF = (p) => CFrame.lookAt(p.add(V3(-10, 9, 34)), p.add(V3(0, 0, -90)));
+
+	function shot(c, dt) {
 		const t = c.t;
-		if (!c.jet) {
-			const [jet, jmain, jparts] = Game.makePlane("Stealth", junk);
-			c.jet = jet;
-			c.jmain = jmain;
-			c.jparts = jparts;
-			c.spot = V3(F.carrier.x - 18, DECK + 1.5, c.stop.Z - 90);
-			jmain.CFrame = CFrame.fromPos(c.spot);
-			const hl = Instance.new("Highlight");
-			hl.FillColor = RGB(170, 80, 255);
-			hl.FillTransparency = 0.7;
-			hl.OutlineColor = RGB(220, 170, 255);
-			hl.Parent = jet;
-			c.jhl = hl;
-		}
+		const slow = c.hit ? 0.45 : 1 - 0.45 * ease(t / 1.2);
+		const v = c.speed * slow;
+		speedNow = v;
+		c.jetPos = c.jetPos.add(V3(0, (SEA_ALT + 22 - c.jetPos.Y) * Math.min(1, dt), -v * dt));
+		c.jmain.CFrame = CFrame.fromPos(c.jetPos).mul(Ang(0, 0, Math.sin(t * 1.4) * 0.04));
+		Game.from = (Game.from || 0) + v * dt;
 
-		if (t < 1.8) {
-			const k = t / 1.8;
-			pos = c.touch.Lerp(c.stop, 1 - (1 - k) ** 3);
-			speedNow = c.speed * (1 - k);
-			planeMain.CFrame = CFrame.fromPos(pos).mul(Ang(Math.max(0, 0.5 - t) * 0.3, 0, Math.sin(t * 20) * 0.02 * (1 - k)));
-			if (Math.random() < 0.5) sparks(pos.add(V3(0, -1, 4)), 2, 0.5, () => RGB(255, 190, 90), 30);
-			if (Math.random() < 0.3) smoke(pos.add(V3(0, -1, 5)), 1, 2, 4, 0.9);
-			shake = Math.max(shake, 0.2 * (1 - k));
-			F.cam = CFrame.lookAt(pos.add(V3(-40, 12, 36)), pos.add(V3(0, 0, -10)));
-			return;
-		}
-
-		if (t < 4.4) {
-			speedNow = 0;
-			const a = rad(-150 + ease((t - 1.8) / 2.6) * 130);
-			F.cam = CFrame.lookAt(pos.add(V3(Math.cos(a) * 30, 9, Math.sin(a) * 30)), pos.add(V3(0, 1, 0)));
-			if (!c.cooled) {
-				c.cooled = true;
-				smoke(pos.add(V3(0, 1, 5)), 4, 3, 4, 2);
+		if (!c.hit) {
+			pos = V3(pos.X, pos.Y + (SEA_ALT - pos.Y) * Math.min(1, dt * 2), pos.Z - v * dt);
+			planeMain.CFrame = CFrame.fromPos(pos).mul(Ang(0, 0, Math.sin(t * 1.3) * 0.03));
+			const to = pos.sub(c.mPos);
+			c.mPos = c.mPos.add(to.Unit.mul(Math.min(to.Magnitude, (v + 420) * dt)));
+			c.missile.CFrame = CFrame.lookAt(c.mPos, pos);
+			if (Math.random() < 0.9) smoke(c.mPos, 1, 1.5, 2, 0.5);
+			F.cam = CFrame.lookAt(pos.add(V3(-22, 7, 30)), pos.add(c.mPos).mul(0.5).add(V3(0, 4, 0)));
+			if (!c.warned && to.Magnitude < 260) {
+				c.warned = true;
+				sfx("missile_pass");
+				showHint("INCOMING!");
+			}
+			if (to.Magnitude < 5 || t > 3) {
+				c.hit = true;
+				c.hitT = t;
+				showHint(null);
+				c.missile.Destroy();
+				c.missile = null;
+				boom(pos, true);
+				flash();
+				sfx("crash");
+				shake = Math.max(shake, 0.9);
+				c.old = planeModel;
+				c.oldMain = planeMain;
+				c.fallPos = pos;
+				c.fallV = V3(-12, 14, -v * 0.9);
+				c.spin = 0;
+				c.camFrom = F.cam;
 			}
 			return;
 		}
 
-		if (!c.parked) {
-			c.parked = true;
-			fuel = FUEL.max;
-			F.marker = neonPart(V3(0.4, 14, 14), RGB(200, 140, 255), CFrame.fromPos(c.spot.add(V3(0, 8, 0))).mul(Ang(0, 0, Math.PI / 2)), 0.2);
-			F.marker.Shape = "Cylinder";
-			const pillar = neonPart(V3(60, 6, 6), RGB(200, 140, 255), CFrame.fromPos(c.spot.add(V3(0, 30, 0))).mul(Ang(0, 0, Math.PI / 2)), 0.85);
-			pillar.Shape = "Cylinder";
-			pillar.Parent = F.marker;
-			c.taxiFrom = pos;
-			c.taxiT0 = t;
-			c.taxiTo = c.spot.add(V3(14, 0, 10));
-			showHint("TAXIING OVER TO THE JET");
+		const since = t - c.hitT;
+		if (c.old) {
+			c.fallV = c.fallV.add(V3(0, -55 * dt, 0));
+			c.fallPos = c.fallPos.add(c.fallV.mul(dt));
+			c.spin += dt * 5;
+			c.oldMain.CFrame = CFrame.fromPos(c.fallPos).mul(Ang(-0.3 - since * 0.35, 0, c.spin));
+			if (Math.random() < 0.9) smoke(c.fallPos, 1, 3, 5, 1);
+			if (c.fallPos.Y <= 4) {
+				boom(c.fallPos);
+				sfx("plane_down");
+				c.old.Destroy();
+				c.old = null;
+			}
 		}
+		pos = since < 1.4 ? V3(c.fallPos.X, pos.Y, c.fallPos.Z) : V3(c.jetPos.X, pos.Y, c.jetPos.Z);
 
-		if (F.marker) F.marker.CFrame = CFrame.fromPos(c.spot.add(V3(0, 8 + Math.sin(t * 2), 0))).mul(Ang(0, t, Math.PI / 2));
-
-		// your plane rolls over next to the stealth jet, then you swap into it
-		const k = clamp((t - c.taxiT0) / 2.6, 0, 1);
-		const e = ease(k);
-		const prevPos = pos;
-		pos = c.taxiFrom.Lerp(c.taxiTo, e);
-		const dir = pos.sub(prevPos);
-		if (dir.Magnitude > 0.01) c.taxiDir = dir.Unit;
-		planeMain.CFrame = c.taxiDir ? CFrame.lookAt(pos, pos.add(c.taxiDir)) : CFrame.fromPos(pos);
-		F.cam = CFrame.lookAt(pos.add(V3(-26, 12, 30)), pos.add(V3(-8, 1, -16)));
-		if (t - c.taxiT0 >= 3.1) startLaunch(c);
+		// high above the wreck so no ship gets in the way, still facing forward
+		const fallCam = CFrame.lookAt(V3(c.fallPos.X + 30, Math.max(c.fallPos.Y + 60, 150), c.fallPos.Z + 55), c.fallPos.add(V3(0, 0, -20)));
+		const jetCam = chaseCF(c.jetPos);
+		if (since < 1.4) F.cam = c.camFrom.Lerp(fallCam, ease(since / 0.5));
+		else if (since < 2.8) F.cam = fallCam.Lerp(jetCam, ease((since - 1.4) / 1.4));
+		else {
+			if (c.old) c.old.Destroy();
+			c.old = null;
+			c.jet.Parent = workspace;
+			planeModel = c.jet;
+			planeMain = c.jmain;
+			planeParts = c.jparts;
+			pos = c.jetPos;
+			sfx("launch", 0.8);
+			F.cine = { kind: "launch", t: 2.2, v, pitch: 0 };
+			F.cam = jetCam;
+		}
 	}
 
 	function launch(c, dt) {
@@ -4837,6 +4980,17 @@ let startBoss, updateBoss, resetSky;
 			shake = Math.max(shake, 0.1);
 			if (Math.random() < 0.4) smoke(pos.add(V3(0, 0, 6)), 1, 2, 3, 0.6);
 		} else {
+			if (!c.climbing) {
+				c.climbing = true;
+				sfx("missile_launch", 0.7);
+				sfx("jet_arrive", 0.85);
+				task.delay(0.9, () => sfx("launch", 0.8));
+			}
+			if (t >= 3.4 && !c.boomed) {
+				c.boomed = true;
+				sfx("reentry_hit", 0.9);
+				shake = Math.max(shake, 0.5);
+			}
 			c.pitch = Math.min((c.pitch || 0) + dt * 0.8, 1.25);
 			c.v = Math.min(c.v + 160 * dt, 700);
 			const dir = V3(0, Math.sin(c.pitch), -Math.cos(c.pitch));
@@ -4934,7 +5088,7 @@ let startBoss, updateBoss, resetSky;
 		const c = F.cine;
 		c.t += dt;
 		if (c.kind === "transfer") transfer(c, dt);
-		else if (c.kind === "land") land(c, dt);
+		else if (c.kind === "shot") shot(c, dt);
 		else if (c.kind === "launch") launch(c, dt);
 		else if (c.kind === "descent") descent(c, dt);
 	};
@@ -5065,6 +5219,7 @@ function collect(p) {
 		sfx("pick_fuel");
 		const wasEmpty = fuel <= 0;
 		fuel = Math.min(FUEL.max, fuel + FUEL.pad);
+		Game.fuelFlash = clock();
 		if (wasEmpty) popup("SAVED", GOOD);
 	} else if (kind === "gem") {
 		sfx("pick_gem");
@@ -5188,7 +5343,7 @@ function onStage(nw, old) {
 		}
 		if (nw === "smash") {
 			task.delay(2.2, () => {
-				if (curStage === "smash" && !dead) banner("NO FUEL CANS HERE, SMASH THE GLASS FOR FUEL!", RGB(255, 90, 70), 3);
+				if (curStage === "smash" && !dead) banner("HIT THE GLASS TOWERS!", RGB(255, 90, 70), 3);
 			});
 		}
 		if (nw === "city") Game.mood(0.3, RGB(30, 30, 70), 4, RGB(150, 150, 195), 0.25);
@@ -5209,7 +5364,7 @@ Game.cityTick = (dt) => {
 				f.pivot = CFn(b.Position.X + (f.dir * b.Size.X) / 2, 0, b.Position.Z);
 				f.offs = new Map();
 				for (const c of b.GetChildren()) if (c.IsA("BasePart")) f.offs.set(c, b.CFrame.ToObjectSpace(c.CFrame));
-				sfxAt("tower_fall", b.Position, 900);
+				sfxAt("tower_fall", b.Position, 1500);
 				smoke(V3(b.Position.X, 4, b.Position.Z), 5, 20, 20, 2);
 			}
 		} else if (f.t < 1) {
@@ -5222,7 +5377,7 @@ Game.cityTick = (dt) => {
 			if (f.t >= 1) {
 				const hit = b.Position;
 				shake = Math.max(shake, clamp(1 - hit.sub(pos).Magnitude / 900, 0, 1) * 0.8);
-				sfxAt("tower_land", hit, 1100);
+				sfxAt("tower_land", hit, 1800);
 				smoke(V3(hit.X, 6, hit.Z), 10, 60, 30, 2.5);
 				sparks(V3(hit.X, 6, hit.Z), 12, 2, () => RGB(120, 115, 110), 60);
 				Game.fallers.delete(b);
@@ -5376,6 +5531,7 @@ Game.quitRun = () => {
 		kills: stats.kills,
 		glass: stats.glass,
 		pads: stats.gems + stats.keys,
+		stopped: true,
 	});
 };
 
@@ -5578,11 +5734,10 @@ function step(dt) {
 
 	if (stage === "sea" && Game.marks.final == null) {
 		const F = Game.flow;
-		if (!F.carrier && dist - Game.marks.sea > Game.SEA_LEN - 1500) F.spawnCarrier();
-		if (F.carrier && !F.approach && F.carrier.z - pos.Z > -1400) F.startApproach();
+		if (!F.cine && dist - Game.marks.sea > Game.SEA_LEN - 500) F.startApproach();
 	}
 
-	if (stage === "beyond" && Game.marks.final != null && dist - Game.marks.final > 4000) {
+	if (stage === "beyond" && Game.marks.final != null && dist - Game.marks.final > Game.SPACE_LEN) {
 		Game.flow.startDescent();
 		return;
 	}
@@ -5761,7 +5916,9 @@ function step(dt) {
 	distL.Text = fmt(stats.dist);
 	stageL.Text = stageName(stage);
 	let [, prog] = stageFor(dist);
-	const onMap = MAP_STAGES[stage] && !boss && !Game.boss2.active && !Game.flow.cine;
+	const inSpace = stage === "beyond" && Game.marks.final != null;
+	if (inSpace) prog = (dist - Game.marks.final) / Game.SPACE_LEN;
+	const onMap = (MAP_STAGES[stage] || inSpace) && !boss && !Game.boss2.active && !Game.flow.cine;
 	Game.mapBar.Visible = !!onMap;
 	if (onMap) {
 		prog = clamp(prog || 0, 0, 1);
@@ -5770,8 +5927,7 @@ function step(dt) {
 	}
 	coinBox.Visible = mode === "run";
 	runCoinL.Text = "● " + fmt(runCoins());
-	fuelFill.Size = US(fuel / FUEL.max, 1);
-	fuelFill.BackgroundColor3 = clock() - (Game.fuelFlash || 0) < 0.4 ? GOOD : fuel < 25 && Math.floor(clock() * 6) % 2 === 0 ? BAD : WHITE;
+	Game.fuelTick();
 
 	const fx = [];
 	if (nitroK > 0.2) fx.push("NITRO");
@@ -5793,10 +5949,6 @@ Game.skip = () => {
 		Game.boss2.hit(1e6);
 		return;
 	}
-	if (F.approach) {
-		pos = V3(F.carrier.x, pos.Y, F.carrier.stern + 1);
-		return;
-	}
 	const [stage] = stageFor(-pos.Z);
 	let nextD = null;
 	if (stage === "intro") {
@@ -5807,11 +5959,10 @@ Game.skip = () => {
 	else if (stage === "turrets") nextD = beyondStart + (CONFIG.turretsLen || 4000);
 	else if (stage === "city") nextD = beyondStart + (CONFIG.turretsLen || 4000) + (CONFIG.cityLen || 4000);
 	else if (stage === "sea") {
-		if (!F.carrier) F.spawnCarrier();
 		flash();
 		Missiles.clear();
 		Game.cam.last = null;
-		pos = V3(F.carrier.x, 70, F.carrier.z + 1400);
+		pos = V3(pos.X, 70, -(Game.marks.sea + Game.SEA_LEN - 520));
 		return;
 	} else if (stage === "boss2" && Game.boss2.done && Game.marks.sea != null) nextD = Game.marks.sea;
 	else if (stage === "beyond") {
@@ -5848,8 +5999,9 @@ RunService.RenderStepped.Connect((dt) => {
 	if (wallet.Visible) {
 		const k = Math.min(1, dt * 8);
 		for (const [name, label] of [["coins", coinL], ["gems", gemL], ["keys", keyL]]) {
-			shown[name] += (data[name] - shown[name]) * k;
-			if (Math.abs(data[name] - shown[name]) < 0.5) shown[name] = data[name];
+			const want = data[name] - pending[name];
+			shown[name] += (want - shown[name]) * k;
+			if (Math.abs(want - shown[name]) < 0.5) shown[name] = want;
 		}
 		coinL.Text = "● " + fmt(shown.coins + 0.5);
 		gemL.Text = "◆ " + fmt(shown.gems + 0.5);
@@ -6073,8 +6225,70 @@ RunService.RenderStepped.Connect(() => {
 });
 
 Lighting.FogColor = RGB(190, 205, 225);
+// sea waves: three layers of swells rolling toward you at different speeds, near ones fast and bright, far ones slow and dark
+(() => {
+	const folder = Instance.new("Folder");
+	folder.Name = "Waves";
+	folder.Parent = workspace;
+	const LAYERS = [
+		{ n: 55, len: [18, 46], w: [1, 2.2], y: 3.3, bob: 0.35, speed: 38, alpha: 0.3, color: RGB(235, 248, 255), spread: 260, near: 40, far: 650 },
+		{ n: 34, len: [6, 11], w: [70, 150], y: 2.9, bob: 0.5, speed: 16, alpha: 0.72, color: RGB(110, 185, 235), spread: 520, near: 120, far: 1100 },
+		{ n: 22, len: [16, 30], w: [260, 480], y: 2.7, bob: 0.7, speed: 6, alpha: 0.78, color: RGB(35, 95, 165), spread: 950, near: 450, far: 1900 },
+	];
+	const rnd = (a, b) => a + Math.random() * (b - a);
+	const waves = [];
+	for (const L of LAYERS) {
+		for (let i = 0; i < L.n; i++) {
+			const p = Instance.new("Part");
+			p.Anchored = true;
+			p.CanCollide = false;
+			p.CanQuery = false;
+			p.CastShadow = false;
+			p.Material = "SmoothPlastic";
+			p.Color = L.color;
+			p.Transparency = 1;
+			p._uniqueMat = true;
+			p.Size = V3(rnd(L.w[0], L.w[1]), 0.3, rnd(L.len[0], L.len[1]));
+			p.Parent = folder;
+			waves.push({ p, L, x: 0, z: 0, phase: Math.random() * 6.28, life: 0, span: 1 });
+		}
+	}
+	let shown = false;
+	const place = (w, fresh) => {
+		const L = w.L;
+		w.x = pos.X + (Math.random() * 2 - 1) * L.spread;
+		w.z = pos.Z - (fresh ? L.near + Math.random() * (L.far - L.near) : L.far + Math.random() * 150);
+		w.life = 0;
+		w.span = 3 + Math.random() * 5;
+	};
+	RunService.RenderStepped.Connect((dt) => {
+		const c = Game.flow.cine;
+		const want = mode === "run" && (curStage === "sea" || (c && (c.kind === "shot" || (c.kind === "launch" && c.t < 4))));
+		if (!want) {
+			if (shown) {
+				shown = false;
+				for (const w of waves) w.p.Transparency = 1;
+			}
+			return;
+		}
+		const fresh = !shown;
+		shown = true;
+		const t = clock();
+		for (const w of waves) {
+			const L = w.L;
+			if (fresh) place(w, true);
+			w.z += L.speed * dt;
+			w.life += dt;
+			if (w.z > pos.Z + 60 || w.z < pos.Z - L.far - 300 || Math.abs(w.x - pos.X) > L.spread * 1.3 || w.life > w.span) place(w, false);
+			const k = clamp(Math.min(w.life / 0.8, (w.span - w.life) / 0.8), 0, 1);
+			w.p.Transparency = 1 - (1 - L.alpha) * k;
+			w.p.CFrame = CFn(w.x, L.y + Math.sin(t * 1.6 + w.phase) * L.bob, w.z).mul(CFrame.Angles(0, Math.sin(t * 0.3 + w.phase) * 0.06, 0));
+		}
+	});
+})();
+
 applySettings();
 toMenu();
 start();
 document.getElementById("boot").remove();
-if (DEV) window.__dev = { crash: () => task.spawn(crash, []), data: () => data, stats: () => stats };
+if (DEV) window.__dev = { crash: () => task.spawn(crash, []), data: () => data, stats: () => stats, shot: () => Game.flow.startApproach(), state: () => [mode, curStage, Game.flow.cine && Game.flow.cine.kind, Math.round(-pos.Z)] };

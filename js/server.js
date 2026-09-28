@@ -5,10 +5,10 @@ export const CONFIG = {
 	title: "DON'T CRASH!",
 	stages: [
 		// towers is 6000, every map after it is 1.2x the one before
-		{ id: "towers", name: "1  TOWERS", len: 6000 },
-		{ id: "moving", name: "2  MOVING", len: 7200 },
-		{ id: "canyon", name: "3  CANYON", len: 8600 },
-		{ id: "smash", name: "4  SMASH", len: 10400 },
+		{ id: "towers", name: "TOWERS", len: 6000 },
+		{ id: "moving", name: "MOVING", len: 7200 },
+		{ id: "canyon", name: "CANYON", len: 8600 },
+		{ id: "smash", name: "SMASH", len: 10400 },
 	],
 	turretsLen: 12400,
 	cityLen: 14900,
@@ -298,7 +298,7 @@ handlers.use_revive = () => {
 	return [true];
 };
 handlers.buy_revive = (n) => {
-	const PACKS = { 1: 40, 5: 160 };
+	const PACKS = { 1: 200, 5: 500 };
 	const price = PACKS[n];
 	if (!price) return [false, "unknown pack"];
 	if (s.data.gems < price) return [false, "not enough gems"];
