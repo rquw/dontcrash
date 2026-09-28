@@ -92,6 +92,14 @@ for (const s of CONFIG.stages) {
 	delete s.finish;
 }
 
+// xp you need to get from a level to the next one
+export function xpNeed(level) {
+	return Math.floor(100 * Math.pow(level, 1.5)) + 50;
+}
+export function levelReward(level) {
+	return { coins: 100 * level, gems: level % 5 === 0 ? 15 : 0, keys: level % 10 === 0 ? 2 : 0 };
+}
+
 const DEFAULT = {
 	coins: 0, gems: 0, keys: 0, best: 0, revives: 0, farthest: 0,
 	power: { coins: 0 },
@@ -102,7 +110,11 @@ const DEFAULT = {
 	boost: 1, boostUntil: 0,
 	starts: {},
 	tutDone: false,
-	settings: { view: 6, music: true, musicVol: 0.5, sfx: true, sfxVol: 0.7, fov: 70, low: false, shake: true, binds: {} },
+	name: "",
+	xp: 0, level: 1,
+	stats: { runs: 0, dist: 0, coins: 0, bosses: 0, kills: 0, glass: 0, maps: 0, pickups: 0, hearts: 0, revives: 0, time: 0, loops: 0 },
+	created: 0,
+	settings: { view: 6, music: true, musicVol: 0.5, sfx: false, sfxVol: 0.7, fov: 70, low: false, shake: true, binds: {} },
 };
 
 function copy(t) {
@@ -126,6 +138,12 @@ function load() {
 	}
 	if (typeof d !== "object" || !d) d = {};
 	fill(d, DEFAULT);
+	// sounds start off for everyone, even saves from before, you turn them on in settings
+	if (!d.sfxOptIn) {
+		d.settings.sfx = false;
+		d.sfxOptIn = true;
+	}
+	if (!d.created) d.created = Date.now();
 	return d;
 }
 function save() {
@@ -333,10 +351,48 @@ handlers.run_end = (r) => {
 	}
 	d.farthest = Math.max(d.farthest || 0, (s.runFrom || 0) + dist);
 	d.best = Math.max(d.best, dist);
+	// lifetime stats for the profile
+	const st = d.stats;
+	st.runs++;
+	st.dist += dist;
+	st.coins += award.coins;
+	st.bosses += bosses;
+	st.kills += kills;
+	st.glass += glass;
+	st.maps += maps;
+	st.pickups += gemPads + keyPads;
+	st.hearts += hearts;
+	st.revives += num(r.revives, 50);
+	st.loops = Math.max(st.loops, num(r.loop, 100));
+	st.time += Math.min(elapsed, 36000);
+	// xp, and a reward for every level you hit
+	const xp = Math.max(5, Math.floor(dist / 25) + maps * 40 + bosses * 150 + kills * 2 + glass * 3 + (gemPads + keyPads) * 10);
+	award.xp = xp;
+	award.levelFrom = d.level;
+	award.xpFrom = d.xp;
+	d.xp += xp;
+	award.levelUps = [];
+	while (d.xp >= xpNeed(d.level)) {
+		d.xp -= xpNeed(d.level);
+		d.level++;
+		const rw = levelReward(d.level);
+		grant(d, rw);
+		award.levelUps.push({ level: d.level, ...rw });
+	}
+	award.levelTo = d.level;
+	award.xpTo = d.xp;
 	award.best = d.best;
 	award.dist = dist;
 	award.mult = mult;
 	return [true, award];
+};
+handlers.set_name = (name) => {
+	if (typeof name !== "string") return [false, "invalid name"];
+	name = name.trim().replace(/\s+/g, " ");
+	if (name.length < 2 || name.length > 16) return [false, "2 to 16 characters"];
+	if (!/^[A-Za-z0-9_ .-]+$/.test(name)) return [false, "letters, numbers, _ . - only"];
+	s.data.name = name;
+	return [true, "hi " + name + "!"];
 };
 handlers.spawn_char = () => [true];
 handlers.despawn_char = () => [true];

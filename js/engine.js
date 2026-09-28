@@ -1286,6 +1286,34 @@ export class PointLight extends Instance {
 }
 const glowSprites = new Set();
 
+// which 3d scene an instance draws into: the world, or a viewport frame's own little scene
+function sceneOf(inst) {
+	let p = inst;
+	while (p) {
+		if (p === workspace) return scene;
+		if (p.ClassName === "ViewportFrame") return vpScene(p);
+		p = p._parent;
+	}
+	return null;
+}
+function vpScene(vp) {
+	if (!vp.scene3) {
+		vp.scene3 = new THREE.Scene();
+		vp.scene3.userData.vp = vp;
+		vp.hemi = new THREE.HemisphereLight(0xffffff, 0x444455, 1.6);
+		vp.scene3.add(vp.hemi);
+		vp.dl = new THREE.DirectionalLight(0xffffff, 2.2);
+		vp.scene3.add(vp.dl);
+		vp.cam3 = new THREE.PerspectiveCamera(35, 1, 0.1, 2000);
+	}
+	return vp.scene3;
+}
+// in a showcase the plane stands still, so its particles get blown backwards like it's flying
+function windOf(sc) {
+	const vp = sc && sc.userData.vp;
+	return vp && vp.p.Wind ? vp.p.Wind : null;
+}
+
 // ---------------- particles: a small sprite system
 export class NumberSequence {
 	constructor(a, b) {
@@ -1379,7 +1407,8 @@ export class ParticleEmitter extends Instance {
 		return null;
 	}
 	_onAncestry() {
-		if (this._host() && inWorkspace(this)) emitters.add(this);
+		this._scene = this._host() ? sceneOf(this) : null;
+		if (this._scene) emitters.add(this);
 		else emitters.delete(this);
 	}
 	_onDestroy() { emitters.delete(this); }
@@ -1396,7 +1425,7 @@ function spawnParticle(e) {
 	const mat = new THREE.SpriteMaterial({ map: spark ? SPARK_TEX : SOFT_TEX, transparent: true, depthWrite: false, blending: e.LightEmission > 0.5 ? THREE.AdditiveBlending : THREE.NormalBlending, fog: true });
 	const s = new THREE.Sprite(mat);
 	const cf = part.CFrame;
-	const dirLocal = e.EmissionDirection === "Back" ? new Vector3(0, 0, 1) : e.EmissionDirection === "Front" ? new Vector3(0, 0, -1) : new Vector3(0, 1, 0);
+	const dirLocal = e.EmissionDirection === "Back" ? new Vector3(0, 0, 1) : e.EmissionDirection === "Front" ? new Vector3(0, 0, -1) : e.EmissionDirection === "Bottom" ? new Vector3(0, -1, 0) : new Vector3(0, 1, 0);
 	let dir = cf.VectorToWorldSpace(dirLocal);
 	const sx = rad(e.SpreadAngle.X), sy = rad(e.SpreadAngle.Y);
 	if (sx > 0 || sy > 0) {
@@ -1418,8 +1447,9 @@ function spawnParticle(e) {
 		rot: rad(e.Rotation.pick()),
 		rotSpeed: rad(e.RotSpeed.pick()),
 		part,
+		scene: e._scene || scene,
 	};
-	scene.add(s);
+	p.scene.add(s);
 	particles.push(p);
 }
 function updateParticles(dt) {
@@ -1436,8 +1466,8 @@ function updateParticles(dt) {
 		const p = particles[i];
 		p.age += dt;
 		const t = p.age / p.life;
-		if (t >= 1 || (p.local && p.part._destroyed)) {
-			scene.remove(p.sprite);
+		if (t >= 1 || (p.local && p.part._destroyed) || (p.scene !== scene && !p.scene.userData.vp.el.isConnected)) {
+			p.scene.remove(p.sprite);
 			p.sprite.material.dispose();
 			particles.splice(i, 1);
 			continue;
@@ -1451,6 +1481,8 @@ function updateParticles(dt) {
 			wp = p.part.CFrame.pointToWorld(p.local);
 		} else {
 			p.pos = p.pos.add(p.vel.mul(dt));
+			const w = p.scene !== scene ? windOf(p.scene) : null;
+			if (w) p.pos = p.pos.add(w.mul(dt));
 			wp = p.pos;
 		}
 		p.sprite.position.set(wp.X, wp.Y, wp.Z);
@@ -1480,7 +1512,9 @@ export class Trail extends Instance {
 		this.MinLength = 0;
 	}
 	_onAncestry() {
-		if (this._parent && inWorkspace(this)) {
+		const sc = this._parent ? sceneOf(this) : null;
+		if (sc) {
+			this._scene = sc;
 			if (!this.mesh) {
 				const g = new THREE.BufferGeometry();
 				this.maxPts = 40;
@@ -1494,8 +1528,9 @@ export class Trail extends Instance {
 				g.setIndex(idx);
 				this.mesh = new THREE.Mesh(g, new THREE.MeshBasicMaterial({ vertexColors: true, transparent: true, depthWrite: false, side: THREE.DoubleSide, blending: this.LightEmission > 0.5 ? THREE.AdditiveBlending : THREE.NormalBlending }));
 				this.mesh.frustumCulled = false;
+				this.mesh.userData.keep = true;
 			}
-			scene.add(this.mesh);
+			if (this.mesh.parent !== sc) sc.add(this.mesh);
 			trails.add(this);
 		} else {
 			trails.delete(this);
@@ -1510,10 +1545,18 @@ export class Trail extends Instance {
 const trails = new Set();
 function updateTrails() {
 	const now = clock();
-	const cp = camera.CFrame.p;
+	const dt = frameDt;
 	for (const tr of trails) {
 		const part = tr._parent;
 		if (!part || !part._isPart) continue;
+		let cp = camera.CFrame.p;
+		if (tr._scene && tr._scene !== scene) {
+			const vp = tr._scene.userData.vp;
+			const cam = vp.p.CurrentCamera;
+			if (cam) cp = cam.CFrame.p;
+			const w = windOf(tr._scene);
+			if (w) for (const q of tr.pts) q.p = q.p.add(w.mul(dt));
+		}
 		if (tr.Enabled) tr.pts.unshift({ p: tr.Offset ? part.CFrame.pointToWorld(tr.Offset) : part.CFrame.p, t: now });
 		while (tr.pts.length > tr.maxPts || (tr.pts.length && now - tr.pts[tr.pts.length - 1].t > tr.Lifetime)) tr.pts.pop();
 		const pos = tr.mesh.geometry.attributes.position.array;
@@ -2237,6 +2280,11 @@ export class GuiObject extends Instance {
 		const autoY = d.AutomaticSize === "Y" || d.AutomaticSize === "XY";
 		s.width = autoX ? "auto" : pp ? `calc((100% - ${pl + pr}px) * ${sz.xs} + ${sz.xo}px)` : `calc(${sz.xs * 100}% + ${sz.xo}px)`;
 		s.height = autoY ? "auto" : pp ? `calc((100% - ${pt + pb}px) * ${sz.ys} + ${sz.yo}px)` : `calc(${sz.ys * 100}% + ${sz.yo}px)`;
+		// grid cells decide the size of their children, like roblox's UIGridLayout
+		if (pMods.UIGridLayout) {
+			s.width = "100%";
+			s.height = "100%";
+		}
 		if (autoX) s.minWidth = `calc(${sz.xs * 100}% + ${sz.xo}px)`;
 		if (autoY) s.minHeight = `calc(${sz.ys * 100}% + ${sz.yo}px)`;
 		if (inLayout) {
@@ -2485,31 +2533,33 @@ function renderViewports() {
 		const w = vp.el.clientWidth, h = vp.el.clientHeight;
 		if (w < 4 || h < 4) continue;
 		if (!vpRenderer) {
-			vpRenderer = new THREE.WebGLRenderer({ antialias: true, alpha: true });
+			// preserveDrawingBuffer so copying it into each frame's canvas never grabs an empty buffer
+			vpRenderer = new THREE.WebGLRenderer({ antialias: true, alpha: true, preserveDrawingBuffer: true });
 			vpRenderer.outputColorSpace = THREE.SRGBColorSpace;
 		}
-		if (!vp.scene3) {
-			vp.scene3 = new THREE.Scene();
-			vp.hemi = new THREE.HemisphereLight(0xffffff, 0x444455, 1.6);
-			vp.scene3.add(vp.hemi);
-			vp.dl = new THREE.DirectionalLight(0xffffff, 2.2);
-			vp.scene3.add(vp.dl);
-			vp.cam3 = new THREE.PerspectiveCamera(35, 1, 0.1, 500);
-		}
+		vpScene(vp);
 		// mirror the parts that live inside this frame
 		const parts = vp.GetDescendants().filter((d) => d._isPart);
 		const live = new Set();
 		for (const pt of parts) {
 			if (!pt._vpMesh) {
 				const g = pt._shape === "Ball" ? geoBall : pt._shape === "Cylinder" ? geoCyl : pt.ClassName === "WedgePart" ? geoWedge : geoBox;
-				pt._vpMesh = new THREE.Mesh(g, makeMaterial(pt.Color, pt.Material, pt.Transparency));
+				pt._vpMesh = new THREE.Mesh(g, makeMaterial(pt.Color, pt.Material, 0.001));
 				pt._vpMesh.matrixAutoUpdate = false;
 			}
 			const m = pt._vpMesh;
+			// colour and fade can change (tweens), keep the material in sync
+			const t = pt._t();
+			m.visible = t < 0.999;
+			m.material.opacity = clamp(1 - t, 0, 1) * (pt._mat === "Glass" ? 0.65 : 1);
+			m.material.depthWrite = t < 0.5;
+			const c = m.material.color.setRGB(pt._color.R, pt._color.G, pt._color.B, THREE.SRGBColorSpace);
+			if (pt._mat === "Neon") c.multiplyScalar(1.6);
 			if (m.parent !== vp.scene3) vp.scene3.add(m);
 			const r = pt.CFrame.r, p = pt.CFrame.p, s = pt.Size;
 			let sx = s.X, sy = s.Y, sz = s.Z;
-			if (pt._shape === "Ball") sx = sy = sz = Math.min(s.X, s.Y, s.Z);
+			if (pt._shape === "Ball" && !pt._ellipsoid) sx = sy = sz = Math.min(s.X, s.Y, s.Z);
+			else if (pt._shape === "Cylinder") sy = sz = Math.min(s.Y, s.Z);
 			const e = m.matrix.elements;
 			e[0] = r[0] * sx; e[1] = r[3] * sx; e[2] = r[6] * sx; e[3] = 0;
 			e[4] = r[1] * sy; e[5] = r[4] * sy; e[6] = r[7] * sy; e[7] = 0;
@@ -2518,7 +2568,7 @@ function renderViewports() {
 			m.matrixWorldNeedsUpdate = true;
 			live.add(m);
 		}
-		for (const c of vp.scene3.children.slice()) if (c.isMesh && !live.has(c)) vp.scene3.remove(c);
+		for (const c of vp.scene3.children.slice()) if (c.isMesh && !c.userData.keep && !live.has(c)) vp.scene3.remove(c);
 		const cam = vp.p.CurrentCamera;
 		if (cam) {
 			const cf = cam.CFrame;

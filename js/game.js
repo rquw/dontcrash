@@ -5,6 +5,7 @@ import {
 	mergeFloor, start, perf,
 } from "./engine.js";
 import * as Server from "./server.js";
+import * as Online from "./online.js";
 
 const V3 = (x, y, z) => new Vector3(x, y, z);
 const RGB = Color3.fromRGB;
@@ -1075,12 +1076,68 @@ let buildPlane;
 		add("Part", V3(2, 0.6, 0.4), edge, CFn(0, 0, 5.2), { Material: "Neon" });
 	};
 
+	// every skin leaves something behind it
+	const FX = {
+		Default: (fx) => {
+			for (const x of [-6, 6]) fx.trail(V3(x, 0, 0), { Lifetime: 0.7, Width: 0.25, Color: new ColorSequence(new Color3(1, 1, 1)), Transparency: new NumberSequence(0.45, 1) });
+		},
+		Jet: (fx) => {
+			fx.flame(V3(0, 0, 6), RGB(255, 225, 150), RGB(255, 90, 30), 1.5);
+			fx.trail(V3(0, 0, 6), { Lifetime: 0.35, Width: 1, Color: new ColorSequence(RGB(255, 170, 90), RGB(255, 80, 30)), Transparency: new NumberSequence(0.4, 1), LightEmission: 1 });
+		},
+		Biplane: (fx) => {
+			fx.emit(V3(0, 0, -3.6), { Texture: "smoke", Color: new ColorSequence(RGB(235, 235, 235), RGB(140, 140, 140)), Size: new NumberSequence(1, 3.5), Transparency: new NumberSequence(0.35, 1), Lifetime: new NumberRange(0.6, 1.1), Rate: 16, Speed: new NumberRange(4, 8), EmissionDirection: "Back", SpreadAngle: V2(15, 15), Rotation: new NumberRange(0, 360), RotSpeed: new NumberRange(-60, 60) });
+		},
+		Paper: (fx) => {
+			for (const c of [RGB(255, 120, 180), RGB(110, 210, 255), RGB(255, 225, 90)]) {
+				fx.emit(V3(0, 0, 3), { Texture: "sparkles", Color: new ColorSequence(c), LightEmission: 0.6, Size: new NumberSequence(0.7, 0.2), Lifetime: new NumberRange(0.8, 1.3), Rate: 7, Speed: new NumberRange(2, 6), SpreadAngle: V2(180, 180), Acceleration: V3(0, -12, 0), Rotation: new NumberRange(0, 360), RotSpeed: new NumberRange(-200, 200) });
+			}
+		},
+		UFO: (fx) => {
+			fx.emit(V3(0, -1, 0), { Texture: "smoke", Color: new ColorSequence(RGB(120, 255, 150), RGB(40, 200, 90)), LightEmission: 1, Size: new NumberSequence(2, 5), Transparency: new NumberSequence(0.55, 1), Lifetime: new NumberRange(0.5, 0.8), Rate: 26, Speed: new NumberRange(14, 22), EmissionDirection: "Bottom", SpreadAngle: V2(8, 8) });
+			fx.emit(V3(0, 0, 0), { Texture: "sparkles", Color: new ColorSequence(RGB(150, 255, 170)), LightEmission: 1, Size: new NumberSequence(0.8, 0), Lifetime: new NumberRange(0.4, 0.8), Rate: 14, Speed: new NumberRange(6, 10), SpreadAngle: V2(180, 180) });
+		},
+		Rocket: (fx) => {
+			fx.flame(V3(0, 0, 6.2), RGB(255, 240, 170), RGB(255, 70, 20), 2.4, 110);
+			fx.emit(V3(0, 0, 7), { Texture: "smoke", Color: new ColorSequence(RGB(220, 215, 210), RGB(110, 105, 100)), Size: new NumberSequence(1.5, 6), Transparency: new NumberSequence(0.3, 1), Lifetime: new NumberRange(0.9, 1.5), Rate: 30, Speed: new NumberRange(3, 7), EmissionDirection: "Back", SpreadAngle: V2(12, 12), Rotation: new NumberRange(0, 360), RotSpeed: new NumberRange(-80, 80) });
+		},
+		TeamJet: (fx) => fx.flame(V3(0, 0, 6.8), RGB(170, 220, 255), RGB(40, 110, 255), 1.4),
+		Stealth: (fx) => fx.flame(V3(0, 0, 5.6), RGB(230, 190, 255), RGB(150, 60, 255), 1.5),
+	};
+	function addFx(id, main) {
+		const f = FX[id];
+		if (!f || settings.low) return;
+		const fx = {
+			emit(at, props) {
+				const a = Instance.new("Attachment");
+				a.Position = at;
+				a.Parent = main;
+				const e = Instance.new("ParticleEmitter");
+				for (const k in props) e[k] = props[k];
+				e.Parent = a;
+				return e;
+			},
+			flame(at, c0, c1, size, rate) {
+				return fx.emit(at, { Texture: "fire", Color: new ColorSequence(c0, c1), LightEmission: 1, Size: new NumberSequence(size, 0), Lifetime: new NumberRange(0.12, 0.24), Rate: rate || 70, Speed: new NumberRange(8, 16), EmissionDirection: "Back", SpreadAngle: V2(8, 8) });
+			},
+			trail(at, props) {
+				const t = Instance.new("Trail");
+				t.Offset = at;
+				for (const k in props) t[k] = props[k];
+				t.Parent = main;
+				return t;
+			},
+		};
+		f(fx);
+	}
+	Game.skinFx = addFx;
+
 	buildPlane = (id) => {
 		if (planeModel) planeModel.Destroy();
 		[planeModel, planeMain, planeParts] = Game.makePlane(id);
 	};
 
-	Game.makePlane = (id, parent) => {
+	Game.makePlane = (id, parent, noFx) => {
 		const model = Instance.new("Model");
 		const main = Instance.new("Part");
 		main.Size = Vector3.one;
@@ -1112,6 +1169,7 @@ let buildPlane;
 			parts.push(p);
 		}
 		(SKIN_BUILD[id] || SKIN_BUILD.Default)(add);
+		if (!noFx) addFx(SKIN_BUILD[id] ? id : "Default", main);
 		if (id === "Stealth") {
 			const glow = Instance.new("PointLight");
 			glow.Range = 16;
@@ -1126,6 +1184,7 @@ let buildPlane;
 })();
 
 function wreck(vel) {
+	for (const d of planeModel.GetDescendants()) if (d.ClassName === "ParticleEmitter" || d.ClassName === "Trail") d.Enabled = false;
 	for (const p of planeParts) {
 		for (const w of p.GetChildren()) if (w.IsA("WeldConstraint")) w.Destroy();
 	}
@@ -1900,6 +1959,7 @@ let openPanel, closePanels, startRun, toMenu;
 		Game.closeStrip();
 		openPanel("shop");
 	});
+	menuButton("LEADERBOARD", "trophy", () => Game.openLeaderboard());
 	rewardsBtn = menuButton("FREE REWARDS", "gift", () => {
 		Game.closeStrip();
 		openPanel("rewards");
@@ -1945,11 +2005,11 @@ const overlay = make("TextButton", {
 	Parent: gui,
 });
 
-function panel(name, title) {
+function panel(name, title, size) {
 	const p = make("CanvasGroup", {
 		AnchorPoint: V2(0.5, 0.5),
 		Position: U2(0.5, 0, 0.5, 30),
-		Size: UO(680, 520),
+		Size: size || UO(680, 520),
 		BackgroundColor3: BLACK,
 		BackgroundTransparency: T.panel,
 		GroupTransparency: 1,
@@ -1971,7 +2031,13 @@ function panel(name, title) {
 		Parent: p,
 	});
 	make("UIListLayout", { Padding: UDim.new(0, 6), SortOrder: "LayoutOrder", Parent: body });
-	panels[name] = { frame: p, body, token: 0 };
+	// fades out the bottom and says there's more below, until you've scrolled down
+	const more = make("Frame", { AnchorPoint: V2(0, 1), Position: U2(0, 0, 1, 0), Size: U2(1, 0, 0, 90), BackgroundColor3: BLACK, BackgroundTransparency: 0, ZIndex: 8, Parent: p });
+	make("UIGradient", { Rotation: 90, Transparency: new NumberSequence([NumberSequenceKeypoint.new(0, 1), NumberSequenceKeypoint.new(0.55, 0.35), NumberSequenceKeypoint.new(1, 0.05)]), Parent: more });
+	const moreL = make("Frame", { AnchorPoint: V2(0.5, 1), Position: U2(0.5, 0, 1, -10), Size: UO(190, 30), BackgroundColor3: WHITE, BackgroundTransparency: 0.1, ZIndex: 9, Parent: more });
+	make("UICorner", { CornerRadius: UDim.new(0.5, 0), Parent: moreL });
+	text(moreL, "SCROLL FOR MORE  ▼", US(1, 1), UO(0, 1), 16, BLACK).ZIndex = 9;
+	panels[name] = { frame: p, body, token: 0, more, moreL };
 	return panels[name];
 }
 
@@ -2022,6 +2088,18 @@ openPanel = (name) => {
 };
 
 overlay.MouseButton1Click.Connect(() => closePanels());
+
+RunService.RenderStepped.Connect(() => {
+	for (const name in panels) {
+		const p = panels[name];
+		if (!p.frame.Visible) continue;
+		const el = p.body.el;
+		const left = el.scrollHeight - el.clientHeight - el.scrollTop;
+		const show = left > 12;
+		if (p.more.Visible !== show) p.more.Visible = show;
+		if (show) p.moreL.Position = U2(0.5, 0, 1, -10 - Math.abs(Math.sin(clock() * 3.2)) * 6);
+	}
+});
 
 // ------------------------------------------------------------------ settings
 
@@ -2352,37 +2430,332 @@ function updateRewards() {
 
 // ------------------------------------------------------------------ shop
 
-let shopTab = "UPGRADES";
+let shopTab = "SKINS";
 let rebuildShop;
+Game.spinning = [];
+// a little 3d window with a plane in it that slowly turns
+function planeView(parent, id, size, pos, opts) {
+	opts = opts || {};
+	const vp = make("ViewportFrame", {
+		Size: size,
+		Position: pos || new UDim2(),
+		BackgroundColor3: opts.bg || RGB(24, 26, 36),
+		BackgroundTransparency: opts.bgT === undefined ? 0.1 : opts.bgT,
+		LightDirection: V3(-1, -1.5, -0.6),
+		Parent: parent,
+	});
+	if (opts.round) make("UICorner", { CornerRadius: UDim.new(0, opts.round), Parent: vp });
+	const cam = Instance.new("Camera");
+	cam.FieldOfView = opts.fov || 35;
+	cam.CFrame = opts.cam || CFrame.lookAt(V3(0, 6, 24), V3(0, -0.5, 0));
+	cam.Parent = vp;
+	vp.CurrentCamera = cam;
+	if (opts.wind) vp.p.Wind = opts.wind;
+	if (id) {
+		const [model] = Game.makePlane(id, vp, opts.noFx);
+		Game.spinning.push({ model, speed: opts.spin || 0.9, off: Math.random() * 6 });
+		vp._model = model;
+	}
+	return vp;
+}
+
+// the death effect playing on a loop in a window: plane pops, effect, plane comes back
+function deathView(vp, kind) {
+	const cam = vp.CurrentCamera;
+	cam.FieldOfView = 40;
+	cam.CFrame = CFrame.lookAt(V3(0, 20, 72), V3(0, 4, 0));
+	const [plane, , parts] = Game.makePlane(data.skin, vp, true);
+	plane.PivotTo(CFn(0, 0, 0).mul(Ang(0, rad(35), 0)));
+	const fxFolder = Instance.new("Folder");
+	fxFolder.Parent = vp;
+	let t = 0;
+	let bits = [];
+	const boom = () => {
+		const at = V3(0, 0, 0);
+		const bl = (size, color, time) => {
+			const p = Instance.new("Part");
+			p.Shape = "Ball";
+			p.Material = "Neon";
+			p.Color = color;
+			p.Size = Vector3.one.mul(2);
+			p.CFrame = CFrame.fromPos(at);
+			p.Parent = fxFolder;
+			TweenService.Create(p, new TweenInfo(time, "Quint"), { Size: Vector3.one.mul(size * 0.6), Transparency: 1 }).Play();
+			task.delay(time, () => p.Destroy());
+		};
+		const sp = (n, size, colorFn, speed) => {
+			for (let i = 0; i < n; i++) {
+				const p = Instance.new("Part");
+				p.Size = Vector3.one.mul((size * random(6, 14)) / 10);
+				p.Material = "Neon";
+				p.Color = colorFn();
+				p.CFrame = CFrame.fromPos(at);
+				p.Parent = fxFolder;
+				const s = speed * 0.5;
+				bits.push({ p, v: V3(random(-s, s), random(idiv(s, 4), s), random(-s, s)), w: V3(Math.random() * 8, Math.random() * 8, Math.random() * 8), life: 1.8 });
+			}
+		};
+		const sm = (n, spread, size, time) => {
+			for (let i = 0; i < n; i++) {
+				const p = Instance.new("Part");
+				p.Shape = "Ball";
+				p.Color = RGB(50, 50, 50);
+				p.Size = Vector3.one.mul(2);
+				p.CFrame = CFrame.fromPos(at.add(V3(random(-spread, spread), random(idiv(-spread, 2), spread), random(-spread, spread)).mul(0.6)));
+				p.Parent = fxFolder;
+				const tt = random(time * 10, time * 18) / 10;
+				TweenService.Create(p, new TweenInfo(tt, "Quint"), { Size: Vector3.one.mul(random(size, size * 2) * 0.6), Transparency: 1 }).Play();
+				task.delay(tt, () => p.Destroy());
+			}
+		};
+		if (kind === "Confetti") {
+			bl(30, new Color3(1, 1, 1), 0.3);
+			sp(70, 0.8, () => Color3.fromHSV(Math.random(), 0.8, 1), 90);
+		} else if (kind === "Pixel") {
+			const cyan = RGB(60, 240, 255), pink = RGB(255, 60, 220);
+			bl(45, cyan, 0.5);
+			sp(40, 2, () => (Math.random() < 0.5 ? cyan : pink), 70);
+		} else if (kind === "Nuke") {
+			bl(200, new Color3(1, 1, 0.9), 0.9);
+			bl(130, RGB(255, 120, 30), 1.6);
+			sm(10, 30, 40, 2.5);
+			sp(30, 1.5, () => RGB(255, 160, 50), 120);
+		} else {
+			bl(70, RGB(255, 240, 180), 0.4);
+			bl(50, RGB(255, 120, 30), 0.9);
+			sm(5, 12, 18, 1.5);
+			sp(20, 1, () => (Math.random() < 0.5 ? RGB(255, 140, 40) : RGB(40, 40, 40)), 80);
+		}
+	};
+	const conn = RunService.RenderStepped.Connect((dt) => {
+		if (vp._destroyed || !vp.Parent) {
+			conn.Disconnect();
+			return;
+		}
+		const was = t;
+		t = (t + dt) % 3.4;
+		if (was < 0.7 && t >= 0.7) {
+			for (const p of parts) p.LocalTransparencyModifier = 1;
+			boom();
+		}
+		if (was < 2.9 && t >= 2.9) for (const p of parts) p.LocalTransparencyModifier = 0;
+		// the plane bobs a bit while it waits
+		if (t < 0.7 || t > 2.9) plane.PivotTo(CFn(0, Math.sin(clock() * 2) * 0.6, 0).mul(Ang(0, rad(35), Math.sin(clock() * 1.3) * 0.1)));
+		for (let i = bits.length - 1; i >= 0; i--) {
+			const b = bits[i];
+			b.life -= dt;
+			b.v = b.v.add(V3(0, -80 * dt, 0));
+			const cf = b.p.CFrame;
+			b.p.CFrame = CFrame.fromPos(cf.Position.add(b.v.mul(dt))).mul(cf.Rotation).mul(Ang(b.w.X * dt, b.w.Y * dt, b.w.Z * dt));
+			if (b.life <= 0) {
+				b.p.Destroy();
+				bits.splice(i, 1);
+			} else if (b.life < 0.4) b.p.Transparency = 1 - b.life / 0.4;
+		}
+	});
+}
+
 (() => {
-	const shopPanel = panel("shop", "SHOP");
+	const shopPanel = panel("shop", "SHOP", UO(760, 580));
 	const tabButtons = {};
 	{
-		const tabs = make("Frame", { Size: U2(1, -10, 0, 46), BackgroundTransparency: 1, LayoutOrder: -1, Parent: shopPanel.body });
+		const tabs = make("Frame", { Size: U2(1, -10, 0, 48), BackgroundTransparency: 1, LayoutOrder: -1, Parent: shopPanel.body });
 		make("UIListLayout", { FillDirection: "row", Padding: UDim.new(0, 6), Parent: tabs });
-		["UPGRADES", "SKINS", "DEATH EFFECTS"].forEach((name, idx) => {
-			tabButtons[name] = button(tabs, name, U2(1 / 3, -4, 1, 0), null, () => {
+		[["SKINS", "gem"], ["DEATH EFFECTS", "skull"], ["UPGRADES", "coin"]].forEach(([name, icon], idx) => {
+			const b = button(tabs, name, U2(1 / 3, -4, 1, 0), null, () => {
+				if (shopTab === name) return;
 				shopTab = name;
 				rebuildShop();
 			});
-			tabButtons[name].LayoutOrder = idx + 1;
+			b.LayoutOrder = idx + 1;
+			make("UIPadding", { PaddingLeft: UDim.new(0, 34), Parent: b });
+			const ic = Icons.make(icon, b, 22);
+			ic.AnchorPoint = V2(0, 0.5);
+			ic.Position = U2(0, -26, 0.5, 0);
+			tabButtons[name] = b;
 		});
 	}
 
-	const shopItems = make("Frame", { Size: U2(1, 0, 0, 0), AutomaticSize: "Y", BackgroundTransparency: 1, LayoutOrder: 1, Parent: shopPanel.body });
-	make("UIListLayout", { Padding: UDim.new(0, 6), SortOrder: "LayoutOrder", Parent: shopItems });
+	const shopItems = make("Frame", { Size: U2(1, -10, 0, 0), AutomaticSize: "Y", BackgroundTransparency: 1, LayoutOrder: 1, Parent: shopPanel.body });
+	make("UIListLayout", { Padding: UDim.new(0, 8), SortOrder: "LayoutOrder", Parent: shopItems });
 
-	function itemRow(title, sub, btnText, btnColor, fn) {
-		const r = row(shopItems, 66);
-		text(r, title, U2(0.6, 0, 0, 30), UO(16, 7), 24, WHITE, LEFT);
-		text(r, sub, U2(0.6, 0, 0, 22), UO(16, 37), 18, DIM, LEFT);
-		const b = button(r, btnText, UO(180, 44), U2(1, -194, 0.5, -22), fn, 0.3);
-		b.TextColor3 = btnColor;
-		if (/[●◆✦]/.test(btnText)) {
-			b.Text = "";
-			Icons.text(b, US(1, 1), null, 22, btnColor).Text = btnText;
+	const DESC = {
+		skin: {
+			Default: ["the classic red one", "white wingtip contrails"],
+			Jet: ["sleek, pointy, fast looking", "afterburner flame"],
+			Biplane: ["old school, two wings", "smoky old engine"],
+			Paper: ["folded out of homework", "confetti trail"],
+			UFO: ["not from around here", "green tractor beam"],
+			Rocket: ["basically a missile with a seat", "fire and smoke, flies higher"],
+		},
+		death: {
+			Default: ["a normal explosion", "fire, smoke, debris"],
+			Confetti: ["party time", "70 bits of confetti"],
+			Pixel: ["retro blocks everywhere", "cyan and pink pixels"],
+			Nuke: ["way too much", "you'll see"],
+		},
+	};
+	const DEATH_COLOR = { Default: RGB(255, 130, 40), Confetti: RGB(255, 90, 200), Pixel: RGB(60, 240, 255), Nuke: RGB(255, 230, 120) };
+
+	// the rarer, the more it glows
+	function rarity(price, isSkin) {
+		const p = isSkin ? price : price * 25;
+		if (p >= 350) return ["LEGENDARY", RGB(255, 190, 60)];
+		if (p >= 200) return ["EPIC", RGB(200, 110, 255)];
+		if (p >= 100) return ["RARE", RGB(90, 180, 255)];
+		if (p > 0) return ["UNCOMMON", RGB(110, 230, 140)];
+		return ["FREE", DIM];
+	}
+
+	function actionButton(parent, item, isSkin, owned, equipped, size, pos) {
+		const money = isSkin ? data.gems : data.keys;
+		let label, c, base = 0.1;
+		if (equipped === item.id) [label, c] = ["EQUIPPED", GOOD];
+		else if (owned[item.id]) [label, c] = ["EQUIP", WHITE];
+		else [label, c] = [fmt(item.price) + (isSkin ? " ◆" : " ✦") + "  BUY", money >= item.price ? (isSkin ? GEM : KEY) : DIM];
+		const b = button(parent, "", size, pos, async () => {
+			if (equipped === item.id) return;
+			if (!owned[item.id] && Game.topUp(isSkin ? "gems" : "keys", item.price)) return;
+			const [ok, msg] = request(isSkin ? "skin" : "death", item.id);
+			result(ok, msg);
+			if (ok) {
+				Game.pushProfile();
+				if (!owned[item.id]) sfx("record");
+			}
+		}, base);
+		b.TextSize = 24;
+		const l = Icons.text(b, US(1, 1), null, 24, c);
+		l.Text = label;
+		if (equipped !== item.id && !owned[item.id] && money >= item.price) {
+			// pulse so you know you can afford it
+			const glow = make("UIStroke", { Color: c, Thickness: 2, Transparency: 0.2, ApplyStrokeMode: "Border", Parent: b });
+			const conn = RunService.RenderStepped.Connect(() => {
+				if (b._destroyed) return conn.Disconnect();
+				glow.Transparency = 0.25 + Math.sin(clock() * 4) * 0.2;
+			});
 		}
 		return b;
+	}
+
+	function showcase(list, isSkin, owned, equipped, viewId) {
+		const it = list.find((x) => x.id === viewId) || list[0];
+		const r = row(shopItems, 260, 1);
+		r.Size = U2(1, 0, 0, 260);
+		const [rn, rc] = rarity(it.price, isSkin);
+		// coloured glow behind the preview in the rarity colour
+		const vp = planeView(r, isSkin ? it.id : null, U2(0.58, 0, 1, 0), null, { bg: RGB(20, 22, 32), bgT: 0.05, round: 10, wind: V3(-28, 0, -12) });
+		make("UIGradient", { Color: new ColorSequence(RGB(255, 255, 255), rc.Lerp(WHITE, 0.4)), Rotation: 90, Parent: vp });
+		if (!isSkin) deathView(vp, it.id);
+		const tag = make("Frame", { Position: UO(12, 12), Size: UO(0, 24), AutomaticSize: "X", BackgroundColor3: rc, Parent: vp });
+		make("UICorner", { CornerRadius: UDim.new(0, 12), Parent: tag });
+		make("UIPadding", { PaddingLeft: UDim.new(0, 10), PaddingRight: UDim.new(0, 10), Parent: tag });
+		const tl = text(tag, rn, U2(0, 0, 1, 0), null, 15, BLACK);
+		tl.AutomaticSize = "X";
+		tl.TextWrapped = false;
+		const side = make("Frame", { Position: U2(0.58, 14, 0, 0), Size: U2(0.42, -14, 1, 0), BackgroundTransparency: 1, Parent: r });
+		text(side, it.id.toUpperCase(), U2(1, 0, 0, 44), UO(0, 4), 40, WHITE, LEFT);
+		const d = DESC[isSkin ? "skin" : "death"][it.id] || ["", ""];
+		text(side, d[0], U2(1, 0, 0, 24), UO(0, 50), 20, RGB(210, 210, 210), LEFT);
+		const fxRow = make("Frame", { Position: UO(0, 82), Size: U2(1, 0, 0, 30), BackgroundColor3: BLACK, BackgroundTransparency: 0.5, Parent: side });
+		make("UICorner", { CornerRadius: UDim.new(0, 6), Parent: fxRow });
+		text(fxRow, (isSkin ? "EFFECT: " : "") + d[1].toUpperCase(), U2(1, -20, 1, 0), UO(10, 1), 16, rc.Lerp(WHITE, 0.3), LEFT);
+		const status = equipped === it.id ? ["EQUIPPED", GOOD] : owned[it.id] ? ["OWNED", WHITE] : ["NOT OWNED", DIM];
+		text(side, status[0], U2(1, 0, 0, 22), UO(0, 124), 18, status[1], LEFT);
+		actionButton(side, it, isSkin, owned, equipped, U2(1, 0, 0, 64), U2(0, 0, 1, -70));
+	}
+
+	function cards(list, isSkin, owned, equipped, viewId, onPick) {
+		const grid = make("Frame", { Size: U2(1, 0, 0, 0), AutomaticSize: "Y", BackgroundTransparency: 1, LayoutOrder: nextOrder(), Parent: shopItems });
+		make("UIGridLayout", { CellSize: UO(172, 176), CellPadding: UO(8, 8), SortOrder: "LayoutOrder", Parent: grid });
+		list.forEach((it, idx) => {
+			const [, rc] = rarity(it.price, isSkin);
+			const sel = it.id === viewId;
+			const c = button(grid, "", new UDim2(), null, () => {
+				if (sel) return;
+				onPick(it.id);
+			}, sel ? 0.15 : 0.45);
+			c.LayoutOrder = idx;
+			c.ClipsDescendants = true;
+			const glow = make("Frame", { Size: US(1, 0.7), BackgroundColor3: rc, BackgroundTransparency: 0.55, ZIndex: 0, Parent: c });
+			make("UIGradient", { Rotation: 90, Transparency: new NumberSequence(0, 1), Parent: glow });
+			if (isSkin) {
+				const v = planeView(c, it.id, UO(150, 104), UO(11, 8), { bgT: 1, noFx: true, fov: 30, cam: CFrame.lookAt(V3(0, 6, 26), V3(0, -0.3, 0)), spin: 0.6 });
+				v.el.style.pointerEvents = "none";
+			} else {
+				const ic = make("Frame", { AnchorPoint: V2(0.5, 0.5), Position: U2(0.5, 0, 0, 58), Size: UO(70, 70), BackgroundColor3: DEATH_COLOR[it.id] || WHITE, Parent: c });
+				make("UICorner", { CornerRadius: UDim.new(0.5, 0), Parent: ic });
+				make("UIGradient", { Color: new ColorSequence(WHITE, RGB(120, 120, 120)), Rotation: 45, Parent: ic });
+				const sk = Icons.make("skull", ic, 40);
+				sk.AnchorPoint = V2(0.5, 0.5);
+				sk.Position = US(0.5, 0.5);
+			}
+			text(c, it.id.toUpperCase(), U2(1, -10, 0, 24), UO(5, 114), 21, WHITE);
+			const st = Icons.text(c, U2(1, -10, 0, 22), UO(5, 142), 17, DIM);
+			if (equipped === it.id) {
+				st.Text = "EQUIPPED";
+				st.TextColor3 = GOOD;
+			} else if (owned[it.id]) st.Text = "OWNED";
+			else {
+				st.Text = fmt(it.price) + (isSkin ? " ◆" : " ✦");
+				st.TextColor3 = (isSkin ? data.gems : data.keys) >= it.price ? (isSkin ? GEM : KEY) : DIM;
+			}
+			if (sel) make("UIStroke", { Color: WHITE, Thickness: 2, Transparency: 0.1, ApplyStrokeMode: "Border", Parent: c });
+			const sc = c.FindFirstChildOfClass("UIScale");
+			sc.Scale = 0.85;
+			task.delay(0.02 * idx, () => tw(sc, 0.35, { Scale: 1 }, "Back"));
+		});
+	}
+
+	function upgrades() {
+		for (const p of CONFIG.powers) {
+			const lvl = data.power[p.id] || 0;
+			const price = p.base * (lvl + 1) ** 2;
+			const maxed = lvl >= p.max;
+			const r = row(shopItems, 190, 0.35);
+			r.Size = U2(1, 0, 0, 190);
+			make("UICorner", { CornerRadius: UDim.new(0, 10), Parent: r });
+			const bg = make("Frame", { Size: US(1, 1), BackgroundColor3: COIN, BackgroundTransparency: 0.75, ZIndex: 0, Parent: r });
+			make("UICorner", { CornerRadius: UDim.new(0, 10), Parent: bg });
+			make("UIGradient", { Transparency: new NumberSequence(0, 1), Parent: bg });
+			const ic = Icons.make("coin", r, 90);
+			ic.AnchorPoint = V2(0, 0.5);
+			ic.Position = U2(0, 26, 0.5, 0);
+			text(r, p.name.toUpperCase(), UO(400, 34), UO(140, 20), 30, WHITE, LEFT);
+			text(r, p.desc.toUpperCase(), UO(400, 22), UO(140, 54), 17, DIM, LEFT);
+			const now = (1 + 0.25 * lvl).toFixed(2).replace(/\.?0+$/, "");
+			const next = (1 + 0.25 * (lvl + 1)).toFixed(2).replace(/\.?0+$/, "");
+			text(r, maxed ? "x" + now + "  MAXED" : "x" + now + "   →   x" + next, UO(400, 44), UO(140, 80), 38, COIN, LEFT);
+			const pips = make("Frame", { Position: UO(140, 132), Size: UO(360, 14), BackgroundTransparency: 1, Parent: r });
+			make("UIListLayout", { FillDirection: "row", Padding: UDim.new(0, 4), Parent: pips });
+			for (let i = 0; i < p.max; i++) {
+				const f = make("Frame", { Size: UO(32, 14), BackgroundColor3: i < lvl ? COIN : WHITE, BackgroundTransparency: i < lvl ? 0 : 0.85, LayoutOrder: i, Parent: pips });
+				make("UICorner", { CornerRadius: UDim.new(0, 4), Parent: f });
+			}
+			const b = button(r, "", UO(190, 60), U2(1, -210, 0.5, -30), () => {
+				if (maxed) sfx("bad");
+				else if (!Game.topUp("coins", price)) {
+					const [ok, msg] = request("buy_power", p.id);
+					result(ok, msg);
+				}
+			}, 0.1);
+			Icons.text(b, US(1, 1), null, 24, maxed ? DIM : data.coins >= price ? COIN : DIM).Text = maxed ? "MAX" : fmt(price) + " ●";
+		}
+		// revives: can't buy them, only find them
+		const r = row(shopItems, 96, 0.45);
+		make("UICorner", { CornerRadius: UDim.new(0, 10), Parent: r });
+		const hi = Icons.make("heart", r, 56);
+		hi.AnchorPoint = V2(0, 0.5);
+		hi.Position = U2(0, 30, 0.5, 0);
+		text(r, "REVIVES  " + (data.revives || 0), UO(400, 32), UO(110, 16), 28, RGB(255, 100, 130), LEFT);
+		text(r, "SUPER RARE RED HEARTS WHILE FLYING. USE ONE WHEN YOU CRASH TO KEEP GOING.", U2(1, -130, 0, 40), UO(110, 50), 16, DIM, LEFT);
+		// what leveling up gives you
+		const lr = row(shopItems, 96, 0.45);
+		make("UICorner", { CornerRadius: UDim.new(0, 10), Parent: lr });
+		const badge = make("Frame", { AnchorPoint: V2(0, 0.5), Position: U2(0, 30, 0.5, 0), Size: UO(56, 56), BackgroundColor3: RGB(120, 90, 255), Parent: lr });
+		make("UICorner", { CornerRadius: UDim.new(0.5, 0), Parent: badge });
+		text(badge, String(data.level || 1), US(1, 1), null, 26, WHITE);
+		text(lr, "LEVEL " + (data.level || 1), UO(400, 32), UO(110, 16), 28, RGB(170, 150, 255), LEFT);
+		text(lr, "EVERY LEVEL UP GIVES COINS. EVERY 5TH LEVEL +15 GEMS, EVERY 10TH +2 KEYS.", U2(1, -130, 0, 40), UO(110, 50), 16, DIM, LEFT);
 	}
 
 	rebuildShop = () => {
@@ -2394,91 +2767,34 @@ let rebuildShop;
 			b.TextColor3 = sel ? WHITE : DIM;
 		}
 		for (const c of shopItems.GetChildren()) if (!c.IsA("UIListLayout")) c.Destroy();
-
-		if (shopTab === "UPGRADES") {
-			for (const p of CONFIG.powers) {
-				const lvl = data.power[p.id] || 0;
-				const price = p.base * (lvl + 1) ** 2;
-				const maxed = lvl >= p.max;
-				itemRow(p.name.toUpperCase() + "   x" + (1 + 0.25 * lvl).toFixed(2), p.desc + "   " + "■".repeat(lvl) + "□".repeat(p.max - lvl),
-					maxed ? "MAX" : fmt(price) + " ●",
-					maxed ? DIM : data.coins >= price ? COIN : DIM,
-					() => {
-						if (maxed) sfx("bad");
-						else if (!Game.topUp("coins", price)) result(request("buy_power", p.id));
-					});
-			}
-			const rh = row(shopItems, 34, 1);
-			text(rh, "REVIVES: COLLECT THE RARE RED HEARTS WHILE FLYING.   YOU HAVE " + (data.revives || 0), US(1, 1), UO(4, 0), 18, DIM, LEFT);
+		Game.spinning = Game.spinning.filter((s) => s.model.Parent && !s.model._destroyed);
+		if (shopTab === "UPGRADES") upgrades();
+		else if (shopTab === "SKINS") {
+			Game.skinView = Game.skinView || data.skin;
+			showcase(CONFIG.skins, true, data.skins, data.skin, Game.skinView);
+			cards(CONFIG.skins, true, data.skins, data.skin, Game.skinView, (id) => {
+				Game.skinView = id;
+				sfx("click");
+				rebuildShop();
+			});
 		} else {
-			const isSkin = shopTab === "SKINS";
-			const list = isSkin ? CONFIG.skins : CONFIG.deaths;
-			const owned = isSkin ? data.skins : data.deaths;
-			const equipped = isSkin ? data.skin : data.death;
-			const icon = isSkin ? " ◆" : " ✦", money = isSkin ? data.gems : data.keys, color = isSkin ? GEM : KEY;
-			const head = row(shopItems, 34, 1);
-			text(head, isSkin ? "SKINS ONLY CHANGE YOUR FIRST PLANE, THE JETS STAY STOCK" : "WHAT HAPPENS WHEN YOU CRASH", US(1, 1), UO(4, 0), 18, DIM, LEFT);
-			if (isSkin) {
-				Game.skinView = Game.skinView || data.skin;
-				const vr = row(shopItems, 220, 1);
-				const vp = make("ViewportFrame", {
-					Size: U2(1, -8, 1, -8),
-					Position: UO(4, 4),
-					BackgroundColor3: RGB(24, 26, 36),
-					BackgroundTransparency: 0.1,
-					Ambient: RGB(150, 150, 165),
-					LightColor: WHITE,
-					LightDirection: V3(-1, -1.5, -0.6),
-					Parent: vr,
-				});
-				const cam = Instance.new("Camera");
-				cam.FieldOfView = 35;
-				cam.CFrame = CFrame.lookAt(V3(0, 6, 24), V3(0, -0.5, 0));
-				cam.Parent = vp;
-				vp.CurrentCamera = cam;
-				const [model] = Game.makePlane(Game.skinView, vp);
-				Game.skinModel = model;
-				let shownIt = null;
-				for (const it of list) if (it.id === Game.skinView) shownIt = it;
-				const status = equipped === Game.skinView ? "EQUIPPED" : owned[Game.skinView] ? "OWNED" : shownIt ? fmt(shownIt.price) + " ◆" : "";
-				const nameL = text(vr, Game.skinView.toUpperCase(), U2(1, -40, 0, 36), UO(20, 14), 32, WHITE, LEFT);
-				nameL.ZIndex = 3;
-				const stL = Icons.text(vr, U2(1, -40, 0, 26), UO(20, 50), 20, equipped === Game.skinView ? GOOD : DIM, LEFT);
-				stL.Text = status;
-				stL.ZIndex = 3;
-			}
-			const DESC = {
-				skin: { Default: "the classic red one", Jet: "sleek, pointy, fast looking", Biplane: "old school, two wings", Paper: "folded out of homework", UFO: "not from around here", Rocket: "basically a missile with a seat" },
-				death: { Default: "a normal explosion", Confetti: "party time", Pixel: "retro blocks everywhere", Nuke: "way too much" },
-			};
-			for (const item of list) {
-				let label, c;
-				if (equipped === item.id) [label, c] = ["EQUIPPED", GOOD];
-				else if (owned[item.id]) [label, c] = ["EQUIP", WHITE];
-				else [label, c] = [fmt(item.price) + icon, money >= item.price ? color : DIM];
-				const b = itemRow(item.id.toUpperCase(), DESC[isSkin ? "skin" : "death"][item.id] || "", label, c, () => {
-					if (equipped === item.id) return;
-					if (!owned[item.id] && Game.topUp(isSkin ? "gems" : "keys", item.price)) return;
-					result(request(isSkin ? "skin" : "death", item.id));
-				});
-				if (isSkin) {
-					const r = b.Parent;
-					if (Game.skinView === item.id) make("UIStroke", { Color: WHITE, Thickness: 2, Transparency: 0.4, ApplyStrokeMode: "Border", Parent: r });
-					const pick = make("TextButton", { Size: U2(1, -210, 1, 0), BackgroundTransparency: 1, Text: "", Parent: r });
-					pick.MouseButton1Click.Connect(() => {
-						if (Game.skinView === item.id) return;
-						Game.skinView = item.id;
-						sfx("click");
-						rebuildShop();
-					});
-				}
-			}
+			Game.deathView = Game.deathView || data.death;
+			showcase(CONFIG.deaths, false, data.deaths, data.death, Game.deathView);
+			cards(CONFIG.deaths, false, data.deaths, data.death, Game.deathView, (id) => {
+				Game.deathView = id;
+				sfx("click");
+				rebuildShop();
+			});
 		}
 	};
 
-	shopPanel.onOpen = () => rebuildShop();
+	shopPanel.onOpen = () => {
+		Game.skinView = null;
+		Game.deathView = null;
+		rebuildShop();
+	};
 	Game.openShop = () => {
-		shopTab = "UPGRADES";
+		shopTab = "SKINS";
 		if (Game.closeStrip) Game.closeStrip();
 		openPanel("shop");
 	};
@@ -2490,7 +2806,7 @@ panels.rewards.onOpen = () => updateRewards();
 const results = make("CanvasGroup", {
 	AnchorPoint: V2(0.5, 0.5),
 	Position: US(0.5, 0.55),
-	Size: UO(580, 560),
+	Size: UO(580, 610),
 	BackgroundColor3: BLACK,
 	BackgroundTransparency: T.panel,
 	GroupTransparency: 1,
@@ -2526,6 +2842,7 @@ let showResults;
 
 	const rewardL = Icons.text(results, U2(1, -40, 0, 36), UO(20, 394), 32, COIN);
 	const noteL = text(results, "", U2(1, -40, 0, 22), UO(20, 432), 18, DIM);
+	Game.xpRow = make("Frame", { Position: UO(40, 466), Size: U2(1, -80, 0, 40), BackgroundTransparency: 1, Visible: false, Parent: results });
 
 	Game.retryBtn = button(results, "RETRY", UO(250, 58), U2(0, 30, 1, -80), () => Game.go("towers"), 0.1);
 	button(results, "MENU", UO(250, 58), U2(1, -280, 1, -80), () => fade(toMenu));
@@ -2626,8 +2943,10 @@ let showResults;
 					return parts.join("     ");
 				}, my);
 			});
+			Game.showXp(award, my, () => token === my);
 			noteL.Text = award.mult > 1 ? award.mult.toFixed(2).replace(/\.?0+$/, "") + "X COIN MULTIPLIER" : "";
 		} else {
+			Game.xpRow.Visible = false;
 			distL2.Text = fmt(info.dist);
 			rewardL.Text = "";
 			noteL.Text = "COULDN'T SAVE THIS RUN";
@@ -2720,6 +3039,336 @@ refreshUI = () => {
 	if (panels.shop.frame.Visible) rebuildShop();
 	if (Game.stripOpen()) Game.rebuildStrip();
 	updateRewards();
+	if (Game.refreshLevel) Game.refreshLevel();
+};
+
+// ------------------------------------------------------------------ levels, leaderboard, profiles
+
+const LEVEL_C = RGB(140, 110, 255);
+const xpNeed = (level) => Math.floor(100 * Math.pow(level, 1.5)) + 50;
+
+// what goes online about you
+function myProfile() {
+	return {
+		name: data.name,
+		best: data.best,
+		level: data.level,
+		xp: data.xp,
+		skin: data.skin,
+		death: data.death,
+		stats: data.stats,
+		created: data.created,
+		updated: Date.now(),
+	};
+}
+let pushing = false;
+Game.pushProfile = async () => {
+	if (!data.name || !Online.enabled() || pushing) return;
+	pushing = true;
+	try {
+		await Online.push(myProfile());
+	} catch (e) {
+		console.warn(e);
+	}
+	pushing = false;
+};
+
+// the level badge: a round purple thing with the number in it
+function levelBadge(parent, level, size, pos) {
+	const b = make("Frame", { Size: UO(size, size), Position: pos || new UDim2(), BackgroundColor3: LEVEL_C, Parent: parent });
+	make("UICorner", { CornerRadius: UDim.new(0.5, 0), Parent: b });
+	make("UIGradient", { Color: new ColorSequence(RGB(190, 170, 255), RGB(90, 60, 220)), Rotation: 90, Parent: b });
+	make("UIStroke", { Color: WHITE, Thickness: Math.max(1, Math.floor(size / 16)), Transparency: 0.3, ApplyStrokeMode: "Border", Parent: b });
+	const l = text(b, String(level), US(1, 1), UO(0, 1), Math.floor(size * (level >= 100 ? 0.36 : 0.46)), WHITE);
+	l.TextStrokeTransparency = 0.6;
+	return b;
+}
+function xpBar(parent, size, pos, k, color) {
+	const bar = make("Frame", { Size: size, Position: pos, BackgroundColor3: WHITE, BackgroundTransparency: 0.85, Parent: parent });
+	make("UICorner", { CornerRadius: UDim.new(0.5, 0), Parent: bar });
+	const fill = make("Frame", { Size: US(clamp(k, 0, 1), 1), BackgroundColor3: color || LEVEL_C, Parent: bar });
+	make("UICorner", { CornerRadius: UDim.new(0.5, 0), Parent: fill });
+	make("UIGradient", { Color: new ColorSequence(RGB(200, 180, 255), RGB(120, 90, 255)), Parent: fill });
+	return [bar, fill];
+}
+
+// ---------------- your level on the home screen, click it for your profile
+(() => {
+	const holder = make("TextButton", { Position: UO(56, 138), Size: UO(250, 40), BackgroundTransparency: 1, Text: "", Parent: menu });
+	let built = null;
+	Game.refreshLevel = () => {
+		if (built) built.Destroy();
+		built = make("Frame", { Size: US(1, 1), BackgroundTransparency: 1, Parent: holder });
+		built.el.style.pointerEvents = "none";
+		levelBadge(built, data.level, 36, UO(0, 2));
+		text(built, "LEVEL " + data.level, UO(200, 20), UO(46, 1), 18, RGB(190, 175, 255), LEFT);
+		xpBar(built, UO(170, 8), UO(46, 25), data.xp / xpNeed(data.level));
+		bestL.Position = UO(250 + 60, 146);
+	};
+	holder.MouseEnter.Connect(() => sfx("hover"));
+	holder.MouseButton1Click.Connect(() => {
+		sfx("click");
+		Game.closeStrip();
+		Game.showProfile(myProfile(), true);
+	});
+})();
+
+// ---------------- pick a name the first time you open the leaderboard
+(() => {
+	const np = panel("name", "PICK A NAME", UO(560, 330));
+	const info = row(np.body, 60, 1);
+	text(info, "THIS IS WHAT EVERYONE SEES ON THE LEADERBOARD. 2 TO 16 CHARACTERS.", U2(1, -20, 1, 0), UO(8, 0), 19, RGB(210, 210, 210), LEFT);
+	const r = row(np.body, 70, 1);
+	const box = make("TextBox", {
+		Size: U2(1, -10, 0, 60),
+		Position: UO(0, 5),
+		BackgroundColor3: BLACK,
+		BackgroundTransparency: 0.2,
+		PlaceholderText: "YOUR NAME",
+		Text: "",
+		Font: FONT,
+		TextSize: 30,
+		TextColor3: WHITE,
+		Parent: r,
+	});
+	make("UIStroke", { Color: LEVEL_C, Thickness: 2, Transparency: 0.2, ApplyStrokeMode: "Border", Parent: box });
+	box.el.maxLength = 16;
+	const br = row(np.body, 70, 1);
+	const go = async () => {
+		const [ok, msg] = request("set_name", box.Text);
+		result(ok, msg);
+		if (!ok) return;
+		Game.pushProfile();
+		const then = np.then;
+		np.then = null;
+		if (then) then();
+		else closePanels();
+	};
+	box.el.addEventListener("keydown", (e) => {
+		if (e.key === "Enter") go();
+	});
+	button(br, "LET'S GO", U2(1, -10, 0, 60), UO(0, 5), go, 0.05).TextColor3 = GOOD;
+	np.onOpen = () => {
+		box.Text = data.name || "";
+		task.delay(0.1, () => box.CaptureFocus());
+	};
+	Game.askName = (then) => {
+		np.then = then;
+		openPanel("name");
+	};
+})();
+
+// ---------------- leaderboard
+(() => {
+	const lb = panel("leaderboard", "LEADERBOARD", UO(680, 560));
+	const MEDAL = [COIN, RGB(210, 215, 225), RGB(215, 140, 80)];
+	let token = 0;
+	let list = [];
+
+	function entryRow(e, rank, me) {
+		const c = rank <= 3 ? MEDAL[rank - 1] : WHITE;
+		const r = button(lb.body, "", U2(1, -10, 0, 58), null, () => Game.showProfile(e, me, rank), me ? 0.15 : rank <= 3 ? 0.3 : T.row);
+		r.LayoutOrder = nextOrder();
+		if (me) make("UIStroke", { Color: GOOD, Thickness: 2, Transparency: 0.3, ApplyStrokeMode: "Border", Parent: r });
+		if (rank <= 3) {
+			const m = make("Frame", { AnchorPoint: V2(0, 0.5), Position: U2(0, 12, 0.5, 0), Size: UO(40, 40), BackgroundColor3: c, Parent: r });
+			make("UICorner", { CornerRadius: UDim.new(0.5, 0), Parent: m });
+			make("UIGradient", { Color: new ColorSequence(WHITE, RGB(150, 150, 150)), Rotation: 90, Parent: m });
+			text(m, String(rank), US(1, 1), UO(0, 1), 22, BLACK);
+		} else text(r, "#" + rank, UO(60, 58), UO(10, 0), 24, DIM, LEFT);
+		levelBadge(r, e.level || 1, 34, U2(0, 66, 0.5, -17));
+		text(r, String(e.name || "?").toUpperCase(), U2(1, -330, 1, 0), UO(112, 0), 24, me ? GOOD : WHITE, LEFT);
+		text(r, fmt(e.best || 0), UO(190, 58), U2(1, -262, 0, 0), 28, c, RIGHT);
+		text(r, "STUDS", UO(60, 20), U2(1, -66, 0.5, -8), 14, DIM, LEFT);
+		const sc = r.FindFirstChildOfClass("UIScale");
+		sc.Scale = 0.9;
+		r.BackgroundTransparency = 1;
+		task.delay(Math.min(rank, 20) * 0.025, () => {
+			tw(sc, 0.35, { Scale: 1 }, "Back");
+			tw(r, 0.3, { BackgroundTransparency: r.GetAttribute("Base") });
+		});
+		return r;
+	}
+
+	async function load() {
+		token++;
+		const my = token;
+		for (const c of lb.body.GetChildren()) if (!c.IsA("UIListLayout")) c.Destroy();
+		const head = row(lb.body, 44, 1);
+		const status = text(head, Online.enabled() ? "LOADING..." : "", U2(1, -150, 1, 0), UO(4, 0), 18, DIM, LEFT);
+		button(head, "REFRESH", UO(130, 36), U2(1, -140, 0.5, -18), () => load(), 0.3).TextSize = 18;
+		if (!Online.enabled()) {
+			status.Text = "THE ONLINE LEADERBOARD ISN'T CONNECTED YET, ONLY YOU FOR NOW";
+			status.TextColor3 = BAD;
+			entryRow(myProfile(), 1, true);
+			return;
+		}
+		try {
+			// make sure your newest best is up there before loading
+			await Game.pushProfile();
+			list = await Online.top(100);
+		} catch (e) {
+			if (my !== token) return;
+			status.Text = "COULDN'T LOAD THE LEADERBOARD, CHECK YOUR INTERNET";
+			status.TextColor3 = BAD;
+			return;
+		}
+		if (my !== token) return;
+		status.Text = list.length === 0 ? "NOBODY'S ON IT YET. GO FLY." : "FARTHEST DISTANCE EVER, CLICK SOMEONE FOR THEIR PROFILE";
+		const me = Online.myId();
+		let found = false;
+		list.forEach((e, i) => {
+			const isMe = e.id === me;
+			if (isMe) found = true;
+			entryRow(e, i + 1, isMe);
+		});
+		if (!found && data.name) {
+			const gap = row(lb.body, 20, 1);
+			text(gap, "...", US(1, 1), null, 18, DIM);
+			entryRow(myProfile(), list.length + 1, true);
+		}
+	}
+
+	lb.onOpen = load;
+	Game.openLeaderboard = () => {
+		Game.closeStrip();
+		if (!data.name) Game.askName(() => openPanel("leaderboard"));
+		else openPanel("leaderboard");
+	};
+	Game.rankOf = (id) => {
+		const i = list.findIndex((e) => e.id === id);
+		return i >= 0 ? i + 1 : null;
+	};
+})();
+
+// ---------------- profile: everything about a player
+(() => {
+	const pp = panel("profile", "PROFILE", UO(720, 580));
+	const ago = (ms) => {
+		if (!ms) return "?";
+		const d = Math.floor((Date.now() - ms) / 86400000);
+		return d <= 0 ? "TODAY" : d === 1 ? "YESTERDAY" : d + " DAYS AGO";
+	};
+	const hours = (s) => {
+		s = Math.floor(s || 0);
+		const h = idiv(s, 3600), m = idiv(s % 3600, 60);
+		return h > 0 ? h + "H " + m + "M" : m + "M";
+	};
+
+	Game.showProfile = (p, me, rank) => {
+		for (const c of pp.body.GetChildren()) if (!c.IsA("UIListLayout")) c.Destroy();
+		Game.spinning = Game.spinning.filter((s) => s.model.Parent && !s.model._destroyed);
+		const st = p.stats || {};
+		const lvl = p.level || 1;
+		// header: their plane, name, level and xp
+		const h = row(pp.body, 170, 0.35);
+		make("UICorner", { CornerRadius: UDim.new(0, 12), Parent: h });
+		const hb = make("Frame", { Size: US(1, 1), BackgroundColor3: LEVEL_C, BackgroundTransparency: 0.65, ZIndex: 0, Parent: h });
+		make("UICorner", { CornerRadius: UDim.new(0, 12), Parent: hb });
+		make("UIGradient", { Transparency: new NumberSequence(0.1, 1), Parent: hb });
+		planeView(h, p.skin || "Default", UO(210, 150), UO(10, 10), { bgT: 1, wind: V3(-28, 0, -12), fov: 32 });
+		levelBadge(h, lvl, 64, UO(232, 22));
+		text(h, String(p.name || "YOU").toUpperCase(), U2(1, -330, 0, 44), UO(308, 16), 40, me ? GOOD : WHITE, LEFT);
+		const r0 = rank || (!me && p.id ? Game.rankOf(p.id) : me ? Game.rankOf(Online.myId()) : null);
+		text(h, r0 ? "#" + r0 + " ON THE LEADERBOARD" : me ? "YOUR PROFILE" : "", U2(1, -330, 0, 22), UO(308, 60), 17, r0 && r0 <= 3 ? COIN : DIM, LEFT);
+		const need = xpNeed(lvl);
+		text(h, "LEVEL " + lvl, UO(200, 24), UO(232, 100), 22, RGB(200, 185, 255), LEFT);
+		text(h, fmt(p.xp || 0) + " / " + fmt(need) + " XP", U2(1, -440, 0, 24), UO(430, 100), 18, DIM, RIGHT);
+		const [, fill] = xpBar(h, U2(1, -252, 0, 14), UO(232, 132), 0);
+		tw(fill, 0.9, { Size: US(clamp((p.xp || 0) / need, 0, 1), 1) }, "Quint");
+
+		// stat tiles
+		const grid = make("Frame", { Size: U2(1, -10, 0, 0), AutomaticSize: "Y", BackgroundTransparency: 1, LayoutOrder: nextOrder(), Parent: pp.body });
+		make("UIGridLayout", { CellSize: UO(214, 84), CellPadding: UO(8, 8), SortOrder: "LayoutOrder", Parent: grid });
+		const tiles = [
+			["BEST DISTANCE", fmt(p.best || 0), COIN],
+			["TOTAL POINTS", fmt(st.coins || 0) + " ●", COIN],
+			["TOTAL DISTANCE", fmt(st.dist || 0), WHITE],
+			["RUNS", fmt(st.runs || 0), WHITE],
+			["BOSSES DEFEATED", fmt(st.bosses || 0), BAD],
+			["DESTROYED", fmt(st.kills || 0), RGB(255, 150, 70)],
+			["GLASS SMASHED", fmt(st.glass || 0), GEM],
+			["MAPS CLEARED", fmt(st.maps || 0), GOOD],
+			["PICKUPS", fmt(st.pickups || 0) + " ◆", GEM],
+			["HEARTS FOUND", fmt(st.hearts || 0), RGB(255, 100, 130)],
+			["FARTHEST LOOP", fmt((st.loops || 0) + 1), RGB(200, 185, 255)],
+			["TIME FLOWN", hours(st.time), WHITE],
+			["SKIN", String(p.skin || "Default").toUpperCase(), GEM],
+			["DEATH EFFECT", String(p.death || "Default").toUpperCase(), KEY],
+			["PLAYING SINCE", ago(p.created), DIM],
+		];
+		tiles.forEach(([k, v, c], i) => {
+			const t = make("Frame", { BackgroundColor3: BLACK, BackgroundTransparency: 0.45, LayoutOrder: i, Parent: grid });
+			make("UICorner", { CornerRadius: UDim.new(0, 10), Parent: t });
+			const accent = make("Frame", { Position: UO(0, 14), Size: UO(4, 56), BackgroundColor3: c, Parent: t });
+			make("UICorner", { CornerRadius: UDim.new(0.5, 0), Parent: accent });
+			text(t, k, U2(1, -24, 0, 20), UO(16, 12), 15, DIM, LEFT);
+			Icons.text(t, U2(1, -24, 0, 36), UO(16, 36), 30, c, LEFT).Text = v;
+			const sc = make("UIScale", { Scale: 0.85, Parent: t });
+			t.BackgroundTransparency = 1;
+			task.delay(0.03 * i, () => {
+				tw(sc, 0.35, { Scale: 1 }, "Back");
+				tw(t, 0.3, { BackgroundTransparency: 0.45 });
+			});
+		});
+		if (me) {
+			const r = row(pp.body, 64, 1);
+			button(r, "CHANGE NAME", UO(220, 50), UO(0, 7), () => Game.askName(() => Game.showProfile(myProfile(), true)), 0.3);
+		}
+		if (!pp.frame.Visible || pp.closing) openPanel("profile");
+		else pp.body.CanvasPosition = V2(0, 0);
+	};
+})();
+
+// ---------------- xp on the results screen, with level ups
+Game.showXp = (award, my, alive) => {
+	if (!award || award.xp == null) return;
+	const holder = Game.xpRow;
+	holder.ClearAllChildren();
+	holder.Visible = true;
+	let lvl = award.levelFrom, xp = award.xpFrom;
+	const badgeHost = make("Frame", { Size: UO(40, 40), Position: UO(0, 0), BackgroundTransparency: 1, Parent: holder });
+	let badge = levelBadge(badgeHost, lvl, 40);
+	const [, fill] = xpBar(holder, U2(1, -170, 0, 12), UO(52, 14), xp / xpNeed(lvl));
+	const gain = text(holder, "+0 XP", UO(110, 40), U2(1, -110, 0, 0), 22, RGB(200, 185, 255), RIGHT);
+	let left = award.xp;
+	task.spawn(async () => {
+		await task.wait(1.4);
+		const t0 = clock();
+		while (left > 0 && alive()) {
+			const need = xpNeed(lvl);
+			const step = Math.min(left, need - xp);
+			const from = xp;
+			const dur = clamp(step / need, 0.15, 1) * 0.9;
+			const s0 = clock();
+			while (clock() - s0 < dur && alive()) {
+				const k = (clock() - s0) / dur;
+				fill.Size = US((from + step * k) / need, 1);
+				gain.Text = "+" + fmt(award.xp - left + step * k) + " XP";
+				await task.wait();
+			}
+			xp += step;
+			left -= step;
+			if (xp >= need) {
+				// level up!
+				lvl++;
+				xp = 0;
+				fill.Size = US(0, 1);
+				badge.Destroy();
+				badge = levelBadge(badgeHost, lvl, 40);
+				const sc = make("UIScale", { Scale: 1.8, Parent: badge });
+				tw(sc, 0.5, { Scale: 1 }, "Back");
+				const up = (award.levelUps || []).find((u) => u.level === lvl) || {};
+				banner("LEVEL " + lvl + "!", RGB(190, 170, 255), 2.2);
+				popup(describe(up) || "LEVEL UP", COIN);
+				sfx("record");
+				flash();
+			}
+		}
+		fill.Size = US(xp / xpNeed(lvl), 1);
+		gain.Text = "+" + fmt(award.xp) + " XP";
+		void t0;
+	});
 };
 
 // ------------------------------------------------------------------ boss
@@ -4584,6 +5233,8 @@ Game.hitToppled = (b, at) => {
 
 Game.alt = () => {
 	if (curStage === "sea" || (curStage === "boss2" && Game.boss2.done)) return 70;
+	// the rocket just flies a bit higher than everything else
+	if (Game.flow.tier === 1 && data.skin === "Rocket") return ALT + 5;
 	return ALT;
 };
 
@@ -4654,7 +5305,9 @@ async function crash(hits) {
 		return;
 	}
 	if (runId !== my) return;
+	stats.loop = Game.loop;
 	const [ok, award] = request("run_end", stats);
+	if (ok) Game.pushProfile();
 	if (runId !== my) return;
 	showResults(ok && typeof award === "object" ? award : null, {
 		stage: stageName(curStage || "towers"),
@@ -4679,7 +5332,9 @@ Game.quitRun = () => {
 	bossBar.Visible = false;
 	tw(topBox, 0.4, { BackgroundTransparency: 1 });
 	const my = runId;
+	stats.loop = Game.loop;
 	const [ok, award] = request("run_end", stats);
+	if (ok) Game.pushProfile();
 	if (runId !== my) return;
 	showResults(ok && typeof award === "object" ? award : null, {
 		stage: stageName(curStage || "towers"),
@@ -5380,10 +6035,11 @@ task.spawn(async () => {
 
 // the skin showcase turns slowly
 RunService.RenderStepped.Connect(() => {
-	const m = Game.skinModel;
-	if (m && m.Parent) {
-		const t = clock();
-		m.PivotTo(Ang(0, t * 0.9, 0).mul(Ang(Math.sin(t * 1.3) * 0.08, 0, Math.sin(t * 0.9) * 0.15)));
+	const t = clock();
+	for (const s of Game.spinning) {
+		if (!s.model.Parent) continue;
+		const k = t * s.speed + s.off;
+		s.model.PivotTo(Ang(0, k, 0).mul(Ang(Math.sin(k * 1.4) * 0.08, 0, Math.sin(k) * 0.15)));
 	}
 });
 
