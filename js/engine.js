@@ -1557,7 +1557,12 @@ function updateTrails() {
 			const w = windOf(tr._scene);
 			if (w) for (const q of tr.pts) q.p = q.p.add(w.mul(dt));
 		}
-		if (tr.Enabled) tr.pts.unshift({ p: tr.Offset ? part.CFrame.pointToWorld(tr.Offset) : part.CFrame.p, t: now });
+		if (tr.Enabled) {
+			const np = tr.Offset ? part.CFrame.pointToWorld(tr.Offset) : part.CFrame.p;
+			// a point on top of the last one would make a zero-length segment and break the whole strip
+			if (!tr.pts.length || np.sub(tr.pts[0].p).Magnitude > 0.02) tr.pts.unshift({ p: np, t: now });
+			else tr.pts[0].t = now;
+		}
 		while (tr.pts.length > tr.maxPts || (tr.pts.length && now - tr.pts[tr.pts.length - 1].t > tr.Lifetime)) tr.pts.pop();
 		const pos = tr.mesh.geometry.attributes.position.array;
 		const col = tr.mesh.geometry.attributes.color.array;
@@ -1568,8 +1573,10 @@ function updateTrails() {
 			const a = tr.pts[i];
 			const b = tr.pts[Math.min(i + 1, n - 1)];
 			let dir = i + 1 < n ? a.p.sub(b.p) : new Vector3(0, 0, 1);
+			if (dir.Magnitude < 1e-4) dir = new Vector3(0, 0, 1);
 			const toCam = cp.sub(a.p).Unit;
-			let side = dir.Cross(toCam).Unit;
+			let side = dir.Cross(toCam);
+			side = side.Magnitude > 1e-6 ? side.Unit : new Vector3(1, 0, 0);
 			const age = (now - a.t) / tr.Lifetime;
 			const w = tr.Width * tr.WidthScale.at(age) / 2;
 			side = side.mul(w);

@@ -3,9 +3,9 @@ import {
 	camera, Lighting, Instance, workspace, markQueryRoot, Enum, OverlapParams, TweenService, TweenInfo, Debris, UIS, playSfx, loopSound, loadSounds, setSfxVolume,
 	NumberSequence, NumberSequenceKeypoint, NumberRange, ColorSequence, ColorSequenceKeypoint, guiRootInst, setUiScale, setLowGraphics, physicsGround,
 	mergeFloor, start, perf,
-} from "./engine.js?v=1790670138";
-import * as Server from "./server.js?v=1790670138";
-import * as Online from "./online.js?v=1790670138";
+} from "./engine.js?v=1790679961";
+import * as Server from "./server.js?v=1790679961";
+import * as Online from "./online.js?v=1790679961";
 
 const V3 = (x, y, z) => new Vector3(x, y, z);
 const RGB = Color3.fromRGB;
@@ -349,22 +349,44 @@ let trackChunks, updateMovers, regenerate, canyonPath, canyonHalfGap, updatePads
 
 	const amount = (rng, n) => Math.floor(n + rng.NextNumber());
 
-	function towers(folder, rng, x0, z0, count, color) {
+	// smash: nothing may stand inside a glass tower or in the stretch right behind it, you can't see through
+	const smashSpots = [];
+	function behindGlass(x, z, hw, hd, isGlass) {
+		for (let i = smashSpots.length - 1; i >= 0; i--) {
+			const g = smashSpots[i];
+			if (!g.part.Parent) {
+				smashSpots.splice(i, 1);
+				continue;
+			}
+			if (g.glass === isGlass || Math.abs(x - g.x) >= hw + g.hw + 14) continue;
+			if (!isGlass && z <= g.z + g.hw + hd + 6 && z >= g.z - 220) return true;
+			if (isGlass && g.z <= z + hw + g.hd + 6 && g.z >= z - 220) return true;
+		}
+		return false;
+	}
+	function towers(folder, rng, x0, z0, count, color, smash) {
 		for (let i = 0; i < count; i++) {
 			const w = rng.NextInteger(14, 30);
 			const d = rng.NextInteger(14, 30);
 			const h = rng.NextInteger(100, 120);
-			const x = x0 + rng.NextNumber(w / 2, CHUNK - w / 2);
-			const z = z0 - rng.NextNumber(d / 2, CHUNK - d / 2);
+			let x = null, z = 0;
+			for (let k = 0; k < (smash ? 5 : 1); k++) {
+				x = x0 + rng.NextNumber(w / 2, CHUNK - w / 2);
+				z = z0 - rng.NextNumber(d / 2, CHUNK - d / 2);
+				if (!smash || !behindGlass(x, z, w / 2, d / 2, false)) break;
+				x = null;
+			}
+			if (x === null) continue;
 			const t = block(V3(w, h, d), V3(x, h / 2, z), color || TOWER, folder);
 			t.SetAttribute("Break", true);
+			if (smash) smashSpots.push({ part: t, glass: false, x, z, hw: w / 2, hd: d / 2 });
 		}
 	}
 
 	function movingWall(folder, movers, rng, x0, z0, t) {
 		const p = block(V3(rng.NextInteger(40, 110), 45, 8), V3(x0 + rng.NextNumber(0, CHUNK), 10, z0 - rng.NextNumber(15, CHUNK - 15)), RGB(230, 120, 50), folder);
 		p.SetAttribute("Break", true);
-		movers.push({ part: p, base: p.Position, a: Vector3.yAxis.mul(22), f: (0.9 + t * 0.9) * rng.NextNumber(0.8, 1.2), ph: rng.NextNumber(0, 6.28) });
+		movers.push({ part: p, base: p.Position, a: Vector3.yAxis.mul(22), f: (0.8 + t * 0.7) * rng.NextNumber(0.85, 1.15), ph: rng.NextNumber(0, 6.28) });
 	}
 
 	function turretTowers(folder, rng, x0, z0, count) {
@@ -513,8 +535,14 @@ let trackChunks, updateMovers, regenerate, canyonPath, canyonHalfGap, updatePads
 		for (let i = 0; i < count; i++) {
 			const w = rng.NextInteger(16, 26);
 			const h = rng.NextInteger(90, 115);
-			const x = x0 + rng.NextNumber(w / 2, CHUNK - w / 2);
-			const z = z0 - rng.NextNumber(w / 2, CHUNK - w / 2);
+			let x = null, z = 0;
+			for (let k = 0; k < 5; k++) {
+				x = x0 + rng.NextNumber(w / 2, CHUNK - w / 2);
+				z = z0 - rng.NextNumber(w / 2, CHUNK - w / 2);
+				if (!behindGlass(x, z, w / 2, w / 2, true)) break;
+				x = null;
+			}
+			if (x === null) continue;
 			const t = block(V3(w, h, w), V3(x, h / 2, z), RGB(120, 220, 255), folder);
 			t.Material = "Glass";
 			t.Transparency = 0.35;
@@ -530,6 +558,7 @@ let trackChunks, updateMovers, regenerate, canyonPath, canyonHalfGap, updatePads
 			t.Name = "Glass";
 			cap.Parent = t;
 			core.Parent = t;
+			smashSpots.push({ part: t, glass: true, x, z, hw: w / 2, hd: w / 2 });
 		}
 	}
 
@@ -702,8 +731,8 @@ let trackChunks, updateMovers, regenerate, canyonPath, canyonHalfGap, updatePads
 		if (!safe) {
 			if (stage === "towers") towers(folder, rng, x0, z0, amount(rng, (1.5 + t * 4) * mult));
 			else if (stage === "moving") {
-				towers(folder, rng, x0, z0, amount(rng, (0.5 + t) * mult));
-				const n = amount(rng, (0.8 + t * 1.15) * mult);
+				towers(folder, rng, x0, z0, amount(rng, (0.4 + t * 0.8) * mult));
+				const n = amount(rng, (0.65 + t * 0.9) * mult);
 				for (let i = 0; i < n; i++) movingWall(folder, movers, rng, x0, z0, t);
 			} else if (stage === "canyon") {
 				const rock = RGB(150, 80, 55);
@@ -724,8 +753,9 @@ let trackChunks, updateMovers, regenerate, canyonPath, canyonHalfGap, updatePads
 					if (x >= x0 && x < x1) makePad("fuel", x + rng.NextNumber(-8, 8), -d, pick);
 				}
 			} else if (stage === "smash") {
-				towers(folder, rng, x0, z0, amount(rng, (1 + t * 2.5) * mult), RGB(35, 35, 45));
+				// glass first so the towers know where not to stand
 				glassTowers(folder, rng, x0, z0, amount(rng, 0.8 - t * 0.3));
+				towers(folder, rng, x0, z0, amount(rng, (1 + t * 2.5) * mult), RGB(35, 35, 45), true);
 			} else if (stage === "turrets") {
 				towers(folder, rng, x0, z0, amount(rng, (1.2 + t * 1.8) * mult));
 				turretTowers(folder, rng, x0, z0, amount(rng, 0.15 + t * 0.2));
@@ -2502,7 +2532,7 @@ function applySettings() {
 			"Coins come from flying: distance, cleared stages, bosses and everything you destroy.",
 		]],
 		["STAGES", WHITE, [
-			"Towers, Moving, Canyon and Smash, then the first boss: an airliner that shoots lasers and missiles at you.",
+			"Towers, Walls, Canyon and Smash, then the first boss: an airliner that shoots lasers and missiles at you.",
 			"After that you jump over to a jet and fly through Turrets, City and the second boss.",
 			"Then out over the sea: land on the carrier with the green beam, taxi to the stealth jet and launch into space.",
 			"After space it all starts over, just faster. Your distance keeps counting. How far can you get? ;)",
@@ -3186,6 +3216,7 @@ let showResults;
 	};
 
 	showResults = (award, info) => {
+		Game.lastAward = award;
 		token++;
 		const my = token;
 		hud.Visible = false;
@@ -3364,6 +3395,7 @@ function myProfile() {
 		stats: data.stats,
 		created: data.created,
 		updated: Date.now(),
+		seen: Online.SERVER_TIME,
 	};
 }
 let pushing = false;
@@ -3465,14 +3497,56 @@ function xpBar(parent, size, pos, k, color) {
 	goBtn.TextColor3 = GOOD;
 
 	// logged in: who you are and a way out
-	const outR = row(ap.body, 70, 1);
-	const outBtn = button(outR, "LOG OUT", U2(1, -10, 0, 60), UO(0, 5), () => {
+	const outR = row(ap.body, 196, 1);
+	// dangerous buttons want a second click within 3 seconds
+	function confirmBtn(label, y, color, fn) {
+		let armed = 0;
+		const b = button(outR, label, U2(1, -10, 0, 58), UO(0, y), async () => {
+			if (clock() - armed > 3) {
+				armed = clock();
+				b.Text = "SURE? CLICK AGAIN";
+				sfx("bad");
+				task.delay(3, () => {
+					if (clock() - armed >= 2.9) b.Text = label;
+				});
+				return;
+			}
+			armed = 0;
+			b.Text = label;
+			await fn();
+		}, 0.3);
+		b.TextColor3 = color;
+		return b;
+	}
+	const outBtn = button(outR, "LOG OUT", U2(1, -10, 0, 58), UO(0, 2), () => {
 		Online.logout();
 		notify("logged out", WHITE);
 		sfx("click");
 		refresh();
 	}, 0.3);
-	outBtn.TextColor3 = BAD;
+	outBtn.TextColor3 = WHITE;
+	confirmBtn("RESET MY PROGRESS", 66, RGB(255, 170, 60), async () => {
+		const name = Online.account();
+		Server.resetData();
+		request("get");
+		if (name) request("set_name", name);
+		if (Game.refreshLevel) Game.refreshLevel();
+		await Game.pushProfile();
+		Game.cloudSave(true);
+		notify("progress reset, fresh start", WHITE);
+		sfx("good");
+	});
+	confirmBtn("DELETE ACCOUNT", 130, BAD, async () => {
+		try {
+			await Online.deleteAccount();
+			notify("account deleted", WHITE);
+			sfx("good");
+		} catch (e) {
+			notify(e.message || "couldn't delete it", BAD);
+			sfx("bad");
+		}
+		refresh();
+	});
 
 	function setTab(n) {
 		makeNew = n;
@@ -3606,6 +3680,11 @@ function xpBar(parent, size, pos, k, color) {
 		} else text(r, "#" + rank, UO(60, 58), UO(10, 0), 24, DIM, LEFT);
 		levelBadge(r, e.level || 1, 34, U2(0, 66, 0.5, -17));
 		text(r, String(e.name || "?").toUpperCase(), U2(1, -330, 1, 0), UO(112, 0), 24, me ? GOOD : WHITE, LEFT);
+		if (me || Game.isOnline(e)) {
+			const dot = make("Frame", { AnchorPoint: V2(0.5, 0.5), Position: UO(100, 42), Size: UO(12, 12), BackgroundColor3: GOOD, ZIndex: 3, Parent: r });
+			make("UICorner", { CornerRadius: UDim.new(0.5, 0), Parent: dot });
+			make("UIStroke", { Color: BLACK, Thickness: 2, Transparency: 0.2, Parent: dot });
+		}
 		text(r, fmt(e.best || 0), UO(190, 58), U2(1, -262, 0, 0), 28, c, RIGHT);
 		text(r, "STUDS", UO(60, 20), U2(1, -66, 0.5, -8), 14, DIM, LEFT);
 		const sc = r.FindFirstChildOfClass("UIScale");
@@ -3702,6 +3781,10 @@ function xpBar(parent, size, pos, k, color) {
 		text(h, String(p.name || "YOU").toUpperCase(), U2(1, -330, 0, 44), UO(308, 16), 40, me ? GOOD : WHITE, LEFT);
 		const r0 = rank || (!me && p.id ? Game.rankOf(p.id) : me ? Game.rankOf(Online.myId()) : null);
 		text(h, r0 ? "#" + r0 + " ON THE LEADERBOARD" : me ? "YOUR PROFILE" : "", U2(1, -330, 0, 22), UO(308, 60), 17, r0 && r0 <= 3 ? COIN : DIM, LEFT);
+		const on = me || Game.isOnline(p);
+		const dot = make("Frame", { Position: UO(310, 84), Size: UO(10, 10), BackgroundColor3: on ? GOOD : RGB(120, 120, 130), Parent: h });
+		make("UICorner", { CornerRadius: UDim.new(0.5, 0), Parent: dot });
+		text(h, on ? "ONLINE" : "LAST ONLINE " + Game.lastOnline(p), U2(1, -350, 0, 18), UO(326, 80), 15, on ? GOOD : DIM, LEFT);
 		const need = xpNeed(lvl);
 		text(h, "LEVEL " + lvl, UO(200, 24), UO(232, 100), 22, RGB(200, 185, 255), LEFT);
 		text(h, fmt(p.xp || 0) + " / " + fmt(need) + " XP", U2(1, -440, 0, 24), UO(430, 100), 18, DIM, RIGHT);
@@ -5795,8 +5878,8 @@ async function crash(hits) {
 	});
 }
 
-Game.quitRun = () => {
-	if (mode !== "run" || dead) return;
+// ends the run without a crash and hands back what you earned, quitting and winning versus both use it
+Game.finishRun = () => {
 	dead = true;
 	Game.stopTut();
 	setVignette(0);
@@ -5809,8 +5892,13 @@ Game.quitRun = () => {
 	stats.raceMult = Game.race ? Game.raceMult || 1 : 1;
 	const [ok, award] = request("run_end", stats);
 	if (ok) Game.pushProfile();
-	if (runId !== my) return;
-	showResults(ok && typeof award === "object" ? award : null, {
+	return [runId === my, ok && typeof award === "object" ? award : null];
+};
+Game.quitRun = () => {
+	if (mode !== "run" || dead) return;
+	const [still, award] = Game.finishRun();
+	if (!still) return;
+	showResults(award, {
 		stage: stageName(curStage || "towers"),
 		time: runTime,
 		prevBest: stats.prevBest,
@@ -6149,7 +6237,19 @@ function step(dt) {
 	const phasing = nitroK > 0.2 || cheat || Game.flow.approach || Game.god;
 	if (buff.immortal > 0 || phasing) ghost = true;
 	const hits = [];
-	for (const h of workspace.GetPartBoundsInBox(CFrame.fromPos(pos), HITBOX, params)) {
+	// the hitbox is the plane itself: every visible piece of the skin checks its own shape
+	if (Game.hitFor !== planeParts) {
+		Game.hitFor = planeParts;
+		Game.hitParts = (planeParts || []).filter((p) => p.Transparency < 0.95 && p.Size.Magnitude > 0.8);
+	}
+	const touched = new Set();
+	for (const hp of Game.hitParts) {
+		if (!hp.Parent) continue;
+		// round shapes get a slightly smaller box so the corners don't count
+		const s = hp._shape === "Ball" ? V3(1, 1, 1).mul(Math.min(hp.Size.X, hp.Size.Y, hp.Size.Z) * 0.82) : hp._shape === "Cylinder" ? V3(hp.Size.X, hp.Size.Y * 0.85, hp.Size.Z * 0.85) : hp.Size;
+		for (const h of workspace.GetPartBoundsInBox(hp.CFrame, s, params)) touched.add(h);
+	}
+	for (const h of touched) {
 		if (h.GetAttribute("Glass")) {
 			if (h.Parent) {
 				const wasEmpty = fuel <= 0;
@@ -6587,7 +6687,7 @@ applySettings();
 toMenu();
 start();
 document.getElementById("boot").remove();
-if (DEV) window.__dev = { crash: () => task.spawn(crash, []), data: () => data, stats: () => stats, vs: () => Game.versusToggle(), dbg: () => [mode, dead, !!stats, !!planeMain, planeMain && !!planeMain.Parent, Game.raceState.mid], race: () => [Game.race, Game.raceState.inQueue, Game.queueText(), JSON.stringify(Game.raceState.final)], shot: () => Game.flow.startApproach(), state: () => [mode, curStage, Game.flow.cine && Game.flow.cine.kind, Math.round(-pos.Z)] };
+if (DEV) window.__dev = { crash: () => task.spawn(crash, []), data: () => data, stats: () => stats, vs: () => Game.versusToggle(), reg: async (n, p) => { await Online.register(n, p); request("set_name", n); return Online.account(); }, win: () => Game._vsWin(), vsd: () => Game._vsDebug(), dbg: () => [mode, dead, !!stats, !!planeMain, planeMain && !!planeMain.Parent, Game.raceState.mid], race: () => [Game.race, Game.raceState.inQueue, Game.queueText(), JSON.stringify(Game.raceState.final)], shot: () => Game.flow.startApproach(), state: () => [mode, curStage, Game.flow.cine && Game.flow.cine.kind, Math.round(-pos.Z)] };
 
 // ------------------------------------------------------------------ versus
 // same idea as roblox: queue up, everyone starts on the same map, farthest wins.
@@ -6597,7 +6697,7 @@ if (DEV) window.__dev = { crash: () => task.spawn(crash, []), data: () => data, 
 (() => {
 	const RACE_WAIT = 10000;
 	const STALE = 10000;
-	const R = { lobby: {}, matches: {}, inQueue: false, live: {}, crashed: {}, runners: null, final: null, lead: 0 };
+	const R = { lobby: {}, matches: {}, inQueue: false, live: {}, crashed: {}, won: {}, runners: null, final: null, lead: 0 };
 	Game.raceState = R;
 	Game.raceMult = 1;
 	let stopLobby = null, stopMatches = null, stopLive = null, beatT = null;
@@ -6681,12 +6781,13 @@ if (DEV) window.__dev = { crash: () => task.spawn(crash, []), data: () => data, 
 			const v = all[id];
 			if (!v) continue;
 			if (v.dead) {
+				if (v.won) R.won[id] = true;
 				if (R.crashed[id] == null) {
 					R.crashed[id] = v.d || R.live[id] || 0;
 					const g = ghosts.get(id);
 					if (g && g.model.Parent) ghostBoom(g.main.Position);
 					const name = R.runners && R.runners[id];
-					if (name) notify(name + " crashed!", BAD);
+					if (name && !v.won) notify(name + " crashed!", BAD);
 					dropGhost(id);
 					checkOver();
 				}
@@ -6717,6 +6818,9 @@ if (DEV) window.__dev = { crash: () => task.spawn(crash, []), data: () => data, 
 		R.lead = 0;
 		R.started = Online.serverNow();
 		R.prized = false;
+		R.winning = false;
+		R.won = {};
+		hideBoard();
 		Game.raceMult = 1;
 		for (const id of [...ghosts.keys()]) dropGhost(id);
 		spec.id = null;
@@ -6749,13 +6853,12 @@ if (DEV) window.__dev = { crash: () => task.spawn(crash, []), data: () => data, 
 
 	// everyone who isn't flying anymore counts, the match is over when that's everyone
 	function checkOver() {
-		if (!R.runners || R.final || !Game.race) return;
+		if (!R.runners || R.final || !Game.race || R.winning) return;
 		const now = Online.serverNow();
+		let others = 0;
 		for (const id in R.runners) {
-			if (id === me()) {
-				if (!(dead && mode === "run")) return;
-				continue;
-			}
+			if (id === me()) continue;
+			others++;
 			if (R.crashed[id] != null) continue;
 			const g = ghosts.get(id);
 			const quiet = g ? now - (g.seen || 0) > STALE : now - R.started > 15000;
@@ -6763,25 +6866,242 @@ if (DEV) window.__dev = { crash: () => task.spawn(crash, []), data: () => data, 
 			R.crashed[id] = R.live[id] || 0;
 			dropGhost(id);
 		}
-		finish();
+		// everyone else is down: if you're still flying, you win on the spot
+		if (mode === "run" && !dead && others > 0) win();
+		else if (mode === "run" && dead) finish();
 	}
+
+	// ---------------- the win moment: freeze, orbit around your plane, big YOU WON!
+	const winL = text(gui, "YOU WON!", UO(1200, 170), U2(0.5, 0, 0.3, 0), 130, COIN);
+	winL.AnchorPoint = V2(0.5, 0.5);
+	winL.ZIndex = 40;
+	winL.TextStrokeTransparency = 0.2;
+	winL.Visible = false;
+	winL.el.style.pointerEvents = "none";
+	function party(n) {
+		for (let i = 0; i < n; i++) {
+			const c = make("Frame", {
+				AnchorPoint: V2(0.5, 0.5),
+				Position: U2(Math.random(), 0, 0, -20 - Math.random() * 200),
+				Size: UO(random(6, 14), random(10, 20)),
+				BackgroundColor3: Color3.fromHSV(Math.random(), 0.75, 1),
+				Rotation: random(0, 360),
+				ZIndex: 45,
+				Parent: gui,
+			});
+			const dur = random(22, 40) / 10;
+			tw(c, dur, { Position: U2(c.Position.xs + (Math.random() - 0.5) * 0.25, 0, 1, 40), Rotation: c.Rotation + random(-720, 720) }, "Quad", "In");
+			Debris.AddItem(c, dur);
+		}
+	}
+	let orbit = null;
+	const orbitCam = () => {
+		if (!orbit) return null;
+		const t = clock() - orbit.t0;
+		const a = 0.6 + t * 0.35;
+		const r = 26 + Math.min(t, 3) * 4;
+		const at = orbit.at;
+		return CFrame.lookAt(at.add(V3(Math.sin(a) * r, 7 + Math.min(t, 3) * 2, Math.cos(a) * r)), at);
+	};
+	function win() {
+		R.winning = true;
+		R.won[me()] = true;
+		Game.hold = true;
+		orbit = { t0: clock(), at: pos };
+		flash();
+		shake = Math.max(shake, 0.3);
+		sfx("record");
+		sfx("map_clear");
+		winL.Visible = true;
+		winL.TextTransparency = 0;
+		winL.TextSize = 330;
+		tw(winL, 0.6, { TextSize: 130 }, "Back");
+		party(90);
+		task.delay(0.9, () => party(60));
+		const my = runId;
+		task.delay(3, () => {
+			if (runId !== my) return;
+			const [, award] = Game.finishRun();
+			if (planeModel) planeModel.Parent = workspace;
+			Game.lastAward = award;
+			tw(winL, 0.4, { TextTransparency: 1 });
+			task.delay(0.4, () => (winL.Visible = false));
+			finish();
+		});
+	}
+
 	function finish() {
-		const list = Object.keys(R.runners).map((id) => ({ id, name: R.runners[id], dist: id === me() ? (stats && stats.dist) || 0 : R.crashed[id] || 0 }));
-		list.sort((a, b) => b.dist - a.dist);
+		if (R.final) return;
+		const list = Object.keys(R.runners).map((id) => ({
+			id,
+			name: R.runners[id],
+			dist: id === me() ? (stats && stats.dist) || 0 : R.crashed[id] || 0,
+			won: !!R.won[id],
+		}));
+		// the last one flying wins, everyone else by distance
+		list.sort((a, b) => (b.won ? 1 : 0) - (a.won ? 1 : 0) || b.dist - a.dist);
 		R.final = list;
 		const place = list.findIndex((e) => e.id === me()) + 1;
+		let prize = 0;
 		if (!R.prized) {
 			R.prized = true;
-			const [ok, msg] = request("race_prize", { n: list.length, place });
-			if (ok && msg) notify(msg, COIN);
+			const before = data.coins;
+			request("race_prize", { n: list.length, place });
+			prize = data.coins - before;
 		}
-		const names = ["1ST", "2ND", "3RD"];
-		const p = names[place - 1] || place + "TH";
 		stopSpec();
-		if (place === 1) sfx("record");
-		if (mode === "run" && results.Visible) Game.resultsTitle(place === 1 ? "YOU WON!" : p + " PLACE", place === 1 ? COIN : WHITE);
-		else notify("versus over, you got " + p.toLowerCase(), place === 1 ? COIN : WHITE);
+		if (mode === "run") showBoard(list, place, prize);
+		else notify("versus over, you got " + placeName(place).toLowerCase(), place === 1 ? COIN : WHITE);
 	}
+	const placeName = (p) => ["1ST", "2ND", "3RD"][p - 1] || p + "TH";
+
+	// ---------------- the versus results: a podium instead of the normal screen
+	const MEDAL = [COIN, RGB(215, 220, 230), RGB(220, 140, 80)];
+	const vr = make("CanvasGroup", {
+		AnchorPoint: V2(0.5, 0.5),
+		Position: US(0.5, 0.53),
+		Size: UO(720, 640),
+		BackgroundColor3: BLACK,
+		BackgroundTransparency: T.panel,
+		GroupTransparency: 1,
+		Visible: false,
+		ZIndex: 30,
+		Parent: gui,
+	});
+	make("UICorner", { CornerRadius: UDim.new(0, 14), Parent: vr });
+	const vrTitle = text(vr, "", U2(1, 0, 0, 70), UO(0, 14), 64, COIN);
+	const vrTitleScale = make("UIScale", { Parent: vrTitle });
+	const vrSub = text(vr, "", U2(1, 0, 0, 24), UO(0, 84), 20, DIM);
+	const stage = make("Frame", { Position: UO(40, 116), Size: U2(1, -80, 0, 300), BackgroundTransparency: 1, Parent: vr });
+	const rest = make("Frame", { Position: UO(60, 424), Size: U2(1, -120, 0, 60), BackgroundTransparency: 1, Parent: vr });
+	const vrCoins = Icons.text(vr, U2(1, -40, 0, 40), UO(20, 488), 36, COIN);
+	const vrNote = text(vr, "", U2(1, -40, 0, 22), UO(20, 528), 18, DIM);
+	const againBtn = button(vr, "PLAY AGAIN", UO(330, 58), U2(0, 30, 1, -80), () => Game.versusToggle(), 0.1);
+	againBtn.TextColor3 = GOOD;
+	button(vr, "MENU", UO(300, 58), U2(1, -330, 1, -80), () => {
+		hideBoard();
+		fade(toMenu);
+	});
+	let boardToken = 0;
+	function hideBoard() {
+		boardToken++;
+		vr.Visible = false;
+		orbit = null;
+		winL.Visible = false;
+		if (Game.flow.cam && Game.flow._vs) Game.flow.cam = null;
+	}
+	Game.hideVersusBoard = hideBoard;
+	Game._vsDebug = () => [!!orbit, dead, !!Game.flow.cam, mode];
+	Game._vsWin = () => { Game.race = Game.race || { seed: 1 }; R.runners = { [me() || "x"]: "ME" }; win(); };
+
+	function avatar(parent, name, size, pos) {
+		let h = 0;
+		for (const ch of name) h = (h * 31 + ch.charCodeAt(0)) >>> 0;
+		const av = make("Frame", { AnchorPoint: V2(0.5, 1), Position: pos, Size: UO(size, size), BackgroundColor3: AVATAR[h % AVATAR.length], Parent: parent });
+		make("UICorner", { CornerRadius: UDim.new(0.5, 0), Parent: av });
+		make("UIGradient", { Color: new ColorSequence(WHITE, RGB(150, 150, 150)), Rotation: 90, Parent: av });
+		make("UIStroke", { Color: WHITE, Thickness: 2, Transparency: 0.4, ApplyStrokeMode: "Border", Parent: av });
+		text(av, name.slice(0, 1).toUpperCase(), US(1, 1), UO(0, 2), Math.floor(size * 0.5), WHITE).TextStrokeTransparency = 0.6;
+		return av;
+	}
+
+	function showBoard(list, place, prize) {
+		boardToken++;
+		const my = boardToken;
+		results.Visible = false;
+		specBar.Visible = false;
+		board.Visible = false;
+		hud.Visible = false;
+		wallet.Visible = true;
+		place = Math.max(1, place);
+		for (const c of stage.GetChildren()) c.Destroy();
+		for (const c of rest.GetChildren()) c.Destroy();
+		vr.Visible = true;
+		vr.GroupTransparency = 1;
+		vr.Position = US(0.5, 0.6);
+		tw(vr, 0.5, { GroupTransparency: 0, Position: US(0.5, 0.53) });
+		const won = place === 1;
+		vrTitle.Text = won ? "YOU WON!" : placeName(place) + " PLACE";
+		vrTitle.TextColor3 = won ? COIN : place <= 3 ? MEDAL[place - 1] : WHITE;
+		vrTitleScale.Scale = 1.6;
+		tw(vrTitleScale, 0.6, { Scale: 1 }, "Back");
+		vrSub.Text = "VERSUS WITH " + list.length + " PLAYERS";
+		if (won) {
+			sfx("record");
+			party(70);
+		}
+
+		// podium: 2nd left, 1st middle, 3rd right, blocks grow up one after another
+		const H = [190, 140, 100];
+		const slot = [1, 0, 2];
+		const colW = 190;
+		const order = [2, 1, 0];
+		order.forEach((i, k) => {
+			const e = list[i];
+			if (!e) return;
+			const x = slot[i];
+			const col = make("Frame", { Position: U2(0, x * (colW + 20) + 10, 0, 0), Size: UO(colW, 300), BackgroundTransparency: 1, Parent: stage });
+			const block = make("Frame", { AnchorPoint: V2(0, 1), Position: U2(0, 0, 1, 0), Size: UO(colW, 0), BackgroundColor3: MEDAL[i], BorderSizePixel: 0, Parent: col });
+			make("UICorner", { CornerRadius: UDim.new(0, 10), Parent: block });
+			make("UIGradient", { Color: new ColorSequence(WHITE, RGB(120, 120, 120)), Rotation: 90, Transparency: new NumberSequence(0.1, 0.35), Parent: block });
+			const num = text(block, String(i + 1), US(1, 1), UO(0, 0), 64, BLACK);
+			num.TextTransparency = 0.35;
+			const top = make("Frame", { AnchorPoint: V2(0, 1), Position: U2(0, 0, 1, -H[i] - 6), Size: UO(colW, 120), BackgroundTransparency: 1, Parent: col });
+			avatar(top, e.name, i === 0 ? 70 : 58, U2(0.5, 0, 1, -48));
+			const nm = text(top, e.name.toUpperCase(), U2(1, 0, 0, 24), U2(0, 0, 1, -44), 21, e.id === me() ? GOOD : WHITE);
+			nm.TextStrokeTransparency = 0.6;
+			text(top, e.won ? "LAST ONE FLYING" : fmt(e.dist) + " STUDS", U2(1, 0, 0, 18), U2(0, 0, 1, -20), 15, e.won ? COIN : DIM);
+			const sc = make("UIScale", { Scale: 0, Parent: top });
+			const d = 0.35 + k * 0.45;
+			task.delay(d, () => {
+				if (boardToken !== my) return;
+				tw(block, 0.5, { Size: UO(colW, H[i]) }, "Back");
+				sfx("coin_land", 0.9 + (2 - i) * 0.12);
+			});
+			task.delay(d + 0.25, () => {
+				if (boardToken !== my) return;
+				tw(sc, 0.4, { Scale: 1 }, "Back");
+				if (i === 0) {
+					sfx("map_clear");
+					if (won) party(40);
+				}
+			});
+		});
+		// 4th and down in a row underneath
+		const others = list.slice(3).map((e, j) => j + 4 + ". " + e.name.toUpperCase() + "  " + fmt(e.dist));
+		if (others.length) text(rest, others.join("     "), US(1, 1), null, 18, DIM).TextWrapped = true;
+
+		const award = Game.lastAward;
+		const coins = (award && award.coins) || 0;
+		vrCoins.Text = "+0 ●";
+		vrNote.Text = prize > 0 ? "INCLUDES +" + fmt(prize) + " FOR YOUR PLACE" : "WIN TO GET THE PRIZE: 100 COINS PER PLAYER";
+		task.delay(1.9, async () => {
+			const total = coins + prize;
+			const t0 = clock();
+			while (boardToken === my) {
+				const k = Math.min((clock() - t0) / 1.1, 1);
+				vrCoins.Text = "+" + fmt(Math.floor(total * (1 - (1 - k) ** 3))) + " ●";
+				if (k >= 1) break;
+				await task.wait();
+			}
+		});
+	}
+
+	RunService.RenderStepped.Connect(() => {
+		// the camera circles your plane while you celebrate, and keeps circling behind the podium
+		if (orbit && mode === "run") {
+			const c = orbitCam();
+			if (!dead) {
+				Game.flow.cam = c;
+				Game.flow._vs = true;
+			}
+		}
+		if (vr.Visible) {
+			const t = Game.queueText();
+			const want = t || "PLAY AGAIN";
+			if (againBtn.Text !== want) againBtn.Text = want;
+		}
+	});
 
 	// ---------------- queue
 	async function beat() {
@@ -6951,7 +7271,7 @@ if (DEV) window.__dev = { crash: () => task.spawn(crash, []), data: () => data, 
 	const rulesHead = row(vp.body, 34, 1);
 	text(rulesHead, "HOW IT WORKS", U2(1, -20, 1, 0), UO(12, 4), 18, DIM, LEFT);
 	for (const line of [
-		"Everyone starts together on the same map. Farthest distance wins, no revives.",
+		"Everyone starts together on the same map, no revives. The last one still flying wins.",
 		"Every second you're in 1st adds to your coin multiplier, up to x3.",
 		"Fall more than 600 studs behind the leader and your fuel burns twice as fast.",
 		"The winner gets 100 coins for every player in the match.",
@@ -7079,6 +7399,7 @@ if (DEV) window.__dev = { crash: () => task.spawn(crash, []), data: () => data, 
 	specBtn.Visible = false;
 	specBtn.ZIndex = 25;
 	Game.specCam = () => {
+		if (orbit) return orbitCam();
 		if (!spec.id) return null;
 		let g = ghosts.get(spec.id);
 		if (!g || R.crashed[spec.id] != null) {
@@ -7131,7 +7452,7 @@ if (DEV) window.__dev = { crash: () => task.spawn(crash, []), data: () => data, 
 			sending = true;
 		} else if (sending) {
 			sending = false;
-			Online.put(`matches/${R.mid}/live/${me()}`, { dead: true, d: Math.floor((stats && stats.dist) || 0) }).catch(() => {});
+			Online.put(`matches/${R.mid}/live/${me()}`, { dead: true, won: !!R.winning, d: Math.floor((stats && stats.dist) || 0) }).catch(() => {});
 		}
 	});
 	const uiScaleNow = () => Game._uis || 1;
@@ -7146,10 +7467,10 @@ if (DEV) window.__dev = { crash: () => task.spawn(crash, []), data: () => data, 
 			const p = pending();
 			if (p && Online.serverNow() >= p.m.startAt && !Game.race) go(p.mid, p.m);
 		}
-		specBtn.Visible = !!Game.race && mode === "run" && dead && results.Visible && !R.final && aliveOthers().length > 0;
+		specBtn.Visible = !!Game.race && mode === "run" && dead && results.Visible && !R.final && !R.winning && aliveOthers().length > 0;
 		if (spec.id && !(Game.race && mode === "run" && dead)) stopSpec();
 		const show = !!Game.race && !!R.runners && mode === "run";
-		board.Visible = show;
+		board.Visible = show && !vr.Visible;
 		if (show) refreshBoard();
 		if (show && !R.final) checkOver();
 		// whoever's furthest builds up the coin multiplier, 600 behind them and your fuel burns double
@@ -7165,6 +7486,7 @@ if (DEV) window.__dev = { crash: () => task.spawn(crash, []), data: () => data, 
 			R.lead++;
 			Game.raceMult = 1 + Math.min(R.lead * 0.05, 2);
 		}
+		if (!Game.race && (vr.Visible || orbit)) hideBoard();
 		if (!Game.race && stopLive) {
 			stopLive();
 			stopLive = null;
@@ -7173,4 +7495,128 @@ if (DEV) window.__dev = { crash: () => task.spawn(crash, []), data: () => data, 
 		}
 	}, 250);
 	window.addEventListener("beforeunload", () => leaveQueue(true));
+})();
+
+// ------------------------------------------------------------------ who's online + messages from the dev
+
+(() => {
+	const ONLINE_FOR = 150000;
+	const seenOf = (p) => (p && typeof p.seen === "number" ? p.seen : 0);
+	Game.isOnline = (p) => Online.serverNow() - seenOf(p) < ONLINE_FOR;
+	Game.lastOnline = (p) => {
+		const t = seenOf(p) || (p && p.updated) || 0;
+		if (!t) return "A WHILE AGO";
+		const m = Math.floor((Online.serverNow() - t) / 60000);
+		if (m < 1) return "JUST NOW";
+		if (m < 60) return m + " MIN AGO";
+		const h = Math.floor(m / 60);
+		if (h < 24) return h + (h === 1 ? " HOUR AGO" : " HOURS AGO");
+		const d = Math.floor(h / 24);
+		return d === 1 ? "YESTERDAY" : d + " DAYS AGO";
+	};
+
+	// while the page is open you count as online
+	async function beat() {
+		if (!Online.account() || !Online.enabled()) return;
+		try {
+			await Online.put(`players/${Online.myId()}/seen`, Online.SERVER_TIME);
+		} catch (e) {
+			// no profile up yet, the next push brings it
+		}
+	}
+	Online.syncClock().catch(() => {});
+	task.delay(3, beat);
+	setInterval(beat, 60000);
+
+	// ---------------- global messages: slides in at the top for everyone who's on the site
+	const bar = make("Frame", {
+		AnchorPoint: V2(0.5, 0),
+		Position: U2(0.5, 0, 0, -120),
+		Size: UO(760, 84),
+		BackgroundColor3: RGB(20, 22, 34),
+		BackgroundTransparency: 0.05,
+		ZIndex: 60,
+		Visible: false,
+		Parent: gui,
+	});
+	make("UICorner", { CornerRadius: UDim.new(0, 14), Parent: bar });
+	make("UIStroke", { Color: COIN, Thickness: 2, Transparency: 0.2, ApplyStrokeMode: "Border", Parent: bar });
+	const from = text(bar, "", U2(1, -40, 0, 20), UO(20, 10), 15, COIN, LEFT);
+	const msgL = text(bar, "", U2(1, -40, 0, 42), UO(20, 32), 26, WHITE, LEFT);
+	msgL.TextWrapped = true;
+	msgL.TextTruncate = "AtEnd";
+	for (const l of [from, msgL]) l.ZIndex = 61;
+	let shownId = null;
+	try {
+		shownId = localStorage.getItem("dontcrash_msg_seen");
+	} catch (e) {}
+	let hideT = null;
+	function show(m) {
+		from.Text = "MESSAGE FROM " + String(m.by || "THE DEV").toUpperCase();
+		msgL.Text = String(m.msg).slice(0, 200);
+		bar.Visible = true;
+		bar.Position = U2(0.5, 0, 0, -120);
+		tw(bar, 0.5, { Position: U2(0.5, 0, 0, 16) }, "Back");
+		sfx("map_clear");
+		clearTimeout(hideT);
+		hideT = setTimeout(() => {
+			tw(bar, 0.4, { Position: U2(0.5, 0, 0, -120) }, "Quad", "In");
+			setTimeout(() => (bar.Visible = false), 450);
+		}, 9000);
+	}
+	const loadedAt = Date.now();
+	Online.listen("broadcast", (m) => {
+		if (!m || typeof m.msg !== "string" || !m.id || m.id === shownId) return;
+		// only fresh ones, an old message shouldn't pop up for everyone who opens the game later
+		const age = Online.serverNow() - (typeof m.at === "number" ? m.at : 0);
+		if (age > 120000 && typeof m.at === "number" && m.at < loadedAt - 5000) return;
+		shownId = m.id;
+		try {
+			localStorage.setItem("dontcrash_msg_seen", m.id);
+		} catch (e) {}
+		show(m);
+	});
+
+	// ---------------- the sender, only in ?dev. the database only lets the dev account through anyway
+	if (!DEV) return;
+	const bp = panel("broadcast", "MESSAGE TO EVERYONE", UO(620, 300));
+	const r = row(bp.body, 70, 1);
+	const box = make("TextBox", {
+		Size: U2(1, -10, 0, 60),
+		Position: UO(0, 5),
+		BackgroundColor3: BLACK,
+		BackgroundTransparency: 0.2,
+		PlaceholderText: "WHAT DO YOU WANT TO SAY",
+		Text: "",
+		Font: FONT,
+		TextSize: 24,
+		TextColor3: WHITE,
+		Parent: r,
+	});
+	box.el.maxLength = 200;
+	const info = row(bp.body, 30, 1);
+	text(info, "SHOWS UP AT THE TOP FOR EVERYONE WHO'S ON THE SITE RIGHT NOW", U2(1, -10, 1, 0), UO(4, 0), 15, DIM, LEFT);
+	const sr = row(bp.body, 70, 1);
+	const send = async () => {
+		const msg = box.Text.trim();
+		if (!msg) return;
+		try {
+			await Online.put("broadcast", { msg, at: Online.SERVER_TIME, id: Date.now().toString(36) + Math.random().toString(36).slice(2, 6), by: Online.account() || "the dev" });
+			box.Text = "";
+			notify("sent to everyone", GOOD);
+			sfx("good");
+			closePanels();
+		} catch (e) {
+			notify("not allowed, log in with the dev account", BAD);
+			sfx("bad");
+		}
+	};
+	button(sr, "SEND", U2(1, -10, 0, 60), UO(0, 5), send, 0.05).TextColor3 = GOOD;
+	box.el.addEventListener("keydown", (e) => {
+		if (e.key === "Enter") send();
+	});
+	bp.onOpen = () => task.delay(0.1, () => box.CaptureFocus());
+	const b = button(menu, "SEND MESSAGE", UO(200, 40), U2(1, -216, 1, -56), () => openPanel("broadcast"), 0.3);
+	b.TextSize = 18;
+	b.TextColor3 = COIN;
 })();

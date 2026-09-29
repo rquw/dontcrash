@@ -5,8 +5,8 @@ export const CONFIG = {
 	title: "DON'T CRASH!",
 	stages: [
 		// towers is 6000, every map after it is 1.2x the one before
-		{ id: "towers", name: "TOWERS", len: 6000 },
-		{ id: "moving", name: "MOVING", len: 7200 },
+		{ id: "towers", name: "TOWERS", len: 3000 },
+		{ id: "moving", name: "WALLS", len: 7200 },
 		{ id: "canyon", name: "CANYON", len: 8600 },
 		{ id: "smash", name: "SMASH", len: 10400 },
 	],
@@ -20,7 +20,7 @@ export const CONFIG = {
 	seaLen: 17900,
 	beyondGap: 3000,
 	starts: [
-		{ id: "moving", name: "MOVING", keys: 6, coins: 500 },
+		{ id: "moving", name: "WALLS", keys: 6, coins: 500 },
 		{ id: "canyon", name: "CANYON", keys: 6, coins: 1000 },
 		{ id: "smash", name: "SMASH", keys: 6, coins: 1500 },
 		{ id: "boss", name: "BOSS 1", keys: 6, coins: 2500 },

@@ -12,7 +12,9 @@
   "rules": {
     "players": {
       ".read": true,
-      ".indexOn": ["best"],
+      ".indexOn": [
+        "best"
+      ],
       "$uid": {
         ".write": "auth != null && auth.uid === $uid",
         ".validate": "newData.hasChildren(['name', 'best']) && newData.child('name').isString() && newData.child('name').val().length >= 2 && newData.child('name').val().length <= 16 && newData.child('best').isNumber() && newData.child('best').val() >= 0 && newData.child('best').val() < 100000000"
@@ -37,7 +39,9 @@
     },
     "matches": {
       ".read": "auth != null",
-      ".indexOn": ["created"],
+      ".indexOn": [
+        "created"
+      ],
       "$mid": {
         ".write": "auth != null && ((!data.exists() && newData.child('host').val() === auth.uid) || data.child('host').val() === auth.uid || (!newData.exists() && data.child('created').val() < now - 3600000))",
         "live": {
@@ -46,6 +50,10 @@
           }
         }
       }
+    },
+    "broadcast": {
+      ".read": true,
+      ".write": "auth != null && auth.uid === 'Jj2BGaR4ZBSqqQxmWtX8Vym95Ji1'"
     }
   }
 }

@@ -15,6 +15,8 @@ const ID = (EMU ? "http://127.0.0.1:9099/" : "https://") + "identitytoolkit.goog
 const TOKEN_URL = (EMU ? "http://127.0.0.1:9099/" : "https://") + "securetoken.googleapis.com/v1/token";
 // firebase wants an email, so a name becomes name@dontcrash.game behind the scenes
 const emailOf = (name) => name.trim().toLowerCase() + "@dontcrash.game";
+// firebase wants 6+ characters, so the password gets padded behind the scenes and "a" works too
+const padPw = (pw) => "dc:" + pw + ":dontcrash";
 
 let auth = null;
 try {
@@ -104,26 +106,45 @@ function checkName(name) {
 // makes your current anonymous player a real account, so your spot on the leaderboard stays yours
 export async function register(name, password) {
 	name = checkName(name);
-	if (String(password || "").length < 6) throw new Error("password needs at least 6 characters");
+	if (!String(password || "").length) throw new Error("type a password");
 	let t = await token();
 	if (auth.name) {
 		// already an account on this device: a new one starts from a fresh anonymous player
 		auth = null;
 		t = await token();
 	}
-	const j = await post(`${ID}signUp?key=${FIREBASE.apiKey}`, { idToken: t, email: emailOf(name), password, returnSecureToken: true });
+	const j = await post(`${ID}signUp?key=${FIREBASE.apiKey}`, { idToken: t, email: emailOf(name), password: padPw(password), returnSecureToken: true });
 	take(j, name);
 	return auth.uid;
 }
 
 export async function login(name, password) {
 	name = checkName(name);
-	const j = await post(`${ID}signInWithPassword?key=${FIREBASE.apiKey}`, { email: emailOf(name), password, returnSecureToken: true });
+	if (!String(password || "").length) throw new Error("type a password");
+	let j;
+	try {
+		j = await post(`${ID}signInWithPassword?key=${FIREBASE.apiKey}`, { email: emailOf(name), password: padPw(password), returnSecureToken: true });
+	} catch (e) {
+		// accounts from the first version used the password as it was
+		if (e.message !== "wrong name or password" || password.length < 6) throw e;
+		j = await post(`${ID}signInWithPassword?key=${FIREBASE.apiKey}`, { email: emailOf(name), password, returnSecureToken: true });
+	}
 	take(j, name);
 	return auth.uid;
 }
 
 export function logout() {
+	auth = null;
+	keep();
+}
+
+// removes the account for good: leaderboard entry, cloud save and the login itself
+export async function deleteAccount() {
+	if (!auth || !auth.name) throw new Error("not logged in");
+	const t = await token();
+	await del(`players/${auth.uid}`).catch(() => {});
+	await del(`saves/${auth.uid}`).catch(() => {});
+	await post(`${ID}delete?key=${FIREBASE.apiKey}`, { idToken: t });
 	auth = null;
 	keep();
 }
@@ -154,7 +175,7 @@ export async function syncClock() {
 
 // a live copy of a path, calls back on every change. returns a function that stops it
 export function listen(path, cb, query) {
-	let es = null, stopped = false, mirror = null, retry = null;
+	let es = null, stopped = false, mirror = null, retry = null, wait = 1500;
 	const setAt = (p, v, merge) => {
 		const keys = p.split("/").filter(Boolean);
 		if (!keys.length) {
@@ -197,6 +218,7 @@ export function listen(path, cb, query) {
 				return;
 			}
 			if (!m) return;
+			wait = 1500;
 			setAt(m.path, m.data, merge);
 			cb(mirror);
 		};
@@ -205,7 +227,9 @@ export function listen(path, cb, query) {
 		const again = () => {
 			if (es) es.close();
 			es = null;
-			if (!stopped) retry = setTimeout(open, 1500);
+			// back off when it keeps failing, no point hammering a path we can't read
+			if (!stopped) retry = setTimeout(open, wait);
+			wait = Math.min(wait * 2, 30000);
 		};
 		es.addEventListener("auth_revoked", again);
 		es.addEventListener("cancel", again);
