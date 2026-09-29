@@ -3,9 +3,9 @@ import {
 	camera, Lighting, Instance, workspace, markQueryRoot, Enum, OverlapParams, TweenService, TweenInfo, Debris, UIS, playSfx, loopSound, loadSounds, setSfxVolume,
 	NumberSequence, NumberSequenceKeypoint, NumberRange, ColorSequence, ColorSequenceKeypoint, guiRootInst, setUiScale, setLowGraphics, physicsGround,
 	mergeFloor, start, perf,
-} from "./engine.js?v=1790679961";
-import * as Server from "./server.js?v=1790679961";
-import * as Online from "./online.js?v=1790679961";
+} from "./engine.js?v=1790682817";
+import * as Server from "./server.js?v=1790682817";
+import * as Online from "./online.js?v=1790682817";
 
 const V3 = (x, y, z) => new Vector3(x, y, z);
 const RGB = Color3.fromRGB;
@@ -654,7 +654,7 @@ let trackChunks, updateMovers, regenerate, canyonPath, canyonHalfGap, updatePads
 
 	function rollKind(rng) {
 		const r = rng.NextNumber();
-		if (r < 0.0015) return "heart";
+		if (r < 0.0018) return "heart";
 		if (r < 0.04) return "key";
 		if (r < 0.14) return "gem";
 		return "fuel";
@@ -1202,6 +1202,7 @@ let buildPlane;
 	buildPlane = (id) => {
 		if (planeModel) planeModel.Destroy();
 		[planeModel, planeMain, planeParts] = Game.makePlane(id);
+		Game.planeSkin = id;
 	};
 
 	Game.makePlane = (id, parent, noFx) => {
@@ -1434,6 +1435,10 @@ const Icons = {};
 		put(0.5, 0.7, 0.14, 0.2, RGB(215, 150, 25));
 		put(0.5, 0.86, 0.56, 0.12, gold, { round: 0.2 });
 		put(0.38, 0.3, 0.07, 0.2, WHITE, { round: true, alpha: 0.45 });
+	};
+	DRAW.user = (put, s) => {
+		put(0.5, 0.3, 0.42, 0.42, WHITE, { round: true });
+		put(0.5, 0.8, 0.8, 0.44, WHITE, { round: 0.45 });
 	};
 	DRAW.help = (put, s) => {
 		const f = put(0.5, 0.5, 0.78, 0.78, WHITE, { round: true, stroke: Math.max(1, s * 0.1) });
@@ -2192,6 +2197,10 @@ let openPanel, closePanels, startRun, toMenu;
 		openPanel("shop");
 	});
 	menuButton("LEADERBOARD", "trophy", () => Game.openLeaderboard());
+	menuButton("PROFILE", "user", () => {
+		Game.closeStrip();
+		Game.showProfile(myProfile(), true);
+	});
 	rewardsBtn = menuButton("FREE REWARDS", "gift", () => {
 		Game.closeStrip();
 		openPanel("rewards");
@@ -2251,7 +2260,7 @@ function panel(name, title, size) {
 	});
 	text(p, title, U2(1, -80, 0, 56), UO(22, 6), 40, WHITE, LEFT);
 	make("Frame", { Position: UO(22, 60), Size: U2(1, -44, 0, 1), BackgroundColor3: WHITE, BackgroundTransparency: 0.8, Parent: p });
-	button(p, "X", UO(44, 44), U2(1, -58, 0, 10), () => closePanels());
+	const xBtn = button(p, "X", UO(44, 44), U2(1, -58, 0, 10), () => closePanels());
 	const body = make("ScrollingFrame", {
 		Position: UO(18, 72),
 		Size: U2(1, -36, 1, -86),
@@ -2269,7 +2278,7 @@ function panel(name, title, size) {
 	const moreL = make("Frame", { AnchorPoint: V2(0.5, 1), Position: U2(0.5, 0, 1, -10), Size: UO(190, 30), BackgroundColor3: WHITE, BackgroundTransparency: 0.1, ZIndex: 9, Parent: more });
 	make("UICorner", { CornerRadius: UDim.new(0.5, 0), Parent: moreL });
 	text(moreL, "SCROLL FOR MORE  ▼", US(1, 1), UO(0, 1), 16, BLACK).ZIndex = 9;
-	panels[name] = { frame: p, body, token: 0, more, moreL };
+	panels[name] = { frame: p, body, token: 0, more, moreL, xBtn };
 	return panels[name];
 }
 
@@ -2277,6 +2286,7 @@ closePanels = () => {
 	let any = false;
 	for (const name in panels) {
 		const p = panels[name];
+		if (p.locked) continue;
 		if (p.frame.Visible && p.frame.GroupTransparency < 1 && !p.closing) {
 			any = true;
 			p.closing = true;
@@ -2293,6 +2303,8 @@ closePanels = () => {
 		}
 	}
 	if (any) sfx("close");
+	// a locked panel (like the forced sign up) keeps the dark background
+	for (const name in panels) if (panels[name].locked && panels[name].frame.Visible) return;
 	tw(overlay, 0.25, { BackgroundTransparency: 1 });
 	task.delay(0.25, () => {
 		let open = false;
@@ -3021,14 +3033,30 @@ function deathView(vp, kind) {
 			}, 0.1);
 			Icons.text(b, US(1, 1), null, 24, maxed ? DIM : data.coins >= price ? COIN : DIM).Text = maxed ? "MAX" : fmt(price) + " ●";
 		}
-		// revives: can't buy them, only find them
+		// revives: find them as rare hearts, or buy them for gems
 		const r = row(shopItems, 96, 0.45);
 		make("UICorner", { CornerRadius: UDim.new(0, 10), Parent: r });
 		const hi = Icons.make("heart", r, 56);
 		hi.AnchorPoint = V2(0, 0.5);
 		hi.Position = U2(0, 30, 0.5, 0);
 		text(r, "REVIVES  " + (data.revives || 0), UO(400, 32), UO(110, 16), 28, RGB(255, 100, 130), LEFT);
-		text(r, "SUPER RARE RED HEARTS WHILE FLYING. USE ONE WHEN YOU CRASH TO KEEP GOING.", U2(1, -130, 0, 40), UO(110, 50), 16, DIM, LEFT);
+		text(r, "USE ONE WHEN YOU CRASH TO KEEP GOING RIGHT WHERE YOU WERE. RARE HEARTS GIVE YOU ONE TOO.", U2(1, -130, 0, 40), UO(110, 50), 16, DIM, LEFT);
+		for (const [n, price] of [[1, 200], [5, 500]]) {
+			const pr = row(shopItems, 66);
+			text(pr, n === 1 ? "1 REVIVE" : n + " REVIVES", U2(0.6, 0, 0, 30), UO(16, 7), 24, WHITE, LEFT);
+			text(pr, n === 1 ? "back in the air right where you crashed" : "save 500 gems", U2(0.6, 0, 0, 22), UO(16, 37), 18, DIM, LEFT);
+			const pb = button(pr, "", UO(180, 44), U2(1, -194, 0.5, -22), () => {
+				if (Game.topUp("gems", price)) return;
+				const [ok, msg] = request("buy_revive", n);
+				notify(msg, ok ? GOOD : BAD);
+				sfx(ok ? "buy" : "bad");
+				rebuildShop();
+			}, 0.3);
+			Icons.text(pb, US(1, 1), null, 22, data.gems >= price ? GEM : DIM).Text = fmt(price) + " ◆";
+			const ic = Icons.make("heart", pr, 30);
+			ic.AnchorPoint = V2(1, 0.5);
+			ic.Position = U2(1, -206, 0.5, 0);
+		}
 		// a random secret code for a key, only 5 times
 		const bought = data.bought || [];
 		const left = 5 - bought.length;
@@ -3296,10 +3324,12 @@ let showResults;
 	const ORDER = ["towers", "moving", "canyon", "smash", "boss", "turrets", "city", "boss2", "sea", "beyond"];
 	Game.STAGE_ORDER = ORDER;
 	const WAIT = 6;
+	// gems for a revive in each stage, dying again in the same stage makes it pricier
+	const PRICE = [100, 120, 150, 180, 220, 260, 300, 320, 350, 400];
 	const box = make("CanvasGroup", {
 		AnchorPoint: V2(0.5, 0.5),
 		Position: US(0.5, 0.5),
-		Size: UO(500, 260),
+		Size: UO(500, 340),
 		BackgroundColor3: BLACK,
 		BackgroundTransparency: T.panel,
 		GroupTransparency: 1,
@@ -3313,7 +3343,18 @@ let showResults;
 	const bar = make("Frame", { Size: US(1, 1), BackgroundColor3: GOOD, Parent: barBg });
 	let cur = null;
 
-	const use = button(box, "", UO(270, 64), U2(0, 24, 1, -88), async () => {
+	const buy = button(box, "", UO(270, 64), U2(0, 24, 1, -88), () => {
+		if (!cur || cur.waiting || cur.done) return;
+		if (Game.topUp("gems", cur.price)) return;
+		const [ok, msg] = request("revive_gems", cur.price);
+		if (ok) {
+			sfx("buy");
+			cur.done = true;
+			cur.revived = true;
+		} else notify(msg, BAD);
+	}, 0.05);
+	const buyL = Icons.text(buy, US(1, 1), null, 24, GEM);
+	const use = button(box, "", U2(1, -48, 0, 64), U2(0, 24, 1, -166), async () => {
 		if (!cur || cur.waiting || cur.done || (data.revives || 0) < 1) return;
 		cur.waiting = clock();
 		const [ok, msg] = request("use_revive");
@@ -3337,10 +3378,18 @@ let showResults;
 
 	Game.offerRevive = async (my) => {
 		const owned = data.revives || 0;
-		if (owned < 1) return false;
-		const c = { left: WAIT };
+		const idx = Math.max(0, ORDER.indexOf(curStage));
+		const here = (Game.loop || 0) + ":" + idx;
+		Game.deaths = Game.deaths || {};
+		Game.deaths[here] = (Game.deaths[here] || 0) + 1;
+		const price = Math.round((PRICE[Math.min(idx, PRICE.length - 1)] * Math.min(1 + 0.5 * (Game.deaths[here] - 1), 3)) / 10) * 10;
+		const c = { left: WAIT, price };
 		cur = c;
-		use.Text = "USE A REVIVE (" + owned + ")";
+		buyL.Text = "REVIVE FOR " + fmt(price) + " ◆";
+		buyL.TextColor3 = data.gems >= price ? GEM : DIM;
+		use.Visible = owned > 0;
+		use.Text = "USE A REVIVE  (" + owned + " LEFT)";
+		box.Size = UO(500, owned > 0 ? 340 : 260);
 		subL.Text = "KEEP GOING RIGHT WHERE YOU CRASHED";
 		box.Visible = true;
 		box.GroupTransparency = 1;
@@ -3396,6 +3445,7 @@ function myProfile() {
 		created: data.created,
 		updated: Date.now(),
 		seen: Online.SERVER_TIME,
+		ach: Object.keys(data.ach || {}).length,
 	};
 }
 let pushing = false;
@@ -3497,6 +3547,14 @@ function xpBar(parent, size, pos, k, color) {
 	goBtn.TextColor3 = GOOD;
 
 	// logged in: who you are and a way out
+	const offR = row(ap.body, 50, 1);
+	const offBtn = button(offR, "NO INTERNET? PLAY OFFLINE", U2(1, -10, 0, 42), UO(0, 4), () => {
+		unlock();
+		closePanels();
+	}, 0.5);
+	offBtn.TextSize = 17;
+	offBtn.TextColor3 = DIM;
+	offR.Visible = false;
 	const outR = row(ap.body, 196, 1);
 	// dangerous buttons want a second click within 3 seconds
 	function confirmBtn(label, y, color, fn) {
@@ -3522,7 +3580,8 @@ function xpBar(parent, size, pos, k, color) {
 		Online.logout();
 		notify("logged out", WHITE);
 		sfx("click");
-		refresh();
+		closePanels();
+		task.delay(0.35, () => Game.forceAccount());
 	}, 0.3);
 	outBtn.TextColor3 = WHITE;
 	confirmBtn("RESET MY PROGRESS", 66, RGB(255, 170, 60), async () => {
@@ -3541,6 +3600,8 @@ function xpBar(parent, size, pos, k, color) {
 			await Online.deleteAccount();
 			notify("account deleted", WHITE);
 			sfx("good");
+			closePanels();
+			task.delay(0.35, () => Game.forceAccount());
 		} catch (e) {
 			notify(e.message || "couldn't delete it", BAD);
 			sfx("bad");
@@ -3553,8 +3614,22 @@ function xpBar(parent, size, pos, k, color) {
 		sfx("click");
 		refresh();
 	}
+	// first time here: no account, no playing. the panel can't be closed until you're in
+	Game.forceAccount = () => {
+		if (Online.account()) return;
+		ap.locked = true;
+		ap.then = null;
+		makeNew = !data.name || !data.best;
+		openPanel("name");
+	};
+	function unlock() {
+		ap.locked = false;
+		ap.xBtn.Visible = true;
+	}
 	function refresh() {
 		const acc = Online.account();
+		ap.xBtn.Visible = !ap.locked;
+		offR.Visible = !!ap.offline && ap.locked;
 		const inForm = !acc;
 		tabs.Visible = inForm;
 		nameR.Visible = inForm;
@@ -3566,9 +3641,13 @@ function xpBar(parent, size, pos, k, color) {
 			infoL.Text = "LOGGED IN AS " + acc.toUpperCase() + ". YOUR PROGRESS IS SAVED TO THIS ACCOUNT.";
 			return;
 		}
-		infoL.Text = makeNew
-			? "MAKE AN ACCOUNT TO GET ON THE LEADERBOARD, PLAY VERSUS AND KEEP YOUR PROGRESS ON EVERY DEVICE."
-			: "LOG IN AND YOUR PROGRESS FROM THAT ACCOUNT LOADS ON THIS DEVICE.";
+		infoL.Text = ap.locked
+			? makeNew
+				? "WELCOME! PICK A NAME AND A PASSWORD TO START PLAYING. YOUR PROGRESS IS SAVED TO IT."
+				: "LOG IN TO KEEP PLAYING. YOUR PROGRESS LOADS FROM YOUR ACCOUNT."
+			: makeNew
+				? "MAKE AN ACCOUNT TO GET ON THE LEADERBOARD, PLAY VERSUS AND KEEP YOUR PROGRESS ON EVERY DEVICE."
+				: "LOG IN AND YOUR PROGRESS FROM THAT ACCOUNT LOADS ON THIS DEVICE.";
 		noteL.Text = makeNew ? "3 TO 16 LETTERS, NUMBERS OR _. THERE'S NO PASSWORD RESET, DON'T FORGET IT." : "";
 		goBtn.Text = makeNew ? "CREATE ACCOUNT" : "LOG IN";
 		tabNew.SetAttribute("Base", makeNew ? 0.05 : 0.55);
@@ -3598,6 +3677,7 @@ function xpBar(parent, size, pos, k, color) {
 			sfx("good");
 			pwBox.Text = "";
 			busy = false;
+			unlock();
 			refresh();
 			const then = ap.then;
 			ap.then = null;
@@ -3607,6 +3687,8 @@ function xpBar(parent, size, pos, k, color) {
 		} catch (e) {
 			notify(e.message || "something went wrong", BAD);
 			sfx("bad");
+			// firebase unreachable: don't lock people out of the game
+			if (e.message === "no connection") ap.offline = true;
 		}
 		busy = false;
 		refresh();
@@ -3658,42 +3740,86 @@ function xpBar(parent, size, pos, k, color) {
 		return true;
 	};
 	task.delay(1, () => Game.cloudLoad(false).catch((e) => console.warn(e)));
+	task.delay(1.4, () => {
+		if (mode === "menu") Game.forceAccount();
+	});
+	// logged in some other way (another tab, dev tools): let go of the lock
+	setInterval(() => {
+		if (ap.locked && Online.account()) {
+			unlock();
+			refresh();
+			closePanels();
+		}
+	}, 500);
 })();
 
-// ---------------- leaderboard
+// ---------------- leaderboard: the top 3 on a podium, everyone else in a clean list
 (() => {
-	const lb = panel("leaderboard", "LEADERBOARD", UO(680, 560));
+	const lb = panel("leaderboard", "LEADERBOARD", UO(720, 600));
 	const MEDAL = [COIN, RGB(210, 215, 225), RGB(215, 140, 80)];
+	const AV = [RGB(255, 90, 90), RGB(255, 170, 60), RGB(90, 200, 120), RGB(80, 170, 255), RGB(170, 110, 255), RGB(255, 100, 200)];
 	let token = 0;
 	let list = [];
 
+	function avatar(parent, name, size, pos, ring) {
+		let h = 0;
+		for (const ch of String(name)) h = (h * 31 + ch.charCodeAt(0)) >>> 0;
+		const a = make("Frame", { AnchorPoint: V2(0.5, 0.5), Position: pos, Size: UO(size, size), BackgroundColor3: AV[h % AV.length], Parent: parent });
+		make("UICorner", { CornerRadius: UDim.new(0.5, 0), Parent: a });
+		make("UIGradient", { Color: new ColorSequence(WHITE, RGB(150, 150, 150)), Rotation: 90, Parent: a });
+		make("UIStroke", { Color: ring || WHITE, Thickness: 3, Transparency: ring ? 0 : 0.5, ApplyStrokeMode: "Border", Parent: a });
+		text(a, String(name).slice(0, 1).toUpperCase(), US(1, 1), UO(0, 2), Math.floor(size * 0.48), WHITE).TextStrokeTransparency = 0.6;
+		return a;
+	}
+	function onlineDot(parent, pos) {
+		const d = make("Frame", { AnchorPoint: V2(0.5, 0.5), Position: pos, Size: UO(14, 14), BackgroundColor3: GOOD, ZIndex: 4, Parent: parent });
+		make("UICorner", { CornerRadius: UDim.new(0.5, 0), Parent: d });
+		make("UIStroke", { Color: BLACK, Thickness: 2, Transparency: 0.1, Parent: d });
+	}
+
+	// the podium: 2nd, 1st, 3rd
+	function podium(top, me) {
+		const holder = make("Frame", { Size: U2(1, -10, 0, 210), BackgroundTransparency: 1, LayoutOrder: nextOrder(), Parent: lb.body });
+		const slots = [1, 0, 2];
+		const H = [120, 92, 76];
+		slots.forEach((i, k) => {
+			const e = top[i];
+			if (!e) return;
+			const isMe = e.id === me;
+			const col = make("TextButton", { Position: U2(k / 3, 4, 0, 0), Size: U2(1 / 3, -8, 1, 0), BackgroundTransparency: 1, Text: "", Parent: holder });
+			col.MouseButton1Click.Connect(() => {
+				sfx("click");
+				Game.showProfile(e, isMe, i + 1);
+			});
+			const block = make("Frame", { AnchorPoint: V2(0.5, 1), Position: U2(0.5, 0, 1, 0), Size: U2(1, 0, 0, H[i]), BackgroundColor3: MEDAL[i], BackgroundTransparency: 0.15, Parent: col });
+			make("UICorner", { CornerRadius: UDim.new(0, 12), Parent: block });
+			make("UIGradient", { Color: new ColorSequence(WHITE, RGB(90, 90, 90)), Rotation: 90, Parent: block });
+			if (isMe) make("UIStroke", { Color: GOOD, Thickness: 3, Transparency: 0.1, ApplyStrokeMode: "Border", Parent: block });
+			text(block, fmt(e.best || 0), U2(1, 0, 0, 30), UO(0, 10), i === 0 ? 30 : 26, BLACK);
+			text(block, "#" + (i + 1), U2(1, 0, 0, 24), UO(0, H[i] - 32), 20, BLACK).TextTransparency = 0.45;
+			const top2 = H[i] + 8;
+			const av = avatar(col, e.name || "?", i === 0 ? 64 : 54, U2(0.5, 0, 1, -top2 - 60), MEDAL[i]);
+			if (isMe || Game.isOnline(e)) onlineDot(av, U2(1, -6, 1, -6));
+			const nm = text(col, String(e.name || "?").toUpperCase(), U2(1, 0, 0, 24), U2(0, 0, 1, -top2 - 24), 20, isMe ? GOOD : WHITE);
+			nm.TextTruncate = "AtEnd";
+			const sc = make("UIScale", { Scale: 0.6, Parent: col });
+			task.delay(0.08 * (2 - i), () => tw(sc, 0.4, { Scale: 1 }, "Back"));
+		});
+	}
+
 	function entryRow(e, rank, me) {
-		const c = rank <= 3 ? MEDAL[rank - 1] : WHITE;
-		const r = button(lb.body, "", U2(1, -10, 0, 58), null, () => Game.showProfile(e, me, rank), me ? 0.15 : rank <= 3 ? 0.3 : T.row);
+		const r = button(lb.body, "", U2(1, -10, 0, 46), null, () => Game.showProfile(e, me, rank), me ? 0.2 : rank % 2 ? 0.55 : 0.7);
 		r.LayoutOrder = nextOrder();
 		if (me) make("UIStroke", { Color: GOOD, Thickness: 2, Transparency: 0.3, ApplyStrokeMode: "Border", Parent: r });
-		if (rank <= 3) {
-			const m = make("Frame", { AnchorPoint: V2(0, 0.5), Position: U2(0, 12, 0.5, 0), Size: UO(40, 40), BackgroundColor3: c, Parent: r });
-			make("UICorner", { CornerRadius: UDim.new(0.5, 0), Parent: m });
-			make("UIGradient", { Color: new ColorSequence(WHITE, RGB(150, 150, 150)), Rotation: 90, Parent: m });
-			text(m, String(rank), US(1, 1), UO(0, 1), 22, BLACK);
-		} else text(r, "#" + rank, UO(60, 58), UO(10, 0), 24, DIM, LEFT);
-		levelBadge(r, e.level || 1, 34, U2(0, 66, 0.5, -17));
-		text(r, String(e.name || "?").toUpperCase(), U2(1, -330, 1, 0), UO(112, 0), 24, me ? GOOD : WHITE, LEFT);
-		if (me || Game.isOnline(e)) {
-			const dot = make("Frame", { AnchorPoint: V2(0.5, 0.5), Position: UO(100, 42), Size: UO(12, 12), BackgroundColor3: GOOD, ZIndex: 3, Parent: r });
-			make("UICorner", { CornerRadius: UDim.new(0.5, 0), Parent: dot });
-			make("UIStroke", { Color: BLACK, Thickness: 2, Transparency: 0.2, Parent: dot });
-		}
-		text(r, fmt(e.best || 0), UO(190, 58), U2(1, -262, 0, 0), 28, c, RIGHT);
-		text(r, "STUDS", UO(60, 20), U2(1, -66, 0.5, -8), 14, DIM, LEFT);
+		text(r, String(rank), UO(52, 46), UO(4, 0), 20, DIM);
+		const av = avatar(r, e.name || "?", 30, UO(74, 23));
+		if (me || Game.isOnline(e)) onlineDot(av, U2(1, -3, 1, -3));
+		text(r, String(e.name || "?").toUpperCase(), U2(1, -320, 1, 0), UO(100, 0), 20, me ? GOOD : WHITE, LEFT);
+		text(r, "LVL " + (e.level || 1), UO(70, 46), U2(1, -250, 0, 0), 15, RGB(180, 165, 255), RIGHT);
+		text(r, fmt(e.best || 0), UO(160, 46), U2(1, -176, 0, 0), 22, WHITE, RIGHT);
 		const sc = r.FindFirstChildOfClass("UIScale");
-		sc.Scale = 0.9;
-		r.BackgroundTransparency = 1;
-		task.delay(Math.min(rank, 20) * 0.025, () => {
-			tw(sc, 0.35, { Scale: 1 }, "Back");
-			tw(r, 0.3, { BackgroundTransparency: r.GetAttribute("Base") });
-		});
+		sc.Scale = 0.95;
+		task.delay(Math.min(rank, 20) * 0.02, () => tw(sc, 0.3, { Scale: 1 }, "Back"));
 		return r;
 	}
 
@@ -3701,41 +3827,44 @@ function xpBar(parent, size, pos, k, color) {
 		token++;
 		const my = token;
 		for (const c of lb.body.GetChildren()) if (!c.IsA("UIListLayout")) c.Destroy();
-		const head = row(lb.body, 44, 1);
-		const status = text(head, Online.enabled() ? "LOADING..." : "", U2(1, -150, 1, 0), UO(4, 0), 18, DIM, LEFT);
-		button(head, "REFRESH", UO(130, 36), U2(1, -140, 0.5, -18), () => load(), 0.3).TextSize = 18;
+		const head = row(lb.body, 34, 1);
+		const status = text(head, Online.enabled() ? "LOADING..." : "", U2(1, -130, 1, 0), UO(6, 0), 16, DIM, LEFT);
+		const rb = button(head, "REFRESH", UO(110, 30), U2(1, -116, 0.5, -15), () => load(), 0.4);
+		rb.TextSize = 15;
 		if (!Online.enabled()) {
-			status.Text = "THE ONLINE LEADERBOARD ISN'T CONNECTED YET, ONLY YOU FOR NOW";
+			status.Text = "THE ONLINE LEADERBOARD ISN'T CONNECTED";
 			status.TextColor3 = BAD;
-			entryRow(myProfile(), 1, true);
 			return;
 		}
 		try {
-			// make sure your newest best is up there before loading
 			await Game.pushProfile();
 			list = await Online.top(100);
 		} catch (e) {
 			if (my !== token) return;
-			status.Text = "COULDN'T LOAD THE LEADERBOARD, CHECK YOUR INTERNET";
+			status.Text = "COULDN'T LOAD, CHECK YOUR INTERNET";
 			status.TextColor3 = BAD;
 			return;
 		}
 		if (my !== token) return;
-		status.Text = list.length === 0 ? "NOBODY'S ON IT YET. GO FLY." : "FARTHEST DISTANCE EVER, CLICK SOMEONE FOR THEIR PROFILE";
+		const online = list.filter((e) => Game.isOnline(e)).length;
+		status.Text = list.length === 0 ? "NOBODY'S ON IT YET. GO FLY." : "BEST DISTANCE   " + list.length + " PLAYERS   " + online + " ONLINE";
 		const me = Online.myId();
-		let found = false;
-		list.forEach((e, i) => {
+		podium(list.slice(0, 3), me);
+		if (list.length > 3) {
+			const cols = row(lb.body, 22, 1);
+			text(cols, "#", UO(52, 22), UO(4, 0), 13, DIM);
+			text(cols, "PLAYER", UO(200, 22), UO(100, 0), 13, DIM, LEFT);
+			text(cols, "BEST", UO(160, 22), U2(1, -176, 0, 0), 13, DIM, RIGHT);
+		}
+		let found = list.slice(0, 3).some((e) => e.id === me);
+		list.slice(3).forEach((e, i) => {
 			const isMe = e.id === me;
 			if (isMe) found = true;
-			entryRow(e, i + 1, isMe);
+			entryRow(e, i + 4, isMe);
 		});
-		if (!Online.account()) {
-			const r = row(lb.body, 64, 1);
-			r.LayoutOrder = -1;
-			button(r, "MAKE AN ACCOUNT TO GET ON HERE", U2(1, -10, 0, 54), UO(0, 5), () => Game.askName(() => openPanel("leaderboard")), 0.1).TextColor3 = GOOD;
-		} else if (!found) {
-			const gap = row(lb.body, 20, 1);
-			text(gap, "...", US(1, 1), null, 18, DIM);
+		if (Online.account() && !found) {
+			const gap = row(lb.body, 16, 1);
+			text(gap, "...", US(1, 1), null, 16, DIM);
 			entryRow(myProfile(), list.length + 1, true);
 		}
 	}
@@ -3809,6 +3938,7 @@ function xpBar(parent, size, pos, k, color) {
 			["TIME FLOWN", hours(st.time), WHITE],
 			["SKIN", String(p.skin || "Default").toUpperCase(), GEM],
 			["DEATH EFFECT", String(p.death || "Default").toUpperCase(), KEY],
+			["ACHIEVEMENTS", (p.ach || 0) + " / " + (Game.ACH_TOTAL || 0), COIN],
 			["PLAYING SINCE", ago(p.created), DIM],
 		];
 		tiles.forEach(([k, v, c], i) => {
@@ -3826,6 +3956,8 @@ function xpBar(parent, size, pos, k, color) {
 			});
 		});
 		if (me) {
+			const ar = row(pp.body, 64, 1);
+			button(ar, "ACHIEVEMENTS  " + Object.keys(data.ach || {}).length + " / " + (Game.ACH_TOTAL || 0), U2(1, -10, 0, 54), UO(0, 5), () => openPanel("achievements"), 0.1).TextColor3 = COIN;
 			const r = row(pp.body, 64, 1);
 			button(r, Online.account() ? "ACCOUNT" : "MAKE AN ACCOUNT", UO(260, 50), UO(0, 7), () => Game.openAccount(), 0.3);
 		}
@@ -4049,6 +4181,8 @@ let startBoss, updateBoss, resetSky;
 		if (bm.live) {
 			const w = 4 * (1 + Math.sin(clock() * 50) * 0.12);
 			place(bm.core, e, pt, w);
+			// what actually kills you is a thinner line in the middle of the beam
+			if (bm.hit) place(bm.hit, e, pt, 2);
 			place(bm.glow, e, pt, w * 2.6);
 			bm.sparkT = (bm.sparkT || 0) + 1;
 			if (bm.sparkT % 4 === 0) {
@@ -4204,6 +4338,7 @@ let startBoss, updateBoss, resetSky;
 		for (const bm of b.beams) {
 			bm.glow.Destroy();
 			if (bm.core) bm.core.Destroy();
+				if (bm.hit) bm.hit.Destroy();
 		}
 		b.beams = [];
 		Missiles.clear();
@@ -4383,6 +4518,7 @@ let startBoss, updateBoss, resetSky;
 			if (bm.t >= bm.warn + FIRE) {
 				bm.glow.Destroy();
 				if (bm.core) bm.core.Destroy();
+				if (bm.hit) bm.hit.Destroy();
 				b.beams.splice(i, 1);
 			} else {
 				if (bm.t >= bm.warn && !bm.live) {
@@ -4390,8 +4526,9 @@ let startBoss, updateBoss, resetSky;
 					bm.glow.Transparency = 0.55;
 					bm.glow.Color = RGB(255, 40, 40);
 					bm.core = beamPart(RGB(255, 235, 235), 0);
-					bm.core.CanQuery = true;
-					bm.core.Parent = world;
+					bm.hit = beamPart(RGB(255, 235, 235), 1);
+					bm.hit.CanQuery = true;
+					bm.hit.Parent = world;
 					if (Math.abs(bm.x - pos.X) < 40) shake = Math.max(shake, 0.3);
 					sfx("laser_fire", 1, Math.abs(bm.x - pos.X) < 60 ? 1 : 0.5, clamp((bm.x - pos.X) / 150, -0.7, 0.7));
 				}
@@ -5692,6 +5829,7 @@ Game.endIntro = () => {
 
 function onStage(nw, old) {
 	Lighting.GlobalShadows = !settings.low && nw !== "city";
+	if (old && Game.achStage) Game.achStage(old, nw);
 	if (old && MAP_STAGES[old]) {
 		stats.maps++;
 		popup("MAP CLEAR  +" + CONFIG.mapBonus + " ●", COIN);
@@ -5951,6 +6089,7 @@ Game.revive = (quiet) => {
 };
 
 Game.loopAround = () => {
+	if (Game.achLoop) Game.achLoop();
 	Game.loop++;
 	Game.loopBase += Math.floor(-pos.Z);
 	Game.fireAfter = runTime + 5;
@@ -5982,6 +6121,7 @@ Game.loopAround = () => {
 };
 
 startRun = (startId) => {
+	Game.deaths = {};
 	runId++;
 	Game.cam.last = null;
 	Game.cam.blend = null;
@@ -6240,14 +6380,24 @@ function step(dt) {
 	// the hitbox is the plane itself: every visible piece of the skin checks its own shape
 	if (Game.hitFor !== planeParts) {
 		Game.hitFor = planeParts;
-		Game.hitParts = (planeParts || []).filter((p) => p.Transparency < 0.95 && p.Size.Magnitude > 0.8);
+		// the big ones (ufo, biplane) get the normal plane's shape, so no skin is harder than the default
+		if (Game.planeSkin === "UFO" || Game.planeSkin === "Biplane") {
+			Game.hitParts = [[CFn(0, 0, 0), V3(2, 2, 8)], [CFn(0, 0, -0.5), V3(12, 0.5, 3)], [CFn(0, 0, 3.3), V3(5, 0.4, 1.5)], [CFn(0, 1.4, 3.3), V3(0.4, 2, 1.5)]].map(([off, size]) => ({ off, size }));
+		} else {
+			Game.hitParts = (planeParts || [])
+				.filter((p) => p.Transparency < 0.95 && p.Size.Magnitude > 0.8)
+				.map((p) => ({
+					part: p,
+					// round shapes get a slightly smaller box so the corners don't count
+					size: p._shape === "Ball" ? V3(1, 1, 1).mul(Math.min(p.Size.X, p.Size.Y, p.Size.Z) * 0.82) : p._shape === "Cylinder" ? V3(p.Size.X, p.Size.Y * 0.85, p.Size.Z * 0.85) : p.Size,
+				}));
+		}
 	}
 	const touched = new Set();
-	for (const hp of Game.hitParts) {
-		if (!hp.Parent) continue;
-		// round shapes get a slightly smaller box so the corners don't count
-		const s = hp._shape === "Ball" ? V3(1, 1, 1).mul(Math.min(hp.Size.X, hp.Size.Y, hp.Size.Z) * 0.82) : hp._shape === "Cylinder" ? V3(hp.Size.X, hp.Size.Y * 0.85, hp.Size.Z * 0.85) : hp.Size;
-		for (const h of workspace.GetPartBoundsInBox(hp.CFrame, s, params)) touched.add(h);
+	for (const e of Game.hitParts) {
+		if (e.part && !e.part.Parent) continue;
+		const cf = e.part ? e.part.CFrame : planeMain.CFrame.mul(e.off);
+		for (const h of workspace.GetPartBoundsInBox(cf, e.size, params)) touched.add(h);
 	}
 	for (const h of touched) {
 		if (h.GetAttribute("Glass")) {
@@ -6259,6 +6409,7 @@ function step(dt) {
 				shake = Math.max(shake, 0.35);
 				sfx("glass");
 				popup(wasEmpty ? "SAVED" : "+FUEL   +10 ●", wasEmpty ? GOOD : RGB(255, 90, 70));
+				if (wasEmpty && Game.ach) Game.ach("saved");
 				Game.fuelFlash = clock();
 			}
 		} else if (!(h.GetAttribute("Floor") && fuel > 0)) hits.push(h);
@@ -6324,8 +6475,6 @@ function step(dt) {
 	if (nitroK > 0.2) fx.push("NITRO");
 	if (fuel <= 0) fx.push(stage === "beyond" ? "NO FUEL, BOOM IN " + Math.max(0, 3 - Game.voidT).toFixed(1) : "OUT OF FUEL");
 	if (buff.immortal > 0) fx.push("IMMORTAL " + buff.immortal.toFixed(1));
-	if (Game.race && Game.leading) fx.push("1ST, COINS X" + (Game.raceMult || 1).toFixed(2).replace(/\.?0+$/, ""));
-	if (Game.race && Game.behind) fx.push("FALLING BEHIND, FUEL BURNS 2X");
 	effectL.Text = fx.join("     ");
 	effectL.TextColor3 = fuel <= 0 || (Game.race && Game.behind) ? BAD : COIN;
 }
@@ -6834,6 +6983,7 @@ if (DEV) window.__dev = { crash: () => task.spawn(crash, []), data: () => data, 
 			startRun("towers");
 			Game.hold = true;
 			const my = runId;
+			vsSplash(m.runners);
 			(async () => {
 				for (let i = 3; i >= 1; i--) {
 					if (runId !== my) return;
@@ -6845,11 +6995,126 @@ if (DEV) window.__dev = { crash: () => task.spawn(crash, []), data: () => data, 
 				Game.hold = false;
 				banner("GO!", GOOD, 1);
 				sfx("good");
+				hideSplash();
 			})();
 		});
 		if (stopLive) stopLive();
 		stopLive = Online.listen(`matches/${mid}/live`, onLive);
 	}
+
+	// ---------------- the splash before the start: everyone's name, big VS in between
+	const splash = make("CanvasGroup", { AnchorPoint: V2(0.5, 0.5), Position: US(0.5, 0.62), Size: UO(900, 170), BackgroundTransparency: 1, GroupTransparency: 1, Visible: false, ZIndex: 35, Parent: gui });
+	function vsSplash(runners) {
+		for (const c of splash.GetChildren()) c.Destroy();
+		const ids = Object.keys(runners || {});
+		const lay = make("Frame", { Size: US(1, 1), BackgroundTransparency: 1, Parent: splash });
+		make("UIListLayout", { FillDirection: "row", HorizontalAlignment: "Center", VerticalAlignment: "Center", Padding: UDim.new(0, 14), SortOrder: "LayoutOrder", Parent: lay });
+		ids.forEach((id, i) => {
+			if (i > 0) {
+				const v = text(lay, "VS", UO(60, 60), null, 40, BAD);
+				v.LayoutOrder = i * 2 - 1;
+				v.TextStrokeTransparency = 0.3;
+			}
+			const card = make("Frame", { Size: UO(150, 150), BackgroundColor3: BLACK, BackgroundTransparency: 0.35, LayoutOrder: i * 2, Parent: lay });
+			make("UICorner", { CornerRadius: UDim.new(0, 14), Parent: card });
+			const mine = id === me();
+			make("UIStroke", { Color: mine ? COIN : WHITE, Thickness: 2, Transparency: mine ? 0.1 : 0.6, Parent: card });
+			let h = 0;
+			for (const ch of String(runners[id])) h = (h * 31 + ch.charCodeAt(0)) >>> 0;
+			const av = make("Frame", { AnchorPoint: V2(0.5, 0), Position: U2(0.5, 0, 0, 12), Size: UO(80, 80), BackgroundColor3: AVATAR[h % AVATAR.length], Parent: card });
+			make("UICorner", { CornerRadius: UDim.new(0.5, 0), Parent: av });
+			make("UIGradient", { Color: new ColorSequence(WHITE, RGB(150, 150, 150)), Rotation: 90, Parent: av });
+			text(av, String(runners[id]).slice(0, 1).toUpperCase(), US(1, 1), UO(0, 2), 40, WHITE).TextStrokeTransparency = 0.6;
+			text(card, String(runners[id]).toUpperCase(), U2(1, -10, 0, 24), UO(5, 104), 18, mine ? COIN : WHITE);
+			const sc = make("UIScale", { Scale: 0.3, Parent: card });
+			task.delay(0.15 * i, () => tw(sc, 0.45, { Scale: 1 }, "Back"));
+		});
+		splash.Visible = true;
+		splash.GroupTransparency = 0;
+	}
+	function hideSplash() {
+		tw(splash, 0.4, { GroupTransparency: 1 });
+		task.delay(0.4, () => (splash.Visible = false));
+	}
+
+	// ---------------- where you stand while racing: one clear line under the distance
+	const status = make("Frame", { AnchorPoint: V2(0.5, 0), Position: U2(0.5, 0, 0, 128), Size: UO(560, 40), BackgroundColor3: BLACK, BackgroundTransparency: 0.35, Visible: false, ZIndex: 20, Parent: gui });
+	make("UICorner", { CornerRadius: UDim.new(0, 10), Parent: status });
+	const statusStroke = make("UIStroke", { Color: WHITE, Thickness: 2, Transparency: 0.7, ApplyStrokeMode: "Border", Parent: status });
+	const raceL = text(status, "", US(1, 1), null, 21, WHITE);
+	raceL.ZIndex = 21;
+	// the fuel bar gets a red 2X tag while it burns double
+	let drainTag = null;
+	let lastPlace = 0;
+	function placeNow() {
+		const mine = (stats && stats.dist) || 0;
+		let place = 1;
+		for (const id in R.runners) {
+			if (id === me() || R.crashed[id] != null) continue;
+			if ((R.live[id] || 0) > mine) place++;
+		}
+		return place;
+	}
+	RunService.RenderStepped.Connect(() => {
+		const on = !!Game.race && !!R.runners && mode === "run" && !dead && !R.final && !Game.hold;
+		status.Visible = on;
+		if (!drainTag && Game.fuelBar) {
+			drainTag = text(Game.fuelBar, "2X DRAIN", UO(110, 26), U2(1, 58, 0, 0), 20, BAD, LEFT);
+			drainTag.TextStrokeTransparency = 0.4;
+		}
+		if (drainTag) drainTag.Visible = on && Game.behind;
+		if (!on) return;
+		const mine = (stats && stats.dist) || 0;
+		let best = 0, bestName = "";
+		for (const id in R.runners) {
+			if (id === me() || R.crashed[id] != null) continue;
+			if ((R.live[id] || 0) > best) {
+				best = R.live[id] || 0;
+				bestName = String(R.runners[id]).toUpperCase();
+			}
+		}
+		const gap = Math.floor(best - mine);
+		const place = placeNow();
+		const pulse = 0.5 + 0.5 * Math.sin(clock() * 10);
+		const alive = Object.keys(R.runners).filter((id) => id === me() || R.crashed[id] == null).length;
+		const aliveTxt = "   " + alive + " STILL FLYING";
+		if (place === 1) {
+			raceL.Text = "YOU'RE IN 1ST   COINS X" + (Game.raceMult || 1).toFixed(2).replace(/\.?0+$/, "") + aliveTxt;
+			raceL.TextColor3 = COIN;
+			statusStroke.Color = COIN;
+			statusStroke.Transparency = 0.3;
+			status.BackgroundColor3 = BLACK;
+		} else if (gap > 600) {
+			raceL.Text = "FALLING BEHIND! FUEL BURNS 2X   " + bestName + " +" + fmt(gap);
+			raceL.TextColor3 = WHITE;
+			status.BackgroundColor3 = RGB(170 + 60 * pulse, 30, 30);
+			statusStroke.Color = BAD;
+			statusStroke.Transparency = 0;
+		} else if (gap > 400) {
+			raceL.Text = placeName(place) + "   " + bestName + " +" + fmt(gap) + "   STAY WITHIN 600!";
+			raceL.TextColor3 = RGB(255, 210, 80);
+			status.BackgroundColor3 = BLACK;
+			statusStroke.Color = RGB(255, 210, 80);
+			statusStroke.Transparency = 0.2;
+		} else {
+			raceL.Text = placeName(place) + "   " + bestName + " +" + fmt(gap) + aliveTxt;
+			raceL.TextColor3 = WHITE;
+			status.BackgroundColor3 = BLACK;
+			statusStroke.Color = WHITE;
+			statusStroke.Transparency = 0.7;
+		}
+		// overtakes get called out
+		if (lastPlace && place !== lastPlace) {
+			if (place === 1) {
+				banner("YOU TOOK THE LEAD!", COIN, 1.6);
+				sfx("map_clear");
+			} else if (lastPlace === 1) {
+				notify(bestName + " took the lead", BAD);
+				sfx("bad");
+			}
+		}
+		lastPlace = place;
+	});
 
 	// everyone who isn't flying anymore counts, the match is over when that's everyone
 	function checkOver() {
@@ -7270,24 +7535,45 @@ if (DEV) window.__dev = { crash: () => task.spawn(crash, []), data: () => data, 
 	}
 	const rulesHead = row(vp.body, 34, 1);
 	text(rulesHead, "HOW IT WORKS", U2(1, -20, 1, 0), UO(12, 4), 18, DIM, LEFT);
-	for (const line of [
-		"Everyone starts together on the same map, no revives. The last one still flying wins.",
-		"Every second you're in 1st adds to your coin multiplier, up to x3.",
-		"Fall more than 600 studs behind the leader and your fuel burns twice as fast.",
-		"The winner gets 100 coins for every player in the match.",
-	]) {
-		const r = row(vp.body, 0);
-		r.AutomaticSize = "Y";
-		make("UIPadding", { PaddingTop: UDim.new(0, 10), PaddingBottom: UDim.new(0, 10), PaddingLeft: UDim.new(0, 16), PaddingRight: UDim.new(0, 16), Parent: r });
-		const l = text(r, line, US(1, 0), null, 20, RGB(215, 215, 215), LEFT);
-		l.AutomaticSize = "Y";
+	const rules = make("Frame", { Size: U2(1, -10, 0, 0), AutomaticSize: "Y", BackgroundTransparency: 1, LayoutOrder: nextOrder(), Parent: vp.body });
+	make("UIGridLayout", { CellSize: UO(308, 96), CellPadding: UO(8, 8), SortOrder: "LayoutOrder", Parent: rules });
+	[
+		["flag", WHITE, "SAME MAP, SAME START", "everyone starts together on the same seed. no revives"],
+		["skull", BAD, "LAST ONE FLYING WINS", "crash and you're out. the winner gets 100 coins per player"],
+		["coin", COIN, "LEAD = MORE COINS", "every second in 1st adds to your coin multiplier, up to x3"],
+		["fuel", RGB(255, 80, 60), "DON'T FALL BEHIND", "more than 600 studs behind the leader and your fuel burns 2x as fast"],
+	].forEach(([icon, col, head, body], i) => {
+		const t = make("Frame", { BackgroundColor3: BLACK, BackgroundTransparency: 0.4, LayoutOrder: i, Parent: rules });
+		make("UICorner", { CornerRadius: UDim.new(0, 10), Parent: t });
+		make("Frame", { Position: UO(0, 16), Size: UO(4, 64), BackgroundColor3: col, Parent: t });
+		const ic = Icons.make(icon, t, 34);
+		ic.Position = UO(18, 14);
+		text(t, head, U2(1, -70, 0, 24), UO(60, 12), 19, col === WHITE ? WHITE : col, LEFT);
+		const l = text(t, body.toUpperCase(), U2(1, -70, 0, 48), UO(60, 38), 14, RGB(200, 200, 200), LEFT);
 		l.TextWrapped = true;
-	}
+	});
 	vp.onOpen = () => watch(true);
 	vp.onClose = () => {
 		if (!R.inQueue) watch(false);
 	};
 
+	let foundMid = null, lastTick = -1;
+	function lobbyFx() {
+		const p = R.inQueue && pending();
+		if (p && p.mid !== foundMid) {
+			foundMid = p.mid;
+			sfx("map_clear");
+			notify("match found! starting soon", GOOD);
+			statusScale.Scale = 1.4;
+			tw(statusScale, 0.5, { Scale: 1 }, "Back");
+		}
+		if (p) {
+			const left = Math.ceil((p.m.startAt - Online.serverNow()) / 1000);
+			if (left !== lastTick && left <= 5 && left >= 1) sfx("hover", 0.8 + (5 - left) * 0.12);
+			lastTick = left;
+		}
+	}
+	const statusScale = make("UIScale", { Parent: statusL });
 	function refreshPanel() {
 		const q = Game.queueText();
 		statusL.Text = q || "VERSUS";
@@ -7462,6 +7748,7 @@ if (DEV) window.__dev = { crash: () => task.spawn(crash, []), data: () => data, 
 	setInterval(() => {
 		if (mode === "menu") Game.raceButton();
 		if (vp.frame.Visible) refreshPanel();
+		lobbyFx();
 		if (R.inQueue) {
 			host();
 			const p = pending();
@@ -7619,4 +7906,212 @@ if (DEV) window.__dev = { crash: () => task.spawn(crash, []), data: () => data, 
 	const b = button(menu, "SEND MESSAGE", UO(200, 40), U2(1, -216, 1, -56), () => openPanel("broadcast"), 0.3);
 	b.TextSize = 18;
 	b.TextColor3 = COIN;
+})();
+
+// ------------------------------------------------------------------ old version warning
+// every build has its own number, the page checks now and then whether a newer one is online
+(() => {
+	const BUILD = "1790682817";
+	if (BUILD.startsWith("__")) return;
+	const bar = make("TextButton", {
+		AnchorPoint: V2(0.5, 0),
+		Position: U2(0.5, 0, 0, 12),
+		Size: UO(640, 50),
+		BackgroundColor3: RGB(200, 40, 40),
+		BackgroundTransparency: 0.05,
+		Text: "Veraltete Version! Bitte lade die Website neu!",
+		Font: FONT,
+		TextSize: 24,
+		TextColor3: WHITE,
+		ZIndex: 70,
+		Visible: false,
+		Parent: gui,
+	});
+	make("UICorner", { CornerRadius: UDim.new(0, 12), Parent: bar });
+	make("UIStroke", { Color: WHITE, Thickness: 2, Transparency: 0.4, ApplyStrokeMode: "Border", Parent: bar });
+	bar.MouseButton1Click.Connect(() => location.reload());
+	async function check() {
+		try {
+			const r = await fetch("./index.html?check=" + Date.now(), { cache: "no-store" });
+			const m = (await r.text()).match(/game\.js\?v=(\d+)/);
+			if (m && m[1] !== BUILD && Number(m[1]) > Number(BUILD)) {
+				if (!bar.Visible) sfx("bad");
+				bar.Visible = true;
+			}
+		} catch (e) {}
+	}
+	setTimeout(check, 20000);
+	setInterval(check, 90000);
+})();
+
+// ------------------------------------------------------------------ achievements
+// the roblox badges plus a bunch of extra ones. unlocked ones live in your save
+
+(() => {
+	const LIST = [
+		// the roblox badges
+		{ id: "towers", name: "SKYLINE", desc: "Finish Towers", color: WHITE },
+		{ id: "moving", name: "WALL RUNNER", desc: "Finish Walls", color: RGB(230, 140, 70) },
+		{ id: "canyon", name: "CANYON CRAWLER", desc: "Finish Canyon", color: RGB(210, 110, 70) },
+		{ id: "smash", name: "BULL IN A CHINA SHOP", desc: "Finish Smash", color: GEM },
+		{ id: "boss", name: "AIRLINER DOWN", desc: "Beat the first boss", color: BAD },
+		{ id: "turrets", name: "DODGEBALL", desc: "Finish Turrets", color: RGB(255, 90, 90) },
+		{ id: "city", name: "NIGHT SHIFT", desc: "Finish the City", color: RGB(150, 150, 255) },
+		{ id: "sea", name: "SEA LEGS", desc: "Get through the Sea", color: RGB(80, 170, 255) },
+		{ id: "space", name: "HOUSTON", desc: "Make it through Space and fall back to earth", color: RGB(170, 110, 255) },
+		// the big one
+		{ id: "fullcircle", name: "FULL CIRCLE", desc: "Towers to Space and back to Towers in one run. No dying, no fast travel", color: COIN },
+		// runs
+		{ id: "run5k", name: "WARMED UP", desc: "Fly 5,000 studs in one run", color: WHITE },
+		{ id: "run25k", name: "LONG HAUL", desc: "Fly 25,000 studs in one run", color: COIN },
+		{ id: "glass50", name: "GLASS HALF FULL", desc: "Smash 50 glass towers in one run", color: GEM },
+		{ id: "close10", name: "TOO CLOSE", desc: "Get 10 CLOSE! in one run", color: WHITE },
+		{ id: "kills50", name: "DEMOLITION CREW", desc: "Destroy 50 things in one run", color: RGB(255, 150, 70) },
+		{ id: "saved", name: "SAVED BY THE GLASS", desc: "Smash a glass tower with an empty tank", color: GOOD },
+		{ id: "nodamage", name: "SPEEDRUN", desc: "Finish Towers in under 30 seconds", color: COIN },
+		// collecting
+		{ id: "heart", name: "HEARTBREAKER", desc: "Find a heart", color: RGB(255, 100, 130) },
+		{ id: "revive", name: "PHOENIX", desc: "Come back with a revive", color: RGB(255, 100, 130) },
+		{ id: "pickups100", name: "HOARDER", desc: "Pick up 100 gems and keys", color: GEM },
+		{ id: "rich", name: "MONEY BAGS", desc: "Have 10,000 coins at once", color: COIN },
+		{ id: "skins3", name: "FASHION WEEK", desc: "Own 3 skins", color: KEY },
+		{ id: "codes5", name: "HACKERMAN", desc: "Redeem 5 codes", color: GOOD },
+		// long term
+		{ id: "dist100k", name: "FREQUENT FLYER", desc: "Fly 100,000 studs in total", color: WHITE },
+		{ id: "runs100", name: "CRASH TEST DUMMY", desc: "Crash 100 times", color: BAD },
+		{ id: "level10", name: "DOUBLE DIGITS", desc: "Reach level 10", color: RGB(170, 150, 255) },
+		// versus
+		{ id: "vswin", name: "WINNER WINNER", desc: "Win a versus match", color: COIN },
+		{ id: "vs10", name: "RIVALRY", desc: "Play 10 versus matches", color: KEY },
+	];
+	const BY_ID = {};
+	for (const a of LIST) BY_ID[a.id] = a;
+	Game.ACH_TOTAL = LIST.length;
+	const has = (id) => !!(data.ach && data.ach[id]);
+
+	// ---------------- the toast that slides in from the right
+	const toast = make("Frame", {
+		AnchorPoint: V2(1, 0),
+		Position: U2(1, 420, 0, 128),
+		Size: UO(380, 84),
+		BackgroundColor3: RGB(18, 20, 30),
+		BackgroundTransparency: 0.05,
+		ZIndex: 55,
+		Visible: false,
+		Parent: gui,
+	});
+	make("UICorner", { CornerRadius: UDim.new(0, 12), Parent: toast });
+	const tStroke = make("UIStroke", { Color: COIN, Thickness: 2, Transparency: 0.1, ApplyStrokeMode: "Border", Parent: toast });
+	const tIcon = make("Frame", { AnchorPoint: V2(0, 0.5), Position: U2(0, 14, 0.5, 0), Size: UO(52, 52), BackgroundColor3: COIN, ZIndex: 56, Parent: toast });
+	make("UICorner", { CornerRadius: UDim.new(0.5, 0), Parent: tIcon });
+	make("UIGradient", { Color: new ColorSequence(WHITE, RGB(140, 140, 140)), Rotation: 90, Parent: tIcon });
+	const tStar = text(tIcon, "★", US(1, 1), UO(0, 1), 30, BLACK);
+	tStar.ZIndex = 57;
+	const tHead = text(toast, "ACHIEVEMENT UNLOCKED", U2(1, -90, 0, 18), UO(78, 12), 14, COIN, LEFT);
+	const tName = text(toast, "", U2(1, -90, 0, 30), UO(78, 30), 26, WHITE, LEFT);
+	const tDesc = text(toast, "", U2(1, -90, 0, 16), UO(78, 60), 13, DIM, LEFT);
+	for (const l of [tHead, tName, tDesc]) l.ZIndex = 56;
+	const queue = [];
+	let showing = false;
+	async function next() {
+		if (showing || !queue.length) return;
+		showing = true;
+		const a = queue.shift();
+		tName.Text = a.name;
+		tDesc.Text = a.desc.toUpperCase();
+		tIcon.BackgroundColor3 = a.color;
+		tStroke.Color = a.color;
+		toast.Visible = true;
+		toast.Position = U2(1, 420, 0, 128);
+		tw(toast, 0.5, { Position: U2(1, -16, 0, 128) }, "Back");
+		sfx("levelup");
+		await task.wait(4);
+		tw(toast, 0.4, { Position: U2(1, 420, 0, 128) }, "Quad", "In");
+		await task.wait(0.45);
+		toast.Visible = false;
+		showing = false;
+		next();
+	}
+
+	Game.ach = (id) => {
+		if (!BY_ID[id] || has(id)) return;
+		const [ok] = request("ach", id);
+		if (!ok) return;
+		queue.push(BY_ID[id]);
+		next();
+		Game.pushProfile();
+		if (panels.achievements && panels.achievements.frame.Visible) draw();
+	};
+
+	// ---------------- hooks from the run
+	Game.achStage = (old, nw) => {
+		if (["towers", "moving", "canyon", "smash", "turrets", "city", "sea"].includes(old)) Game.ach(old);
+		if (old === "towers" && runTime < 30 && (Game.lastStart || "towers") === "towers" && Game.loop === 0) Game.ach("nodamage");
+	};
+	Game.achLoop = () => {
+		Game.ach("space");
+		// all the way round from the very start, without a revive or a fast travel
+		if ((Game.lastStart || "towers") === "towers" && Game.loop === 0 && stats && (stats.revives || 0) === 0) Game.ach("fullcircle");
+	};
+
+	// ---------------- everything that's just a number to check
+	setInterval(() => {
+		if (!data || !data.stats) return;
+		if (mode === "run" && stats) {
+			if (stats.dist >= 5000) Game.ach("run5k");
+			if (stats.dist >= 25000) Game.ach("run25k");
+			if (stats.glass >= 50) Game.ach("glass50");
+			if ((stats.close || 0) >= 10) Game.ach("close10");
+			if (stats.kills >= 50) Game.ach("kills50");
+			if (stats.bosses >= 1) Game.ach("boss");
+			if (stats.hearts >= 1) Game.ach("heart");
+			if (stats.revives >= 1) Game.ach("revive");
+		}
+		const st = data.stats;
+		if ((st.pickups || 0) >= 100) Game.ach("pickups100");
+		if (data.coins >= 10000) Game.ach("rich");
+		if (Object.keys(data.skins || {}).length >= 3) Game.ach("skins3");
+		if (Object.keys(data.codes || {}).length >= 5) Game.ach("codes5");
+		if ((st.dist || 0) >= 100000) Game.ach("dist100k");
+		if ((st.runs || 0) >= 100) Game.ach("runs100");
+		if ((data.level || 1) >= 10) Game.ach("level10");
+		if ((st.hearts || 0) >= 1) Game.ach("heart");
+		if ((st.revives || 0) >= 1) Game.ach("revive");
+		const R = Game.raceState;
+		if (R && R.final && R.final !== Game._achFinal) {
+			Game._achFinal = R.final;
+			if (R.final[0] && R.final[0].id === Online.myId()) Game.ach("vswin");
+			request("vs_played");
+		}
+		if ((data.vsGames || 0) >= 10) Game.ach("vs10");
+	}, 500);
+
+	// ---------------- the list
+	const ap = panel("achievements", "ACHIEVEMENTS", UO(700, 580));
+	function draw() {
+		for (const c of ap.body.GetChildren()) if (!c.IsA("UIListLayout")) c.Destroy();
+		const got = LIST.filter((a) => has(a.id)).length;
+		const head = row(ap.body, 50, 1);
+		text(head, got + " / " + LIST.length + " UNLOCKED", U2(0.5, 0, 1, 0), UO(8, 0), 22, COIN, LEFT);
+		const [, fill] = xpBar(head, U2(0.5, -20, 0, 12), U2(0.5, 0, 0.5, -6), got / LIST.length, COIN);
+		fill.BackgroundColor3 = COIN;
+		const grid = make("Frame", { Size: U2(1, -10, 0, 0), AutomaticSize: "Y", BackgroundTransparency: 1, LayoutOrder: nextOrder(), Parent: ap.body });
+		make("UIGridLayout", { CellSize: UO(318, 78), CellPadding: UO(8, 8), SortOrder: "LayoutOrder", Parent: grid });
+		// unlocked first, newest on top
+		const sorted = [...LIST].sort((a, b) => (data.ach[b.id] || 0) - (data.ach[a.id] || 0));
+		sorted.forEach((a, i) => {
+			const on = has(a.id);
+			const c = make("Frame", { BackgroundColor3: BLACK, BackgroundTransparency: on ? 0.3 : 0.6, LayoutOrder: i, Parent: grid });
+			make("UICorner", { CornerRadius: UDim.new(0, 10), Parent: c });
+			if (on) make("UIStroke", { Color: a.color, Thickness: 2, Transparency: 0.35, ApplyStrokeMode: "Border", Parent: c });
+			const ic = make("Frame", { AnchorPoint: V2(0, 0.5), Position: U2(0, 12, 0.5, 0), Size: UO(46, 46), BackgroundColor3: on ? a.color : RGB(60, 62, 72), Parent: c });
+			make("UICorner", { CornerRadius: UDim.new(0.5, 0), Parent: ic });
+			if (on) make("UIGradient", { Color: new ColorSequence(WHITE, RGB(140, 140, 140)), Rotation: 90, Parent: ic });
+			text(ic, on ? "★" : "?", US(1, 1), UO(0, 1), 26, on ? BLACK : DIM);
+			text(c, a.name, U2(1, -76, 0, 26), UO(68, 10), 20, on ? WHITE : DIM, LEFT);
+			const d = text(c, a.desc.toUpperCase(), U2(1, -76, 0, 34), UO(68, 36), 13, on ? RGB(200, 200, 200) : RGB(110, 110, 120), LEFT);
+			d.TextWrapped = true;
+		});
+	}
+	ap.onOpen = draw;
 })();

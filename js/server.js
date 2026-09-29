@@ -74,6 +74,7 @@ const CODES = {
 	KEYS: { keys: 1 },
 	MOREKEYS: { keys: 2 },
 	REVIVE: { revives: 1 },
+	GIAN: { revives: 5 },
 	TURRETS: { coins: 100, gems: 10 },
 	UNLOCK: { keys: 5 },
 	FABIO: { coins: 67 },
@@ -135,6 +136,7 @@ const DEFAULT = {
 	lastDaily: 0, lastHourly: 0,
 	codes: {},
 	bought: [],
+	ach: {},
 	boost: 1, boostUntil: 0,
 	starts: {},
 	tutDone: false,
@@ -360,6 +362,16 @@ handlers.use_revive = () => {
 	s.data.revives -= 1;
 	return [true];
 };
+// revive on the spot when you crash, paid with gems. the price depends on the stage, the client shows the same number
+handlers.revive_gems = (price) => {
+	price = Math.floor(Number(price) || 0);
+	if (!s.runStart) return [false, "no run"];
+	if (price < 100 || price > 5000) return [false, "invalid price"];
+	if (s.data.gems < price) return [false, "not enough gems"];
+	s.data.gems -= price;
+	s.data.stats.revives = (s.data.stats.revives || 0) + 1;
+	return [true];
+};
 handlers.buy_revive = (n) => {
 	const PACKS = { 1: 200, 5: 500 };
 	const price = PACKS[n];
@@ -468,6 +480,16 @@ handlers.race_prize = (info) => {
 	if (bonus <= 0) return [true, ""];
 	grant(s.data, { coins: bonus });
 	return [true, "+" + bonus + " coins for your place"];
+};
+handlers.vs_played = () => {
+	s.data.vsGames = (s.data.vsGames || 0) + 1;
+	return [true];
+};
+handlers.ach = (id) => {
+	if (typeof id !== "string" || id.length > 30) return [false, "bad id"];
+	if (s.data.ach[id]) return [false, "already"];
+	s.data.ach[id] = Date.now();
+	return [true];
 };
 handlers.spawn_char = () => [true];
 handlers.despawn_char = () => [true];

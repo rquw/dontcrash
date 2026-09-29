@@ -155,6 +155,20 @@ export class CFrame {
 		const r = this.r;
 		return new Vector3(r[0] * v.X + r[3] * v.Y + r[6] * v.Z, r[1] * v.X + r[4] * v.Y + r[7] * v.Z, r[2] * v.X + r[5] * v.Y + r[8] * v.Z);
 	}
+	// squares the rotation back up, repeated multiplying lets tiny errors pile up until parts stretch
+	_ortho() {
+		const r = this.r;
+		let ax = r[0], ay = r[3], az = r[6];
+		let l = Math.hypot(ax, ay, az) || 1;
+		ax /= l; ay /= l; az /= l;
+		let bx = r[1], by = r[4], bz = r[7];
+		const d = ax * bx + ay * by + az * bz;
+		bx -= d * ax; by -= d * ay; bz -= d * az;
+		l = Math.hypot(bx, by, bz) || 1;
+		bx /= l; by /= l; bz /= l;
+		const cx = ay * bz - az * by, cy = az * bx - ax * bz, cz = ax * by - ay * bx;
+		return new CFrame(this.p.X, this.p.Y, this.p.Z, [ax, bx, cx, ay, by, cy, az, bz, cz]);
+	}
 	Inverse() {
 		const r = this.r;
 		const t = [r[0], r[3], r[6], r[1], r[4], r[7], r[2], r[5], r[8]];
@@ -1006,9 +1020,9 @@ export class Model extends Instance {
 	GetPivot() { return this.PrimaryPart ? this.PrimaryPart.CFrame : this.WorldPivot; }
 	PivotTo(cf) {
 		const old = this.GetPivot();
-		const delta = cf.mul(old.Inverse());
+		const delta = cf.mul(old.Inverse())._ortho();
 		for (const d of this.GetDescendants()) {
-			if (d._isPart && !d._weldedTo) d.CFrame = delta.mul(d.CFrame);
+			if (d._isPart && !d._weldedTo) d.CFrame = d === this.PrimaryPart ? cf : delta.mul(d.CFrame)._ortho();
 		}
 		if (!this.PrimaryPart) this.WorldPivot = cf;
 	}
