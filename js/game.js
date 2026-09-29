@@ -3,9 +3,9 @@ import {
 	camera, Lighting, Instance, workspace, markQueryRoot, Enum, OverlapParams, TweenService, TweenInfo, Debris, UIS, playSfx, loopSound, loadSounds, setSfxVolume,
 	NumberSequence, NumberSequenceKeypoint, NumberRange, ColorSequence, ColorSequenceKeypoint, guiRootInst, setUiScale, setLowGraphics, physicsGround,
 	mergeFloor, start, perf,
-} from "./engine.js";
-import * as Server from "./server.js";
-import * as Online from "./online.js";
+} from "./engine.js?v=1790670138";
+import * as Server from "./server.js?v=1790670138";
+import * as Online from "./online.js?v=1790670138";
 
 const V3 = (x, y, z) => new Vector3(x, y, z);
 const RGB = Color3.fromRGB;

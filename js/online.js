@@ -111,7 +111,7 @@ export async function register(name, password) {
 		auth = null;
 		t = await token();
 	}
-	const j = await post(`${ID}update?key=${FIREBASE.apiKey}`, { idToken: t, email: emailOf(name), password, returnSecureToken: true });
+	const j = await post(`${ID}signUp?key=${FIREBASE.apiKey}`, { idToken: t, email: emailOf(name), password, returnSecureToken: true });
 	take(j, name);
 	return auth.uid;
 }
