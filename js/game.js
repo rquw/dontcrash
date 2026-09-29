@@ -827,8 +827,14 @@ let trackChunks, updateMovers, regenerate, canyonPath, canyonHalfGap, updatePads
 		world.ClearAllChildren();
 		pickups.ClearAllChildren();
 		junk.ClearAllChildren();
-		seed = random(1, 1e6);
-		canyonOffset = Math.random() * 1000;
+		// in versus everyone gets the same map, loops included
+		if (Game.race) {
+			seed = Game.race.seed + (Game.loop || 0) * 7919;
+			canyonOffset = (seed * 37) % 1000;
+		} else {
+			seed = random(1, 1e6);
+			canyonOffset = Math.random() * 1000;
+		}
 		maxRow = -1;
 		lastKey = null;
 		updateChunks(x || 0, z || 0);
@@ -1561,6 +1567,7 @@ const gui = make("Frame", { Name: "Root", Size: US(1, 1), BackgroundTransparency
 		const s = clamp(camera.ViewportSize.Y / 760, 0.45, 1);
 		sc.Scale = s;
 		setUiScale(s);
+		Game._uis = s;
 		gui.Size = US(1 / s, 1 / s);
 	}
 	camera.GetPropertyChangedSignal("ViewportSize").Connect(fit);
@@ -2028,6 +2035,8 @@ let openPanel, closePanels, startRun, toMenu;
 
 	Game.go = async (id) => {
 		if (Game.going) return;
+		Game.race = null;
+		if (Game.leaveQueue) Game.leaveQueue();
 		Game.going = true;
 		const [ok, msg] = request("run_start", id);
 		Game.going = false;
@@ -2047,6 +2056,10 @@ let openPanel, closePanels, startRun, toMenu;
 		return CONFIG.starts.find((st) => st.id === id) || null;
 	};
 	Game.retry = () => {
+		if (Game.race) {
+			Game.versusToggle();
+			return;
+		}
 		const st = Game.retryStart();
 		if (st && Game.topUp("coins", st.coins)) return;
 		Game.go(st ? st.id : "towers");
@@ -2140,6 +2153,10 @@ let openPanel, closePanels, startRun, toMenu;
 	};
 	Game.stripOpen = () => strip.Visible;
 
+	Game.raceBtn = menuButton("VERSUS", "flag", () => {
+		Game.closeStrip();
+		Game.raceClick();
+	});
 	menuButton("SHOP", "bag", () => {
 		Game.closeStrip();
 		openPanel("shop");
@@ -3102,11 +3119,18 @@ let showResults;
 	codeL.TextTransparency = 0.35;
 	Game.codeSpot(codeL, () => results.Visible, (c) => 'USE CODE "' + c + '"', 0.05);
 
+	const rb0 = () => Game.retryBtn;
 	Game.retryBtn = button(results, "RETRY", UO(300, 58), U2(0, 30, 1, -80), () => Game.retry(), 0.1);
 	const retryL = Icons.text(Game.retryBtn, U2(1, -16, 1, 0), UO(8, 0), 18, WHITE);
 	button(results, "MENU", UO(210, 58), U2(1, -240, 1, -80), () => fade(toMenu));
 	RunService.RenderStepped.Connect(() => {
 		if (!results.Visible) return;
+		if (Game.race) {
+			const t = Game.queueText() || "PLAY AGAIN";
+			if (rb0().Text !== t) rb0().Text = t;
+			if (retryL.Text !== "") retryL.Text = "";
+			return;
+		}
 		const st = Game.retryStart();
 		const rb = Game.retryBtn;
 		if (st) {
@@ -3344,7 +3368,7 @@ function myProfile() {
 }
 let pushing = false;
 Game.pushProfile = async () => {
-	if (!data.name || !Online.enabled() || pushing) return;
+	if (!Online.account() || !Online.enabled() || pushing) return;
 	pushing = true;
 	try {
 		await Online.push(myProfile());
@@ -3394,49 +3418,172 @@ function xpBar(parent, size, pos, k, color) {
 	});
 })();
 
-// ---------------- pick a name the first time you open the leaderboard
+// ---------------- accounts: a name and a password, your progress and leaderboard spot come with you
 (() => {
-	const np = panel("name", "PICK A NAME", UO(560, 330));
-	const info = row(np.body, 60, 1);
-	text(info, "THIS IS WHAT EVERYONE SEES ON THE LEADERBOARD. 2 TO 16 CHARACTERS.", U2(1, -20, 1, 0), UO(8, 0), 19, RGB(210, 210, 210), LEFT);
-	const r = row(np.body, 70, 1);
-	const box = make("TextBox", {
-		Size: U2(1, -10, 0, 60),
-		Position: UO(0, 5),
-		BackgroundColor3: BLACK,
-		BackgroundTransparency: 0.2,
-		PlaceholderText: "YOUR NAME",
-		Text: "",
-		Font: FONT,
-		TextSize: 30,
-		TextColor3: WHITE,
-		Parent: r,
-	});
-	make("UIStroke", { Color: LEVEL_C, Thickness: 2, Transparency: 0.2, ApplyStrokeMode: "Border", Parent: box });
-	box.el.maxLength = 16;
-	const br = row(np.body, 70, 1);
-	const go = async () => {
-		const [ok, msg] = request("set_name", box.Text);
-		result(ok, msg);
-		if (!ok) return;
-		Game.pushProfile();
-		const then = np.then;
-		np.then = null;
-		if (then) then();
-		else closePanels();
+	const ap = panel("name", "ACCOUNT", UO(560, 470));
+	let makeNew = true;
+	const info = row(ap.body, 64, 1);
+	const infoL = text(info, "", U2(1, -20, 1, 0), UO(8, 0), 18, RGB(210, 210, 210), LEFT);
+	infoL.TextWrapped = true;
+
+	// the two tabs: new account or log in
+	const tabs = make("Frame", { Size: U2(1, -10, 0, 46), BackgroundTransparency: 1, LayoutOrder: nextOrder(), Parent: ap.body });
+	const tabNew = button(tabs, "CREATE ACCOUNT", U2(0.5, -4, 1, 0), null, () => setTab(true), 0.3);
+	const tabLog = button(tabs, "LOG IN", U2(0.5, -4, 1, 0), U2(0.5, 4, 0, 0), () => setTab(false), 0.3);
+	tabNew.TextSize = 20;
+	tabLog.TextSize = 20;
+
+	function field(ph) {
+		const r = row(ap.body, 62, 1);
+		const box = make("TextBox", {
+			Size: U2(1, -10, 0, 54),
+			Position: UO(0, 4),
+			BackgroundColor3: BLACK,
+			BackgroundTransparency: 0.2,
+			PlaceholderText: ph,
+			Text: "",
+			Font: FONT,
+			TextSize: 26,
+			TextColor3: WHITE,
+			Parent: r,
+		});
+		make("UIStroke", { Color: LEVEL_C, Thickness: 2, Transparency: 0.3, ApplyStrokeMode: "Border", Parent: box });
+		return [r, box];
+	}
+	const [nameR, nameBox] = field("NAME");
+	nameBox.el.maxLength = 16;
+	nameBox.el.autocomplete = "username";
+	const [pwR, pwBox] = field("PASSWORD");
+	pwBox.el.type = "password";
+	pwBox.el.maxLength = 64;
+	const noteR = row(ap.body, 26, 1);
+	const noteL = text(noteR, "", U2(1, -20, 1, 0), UO(8, 0), 15, DIM, LEFT);
+
+	const br = row(ap.body, 70, 1);
+	let busy = false;
+	const goBtn = button(br, "", U2(1, -10, 0, 60), UO(0, 5), () => go(), 0.05);
+	goBtn.TextColor3 = GOOD;
+
+	// logged in: who you are and a way out
+	const outR = row(ap.body, 70, 1);
+	const outBtn = button(outR, "LOG OUT", U2(1, -10, 0, 60), UO(0, 5), () => {
+		Online.logout();
+		notify("logged out", WHITE);
+		sfx("click");
+		refresh();
+	}, 0.3);
+	outBtn.TextColor3 = BAD;
+
+	function setTab(n) {
+		makeNew = n;
+		sfx("click");
+		refresh();
+	}
+	function refresh() {
+		const acc = Online.account();
+		const inForm = !acc;
+		tabs.Visible = inForm;
+		nameR.Visible = inForm;
+		pwR.Visible = inForm;
+		noteR.Visible = inForm;
+		br.Visible = inForm;
+		outR.Visible = !inForm;
+		if (acc) {
+			infoL.Text = "LOGGED IN AS " + acc.toUpperCase() + ". YOUR PROGRESS IS SAVED TO THIS ACCOUNT.";
+			return;
+		}
+		infoL.Text = makeNew
+			? "MAKE AN ACCOUNT TO GET ON THE LEADERBOARD, PLAY VERSUS AND KEEP YOUR PROGRESS ON EVERY DEVICE."
+			: "LOG IN AND YOUR PROGRESS FROM THAT ACCOUNT LOADS ON THIS DEVICE.";
+		noteL.Text = makeNew ? "3 TO 16 LETTERS, NUMBERS OR _. THERE'S NO PASSWORD RESET, DON'T FORGET IT." : "";
+		goBtn.Text = makeNew ? "CREATE ACCOUNT" : "LOG IN";
+		tabNew.SetAttribute("Base", makeNew ? 0.05 : 0.55);
+		tabNew.BackgroundTransparency = makeNew ? 0.05 : 0.55;
+		tabLog.SetAttribute("Base", makeNew ? 0.55 : 0.05);
+		tabLog.BackgroundTransparency = makeNew ? 0.55 : 0.05;
+		tabNew.TextColor3 = makeNew ? WHITE : DIM;
+		tabLog.TextColor3 = makeNew ? DIM : WHITE;
+	}
+
+	async function go() {
+		if (busy) return;
+		busy = true;
+		goBtn.Text = "...";
+		try {
+			if (makeNew) {
+				await Online.register(nameBox.Text, pwBox.Text);
+				request("set_name", Online.account());
+				await Game.pushProfile();
+				Game.cloudSave(true);
+				notify("account created, hi " + Online.account() + "!", GOOD);
+			} else {
+				await Online.login(nameBox.Text, pwBox.Text);
+				await Game.cloudLoad(true);
+				notify("welcome back " + Online.account() + "!", GOOD);
+			}
+			sfx("good");
+			pwBox.Text = "";
+			busy = false;
+			refresh();
+			const then = ap.then;
+			ap.then = null;
+			if (then) then();
+			else closePanels();
+			return;
+		} catch (e) {
+			notify(e.message || "something went wrong", BAD);
+			sfx("bad");
+		}
+		busy = false;
+		refresh();
+	}
+	for (const b of [nameBox, pwBox]) {
+		b.el.addEventListener("keydown", (e) => {
+			if (e.key === "Enter") go();
+		});
+	}
+	ap.onOpen = () => {
+		if (!Online.account()) makeNew = !data.name ? true : makeNew;
+		nameBox.Text = Online.account() || data.name || "";
+		refresh();
+		if (!Online.account()) task.delay(0.1, () => (nameBox.Text ? pwBox : nameBox).CaptureFocus());
 	};
-	box.el.addEventListener("keydown", (e) => {
-		if (e.key === "Enter") go();
-	});
-	button(br, "LET'S GO", U2(1, -10, 0, 60), UO(0, 5), go, 0.05).TextColor3 = GOOD;
-	np.onOpen = () => {
-		box.Text = data.name || "";
-		task.delay(0.1, () => box.CaptureFocus());
-	};
+	// kept the old name so everything that asked for a name now asks for an account
 	Game.askName = (then) => {
-		np.then = then;
+		ap.then = then;
 		openPanel("name");
 	};
+	Game.openAccount = () => {
+		ap.then = null;
+		openPanel("name");
+	};
+
+	// every save goes to your account a few seconds later, and a newer one from the account wins when you open the game
+	let saveT = null;
+	Game.cloudSave = (now) => {
+		if (!Online.account()) return;
+		clearTimeout(saveT);
+		saveT = setTimeout(() => {
+			Online.storeSave(Server.exportData()).catch((e) => console.warn(e));
+		}, now ? 0 : 4000);
+	};
+	Server.setOnSave(() => Game.cloudSave());
+	Game.cloudLoad = async (force) => {
+		if (!Online.account()) return false;
+		const d = await Online.loadSave();
+		if (!d) {
+			// first time on this account: what's on this device becomes the account's save
+			request("set_name", Online.account());
+			Game.cloudSave(true);
+			return false;
+		}
+		if (!force && (d.savedAt || 0) <= (data.savedAt || 0)) return false;
+		Server.importData(d);
+		request("get");
+		if (Game.refreshLevel) Game.refreshLevel();
+		return true;
+	};
+	task.delay(1, () => Game.cloudLoad(false).catch((e) => console.warn(e)));
 })();
 
 // ---------------- leaderboard
@@ -3503,7 +3650,11 @@ function xpBar(parent, size, pos, k, color) {
 			if (isMe) found = true;
 			entryRow(e, i + 1, isMe);
 		});
-		if (!found && data.name) {
+		if (!Online.account()) {
+			const r = row(lb.body, 64, 1);
+			r.LayoutOrder = -1;
+			button(r, "MAKE AN ACCOUNT TO GET ON HERE", U2(1, -10, 0, 54), UO(0, 5), () => Game.askName(() => openPanel("leaderboard")), 0.1).TextColor3 = GOOD;
+		} else if (!found) {
 			const gap = row(lb.body, 20, 1);
 			text(gap, "...", US(1, 1), null, 18, DIM);
 			entryRow(myProfile(), list.length + 1, true);
@@ -3513,8 +3664,7 @@ function xpBar(parent, size, pos, k, color) {
 	lb.onOpen = load;
 	Game.openLeaderboard = () => {
 		Game.closeStrip();
-		if (!data.name) Game.askName(() => openPanel("leaderboard"));
-		else openPanel("leaderboard");
+		openPanel("leaderboard");
 	};
 	Game.rankOf = (id) => {
 		const i = list.findIndex((e) => e.id === id);
@@ -3594,7 +3744,7 @@ function xpBar(parent, size, pos, k, color) {
 		});
 		if (me) {
 			const r = row(pp.body, 64, 1);
-			button(r, "CHANGE NAME", UO(220, 50), UO(0, 7), () => Game.askName(() => Game.showProfile(myProfile(), true)), 0.3);
+			button(r, Online.account() ? "ACCOUNT" : "MAKE AN ACCOUNT", UO(260, 50), UO(0, 7), () => Game.openAccount(), 0.3);
 		}
 		if (!pp.frame.Visible || pp.closing) openPanel("profile");
 		else pp.body.CanvasPosition = V2(0, 0);
@@ -5622,12 +5772,13 @@ async function crash(hits) {
 		Game.revive(true);
 		return;
 	}
-	if (await Game.offerRevive(my)) {
+	if (!Game.race && (await Game.offerRevive(my))) {
 		Game.revive();
 		return;
 	}
 	if (runId !== my) return;
 	stats.loop = Game.loop;
+	stats.raceMult = Game.race ? Game.raceMult || 1 : 1;
 	const [ok, award] = request("run_end", stats);
 	if (ok) Game.pushProfile();
 	if (runId !== my) return;
@@ -5655,6 +5806,7 @@ Game.quitRun = () => {
 	tw(topBox, 0.4, { BackgroundTransparency: 1 });
 	const my = runId;
 	stats.loop = Game.loop;
+	stats.raceMult = Game.race ? Game.raceMult || 1 : 1;
 	const [ok, award] = request("run_end", stats);
 	if (ok) Game.pushProfile();
 	if (runId !== my) return;
@@ -5789,7 +5941,7 @@ startRun = (startId) => {
 	Game.stopTut();
 	Game.introEnd = null;
 	Game.shiftStages(0);
-	if ((startId == null || startId === "towers") && !data.tutDone) {
+	if ((startId == null || startId === "towers") && !data.tutDone && !Game.race) {
 		Game.introEnd = Infinity;
 		Game.startTut();
 	}
@@ -5802,6 +5954,7 @@ startRun = (startId) => {
 
 toMenu = () => {
 	runId++;
+	Game.race = null;
 	Game.cam.last = null;
 	Game.cam.blend = null;
 	setVignette(0);
@@ -5902,7 +6055,7 @@ function step(dt) {
 
 	if (!boss && !Game.boss2.active && !cheat) {
 		const before = fuel;
-		fuel = Math.max(0, fuel - (FUEL.drain + (nitro ? FUEL.nitro : 0)) * dt);
+		fuel = Math.max(0, fuel - (FUEL.drain + (nitro ? FUEL.nitro : 0)) * dt * (Game.race && Game.behind ? 2 : 1));
 		if (before > 0 && fuel <= 0) {
 			sfx("fuel_out");
 			popup("OUT OF FUEL", BAD);
@@ -6071,8 +6224,10 @@ function step(dt) {
 	if (nitroK > 0.2) fx.push("NITRO");
 	if (fuel <= 0) fx.push(stage === "beyond" ? "NO FUEL, BOOM IN " + Math.max(0, 3 - Game.voidT).toFixed(1) : "OUT OF FUEL");
 	if (buff.immortal > 0) fx.push("IMMORTAL " + buff.immortal.toFixed(1));
+	if (Game.race && Game.leading) fx.push("1ST, COINS X" + (Game.raceMult || 1).toFixed(2).replace(/\.?0+$/, ""));
+	if (Game.race && Game.behind) fx.push("FALLING BEHIND, FUEL BURNS 2X");
 	effectL.Text = fx.join("     ");
-	effectL.TextColor3 = fuel <= 0 ? BAD : COIN;
+	effectL.TextColor3 = fuel <= 0 || (Game.race && Game.behind) ? BAD : COIN;
 }
 
 // dev only (?dev in the url): L skips ahead, O toggles god mode
@@ -6195,7 +6350,7 @@ RunService.RenderStepped.Connect((dt) => {
 	if (!dead) step(dt);
 
 	let cam;
-	if (dead) cam = CFrame.lookAt(pos.add(V3(0, 35, 80)), pos.add(V3(0, 15, -20)));
+	if (dead) cam = (Game.specCam && Game.specCam()) || CFrame.lookAt(pos.add(V3(0, 35, 80)), pos.add(V3(0, 15, -20)));
 	else if (Game.flow.cam) {
 		cam = Game.flow.cam;
 		camera.FieldOfView += (settings.fov - camera.FieldOfView) * Math.min(1, dt * 3);
@@ -6259,7 +6414,7 @@ task.spawn(async () => {
 	pauseBtn.TextSize = 24;
 	pauseBtn.el.style.pointerEvents = "auto";
 
-	const canPause = () => mode === "run" && !dead && !Game.flow.cine && !Game.hold;
+	const canPause = () => mode === "run" && !dead && !Game.flow.cine && !Game.hold && !Game.race;
 
 	Game.setPause = (on) => {
 		if (on) {
@@ -6432,4 +6587,590 @@ applySettings();
 toMenu();
 start();
 document.getElementById("boot").remove();
-if (DEV) window.__dev = { crash: () => task.spawn(crash, []), data: () => data, stats: () => stats, shot: () => Game.flow.startApproach(), state: () => [mode, curStage, Game.flow.cine && Game.flow.cine.kind, Math.round(-pos.Z)] };
+if (DEV) window.__dev = { crash: () => task.spawn(crash, []), data: () => data, stats: () => stats, vs: () => Game.versusToggle(), dbg: () => [mode, dead, !!stats, !!planeMain, planeMain && !!planeMain.Parent, Game.raceState.mid], race: () => [Game.race, Game.raceState.inQueue, Game.queueText(), JSON.stringify(Game.raceState.final)], shot: () => Game.flow.startApproach(), state: () => [mode, curStage, Game.flow.cine && Game.flow.cine.kind, Math.round(-pos.Z)] };
+
+// ------------------------------------------------------------------ versus
+// same idea as roblox: queue up, everyone starts on the same map, farthest wins.
+// no game server here, so firebase is the go-between: the queue, the match and everyone's live position
+// all sit in the database and every player streams them
+
+(() => {
+	const RACE_WAIT = 10000;
+	const STALE = 10000;
+	const R = { lobby: {}, matches: {}, inQueue: false, live: {}, crashed: {}, runners: null, final: null, lead: 0 };
+	Game.raceState = R;
+	Game.raceMult = 1;
+	let stopLobby = null, stopMatches = null, stopLive = null, beatT = null;
+	let joined = 0;
+
+	const me = () => Online.myId();
+	const fresh = () => {
+		const now = Online.serverNow();
+		const list = [];
+		for (const id in R.lobby) {
+			const e = R.lobby[id];
+			if (e && typeof e.at === "number" && now - e.at < STALE) list.push({ id, name: String(e.name || "?"), joined: e.joined || e.at });
+		}
+		list.sort((a, b) => a.joined - b.joined || (a.id < b.id ? -1 : 1));
+		return list;
+	};
+	// the match you're in that hasn't started yet
+	function pending() {
+		const now = Online.serverNow();
+		let best = null;
+		for (const mid in R.matches) {
+			const m = R.matches[mid];
+			if (!m || !m.runners || !m.runners[me()] || typeof m.startAt !== "number") continue;
+			if (m.startAt < now - 3000) continue;
+			if (!best || m.startAt < best.m.startAt) best = { mid, m };
+		}
+		return best;
+	}
+
+	// ---------------- other planes
+	const ghosts = new Map();
+	const tags = make("Frame", { Size: US(1, 1), BackgroundTransparency: 1, ZIndex: 2, Parent: gui });
+	tags.el.style.pointerEvents = "none";
+	function dropGhost(id) {
+		const g = ghosts.get(id);
+		if (!g) return;
+		g.model.Destroy();
+		g.tag.Destroy();
+		ghosts.delete(id);
+	}
+	function makeGhost(id, skin) {
+		dropGhost(id);
+		const [model, main, parts] = Game.makePlane(skin, null, true);
+		for (const p of parts) {
+			p.Transparency = Math.max(p.Transparency, 0.55);
+			p.CastShadow = false;
+		}
+		model.Parent = null;
+		const name = (R.runners && R.runners[id]) || "?";
+		const tag = text(tags, String(name).toUpperCase(), UO(220, 26), UO(0, 0), 18, WHITE);
+		tag.AnchorPoint = V2(0.5, 1);
+		tag.TextStrokeTransparency = 0.4;
+		tag.Visible = false;
+		const g = { model, main, skin, at: 0, vel: Vector3.zero, pos: null, tag };
+		ghosts.set(id, g);
+		return g;
+	}
+	function ghostBoom(at) {
+		const b = Instance.new("Part");
+		b.Shape = "Ball";
+		b.Material = "Neon";
+		b.Color = RGB(255, 130, 40);
+		b.Size = Vector3.one.mul(4);
+		b.Anchored = true;
+		b.CanCollide = false;
+		b.CanQuery = false;
+		b.CastShadow = false;
+		b.Position = at;
+		b._uniqueMat = true;
+		b.Parent = junk;
+		tw(b, 0.7, { Size: Vector3.one.mul(45), Transparency: 1 });
+		Debris.AddItem(b, 0.8);
+	}
+
+	// ---------------- live positions of the match
+	function onLive(all) {
+		if (!Game.race || !all) return;
+		const now = clock();
+		for (const id in all) {
+			if (id === me()) continue;
+			const v = all[id];
+			if (!v) continue;
+			if (v.dead) {
+				if (R.crashed[id] == null) {
+					R.crashed[id] = v.d || R.live[id] || 0;
+					const g = ghosts.get(id);
+					if (g && g.model.Parent) ghostBoom(g.main.Position);
+					const name = R.runners && R.runners[id];
+					if (name) notify(name + " crashed!", BAD);
+					dropGhost(id);
+					checkOver();
+				}
+				continue;
+			}
+			let g = ghosts.get(id);
+			if (!g || g.skin !== v.s) g = makeGhost(id, v.s || "Default");
+			const p = V3(v.x, v.y, v.z);
+			if (g.pos && g.loop === v.l && now - g.at < 0.6) g.vel = p.sub(g.pos).mul(1 / Math.max(now - g.at, 0.03));
+			else g.vel = Vector3.zero;
+			g.pos = p;
+			g.rot = CFrame.fromEulerAnglesXYZ(v.rx || 0, v.ry || 0, v.rz || 0);
+			g.at = now;
+			g.seen = Online.serverNow();
+			g.loop = v.l || 0;
+			R.live[id] = v.d || 0;
+		}
+	}
+
+	// ---------------- start, finish
+	function go(mid, m) {
+		leaveQueue(true);
+		R.runners = m.runners;
+		R.mid = mid;
+		R.final = null;
+		R.crashed = {};
+		R.live = {};
+		R.lead = 0;
+		R.started = Online.serverNow();
+		R.prized = false;
+		Game.raceMult = 1;
+		for (const id of [...ghosts.keys()]) dropGhost(id);
+		spec.id = null;
+		specBar.Visible = false;
+		Game.closeStrip();
+		closePanels();
+		request("run_start", "towers");
+		Game.race = { seed: m.seed, mid };
+		fade(() => {
+			Game.lastStart = "towers";
+			startRun("towers");
+			Game.hold = true;
+			const my = runId;
+			(async () => {
+				for (let i = 3; i >= 1; i--) {
+					if (runId !== my) return;
+					banner(String(i), WHITE, 0.8);
+					sfx("hover", 0.7 + (3 - i) * 0.2);
+					await task.wait(1);
+				}
+				if (runId !== my) return;
+				Game.hold = false;
+				banner("GO!", GOOD, 1);
+				sfx("good");
+			})();
+		});
+		if (stopLive) stopLive();
+		stopLive = Online.listen(`matches/${mid}/live`, onLive);
+	}
+
+	// everyone who isn't flying anymore counts, the match is over when that's everyone
+	function checkOver() {
+		if (!R.runners || R.final || !Game.race) return;
+		const now = Online.serverNow();
+		for (const id in R.runners) {
+			if (id === me()) {
+				if (!(dead && mode === "run")) return;
+				continue;
+			}
+			if (R.crashed[id] != null) continue;
+			const g = ghosts.get(id);
+			const quiet = g ? now - (g.seen || 0) > STALE : now - R.started > 15000;
+			if (!quiet) return;
+			R.crashed[id] = R.live[id] || 0;
+			dropGhost(id);
+		}
+		finish();
+	}
+	function finish() {
+		const list = Object.keys(R.runners).map((id) => ({ id, name: R.runners[id], dist: id === me() ? (stats && stats.dist) || 0 : R.crashed[id] || 0 }));
+		list.sort((a, b) => b.dist - a.dist);
+		R.final = list;
+		const place = list.findIndex((e) => e.id === me()) + 1;
+		if (!R.prized) {
+			R.prized = true;
+			const [ok, msg] = request("race_prize", { n: list.length, place });
+			if (ok && msg) notify(msg, COIN);
+		}
+		const names = ["1ST", "2ND", "3RD"];
+		const p = names[place - 1] || place + "TH";
+		stopSpec();
+		if (place === 1) sfx("record");
+		if (mode === "run" && results.Visible) Game.resultsTitle(place === 1 ? "YOU WON!" : p + " PLACE", place === 1 ? COIN : WHITE);
+		else notify("versus over, you got " + p.toLowerCase(), place === 1 ? COIN : WHITE);
+	}
+
+	// ---------------- queue
+	async function beat() {
+		if (!R.inQueue) return;
+		try {
+			await Online.put(`queue/${me()}`, { name: Online.account(), at: Online.SERVER_TIME, joined });
+		} catch (e) {
+			console.warn(e);
+		}
+	}
+	async function joinQueue() {
+		try {
+			await Online.token();
+			await Online.syncClock();
+			joined = Math.round(Online.serverNow());
+			R.inQueue = true;
+			await beat();
+		} catch (e) {
+			R.inQueue = false;
+			notify("couldn't connect to versus", BAD);
+			sfx("bad");
+			return false;
+		}
+		clearInterval(beatT);
+		beatT = setInterval(beat, 3000);
+		return true;
+	}
+	function leaveQueue(quiet) {
+		if (!R.inQueue) return;
+		R.inQueue = false;
+		clearInterval(beatT);
+		if (me()) Online.del(`queue/${me()}`).catch(() => {});
+		if (!quiet) Game.raceButton();
+	}
+	Game.leaveQueue = () => leaveQueue(false);
+
+	// the oldest one in the queue sets the match up and keeps the list current until it locks
+	let hosting = null;
+	async function host() {
+		const list = fresh();
+		if (!R.inQueue || list.length < 2 || list[0].id !== me()) return;
+		const now = Online.serverNow();
+		const runners = {};
+		for (const e of list) runners[e.id] = e.name;
+		if (hosting && R.matches[hosting] && R.matches[hosting].startAt > now) {
+			const m = R.matches[hosting];
+			if (m.startAt - now > 2500 && Object.keys(m.runners || {}).sort().join() !== Object.keys(runners).sort().join()) {
+				Online.put(`matches/${hosting}/runners`, runners).catch(() => {});
+			}
+			return;
+		}
+		if (pending()) return;
+		const mid = me() + "_" + Math.round(now);
+		hosting = mid;
+		const m = { host: me(), created: Online.SERVER_TIME, startAt: Math.round(now + RACE_WAIT), seed: random(1, 1e6), runners };
+		R.matches[mid] = { ...m, created: now };
+		try {
+			await Online.put(`matches/${mid}`, m);
+		} catch (e) {
+			console.warn(e);
+		}
+	}
+
+	// streams run while the versus panel or the queue needs them
+	function watch(on) {
+		if (on && !stopLobby) {
+			stopLobby = Online.listen("queue", (v) => (R.lobby = v || {}));
+			stopMatches = Online.listen("matches", (v) => (R.matches = v || {}), 'orderBy="created"&limitToLast=8');
+			Online.syncClock().catch(() => {});
+		} else if (!on && stopLobby) {
+			stopLobby();
+			stopMatches();
+			stopLobby = stopMatches = null;
+		}
+	}
+
+	// versus unlocks once you've made it through the canyon
+	const unlocked = () => {
+		const c = STAGE_BY_ID.canyon;
+		return data.best >= c.start + c.len;
+	};
+	Game.raceClick = () => {
+		if (!unlocked()) {
+			notify("Complete Canyon to be able to race others!", BAD);
+			sfx("bad");
+			return;
+		}
+		if (!Online.account()) {
+			Game.askName(() => openPanel("versus"));
+			return;
+		}
+		openPanel("versus");
+	};
+	Game.versusToggle = async () => {
+		if (R.inQueue) {
+			leaveQueue(false);
+			return;
+		}
+		if (!Online.account()) {
+			Game.askName(() => openPanel("versus"));
+			return;
+		}
+		watch(true);
+		if (await joinQueue()) sfx("good");
+		Game.raceButton();
+	};
+
+	Game.queueText = () => {
+		if (!R.inQueue) return null;
+		const p = pending();
+		if (p) return "STARTS IN " + Math.max(0, Math.ceil((p.m.startAt - Online.serverNow()) / 1000));
+		return "QUEUED.. (" + Math.max(1, fresh().length) + " WAITING)";
+	};
+	Game.raceButton = () => {
+		const b = Game.raceBtn;
+		if (!b) return;
+		const open = unlocked();
+		const n = fresh().length;
+		let t;
+		if (!open) t = "VERSUS (LOCKED)";
+		else if (R.inQueue) t = Game.queueText();
+		else if (n > 0 && stopLobby) t = "VERSUS (" + n + " WAITING)";
+		else t = "VERSUS";
+		if (b.Text !== t) b.Text = t;
+		b.TextColor3 = open ? WHITE : DIM;
+		b.TextSize = t.length > 12 ? 21 : 28;
+	};
+
+	// ---------------- the versus window
+	const vp = panel("versus", "VERSUS");
+	const statusR = row(vp.body, 92, 1);
+	const statusL = text(statusR, "", U2(1, -20, 0, 46), UO(10, 6), 38, WHITE);
+	const subL = text(statusR, "", U2(1, -20, 0, 26), UO(10, 56), 20, DIM);
+	const joinR = row(vp.body, 66, 1);
+	const joinBtn = button(joinR, "JOIN", UO(320, 58), U2(0.5, -160, 0, 4), () => Game.versusToggle(), 0.1);
+	const waitHead = row(vp.body, 34, 1);
+	text(waitHead, "WAITING", U2(1, -20, 1, 0), UO(12, 4), 18, DIM, LEFT);
+	const waitR = row(vp.body, 0);
+	waitR.AutomaticSize = "Y";
+	make("UIPadding", { PaddingTop: UDim.new(0, 10), PaddingBottom: UDim.new(0, 10), PaddingLeft: UDim.new(0, 16), PaddingRight: UDim.new(0, 16), Parent: waitR });
+	const waitL = text(waitR, "nobody yet", U2(1, 0, 0, 26), null, 22, DIM, LEFT);
+	const cards = make("Frame", { Size: US(1, 0), AutomaticSize: "Y", BackgroundTransparency: 1, Parent: waitR });
+	make("UIGridLayout", { CellSize: UO(112, 136), CellPadding: UO(10, 10), SortOrder: "LayoutOrder", Parent: cards });
+	let shownKey = "";
+	const AVATAR = [RGB(255, 90, 90), RGB(255, 170, 60), RGB(90, 200, 120), RGB(80, 170, 255), RGB(170, 110, 255), RGB(255, 100, 200)];
+	function drawCards(list) {
+		const key = list.map((e) => e.id).join(",");
+		if (key === shownKey) return;
+		shownKey = key;
+		for (const c of cards.GetChildren()) if (c.ClassName === "Frame") c.Destroy();
+		list.forEach((e, i) => {
+			const mine = e.id === me();
+			const card = make("Frame", { BackgroundColor3: BLACK, BackgroundTransparency: 0.35, LayoutOrder: mine ? 0 : i + 1, Parent: cards });
+			make("UIStroke", { Color: mine ? COIN : WHITE, Thickness: 2, Transparency: mine ? 0.2 : 0.7, Parent: card });
+			// no avatars on the web, so a coloured circle with your first letter
+			let h = 0;
+			for (const ch of e.name) h = (h * 31 + ch.charCodeAt(0)) >>> 0;
+			const av = make("Frame", { AnchorPoint: V2(0.5, 0), Position: U2(0.5, 0, 0, 8), Size: UO(88, 88), BackgroundColor3: AVATAR[h % AVATAR.length], Parent: card });
+			make("UICorner", { CornerRadius: UDim.new(0.5, 0), Parent: av });
+			make("UIGradient", { Color: new ColorSequence(WHITE, RGB(150, 150, 150)), Rotation: 90, Parent: av });
+			text(av, e.name.slice(0, 1).toUpperCase(), US(1, 1), UO(0, 2), 46, WHITE).TextStrokeTransparency = 0.6;
+			text(card, e.name.toUpperCase(), U2(1, -8, 0, 22), UO(4, 102), 17, mine ? COIN : WHITE);
+			const sc = make("UIScale", { Scale: 0.5, Parent: card });
+			tw(sc, 0.35, { Scale: 1 }, "Back");
+		});
+	}
+	const rulesHead = row(vp.body, 34, 1);
+	text(rulesHead, "HOW IT WORKS", U2(1, -20, 1, 0), UO(12, 4), 18, DIM, LEFT);
+	for (const line of [
+		"Everyone starts together on the same map. Farthest distance wins, no revives.",
+		"Every second you're in 1st adds to your coin multiplier, up to x3.",
+		"Fall more than 600 studs behind the leader and your fuel burns twice as fast.",
+		"The winner gets 100 coins for every player in the match.",
+	]) {
+		const r = row(vp.body, 0);
+		r.AutomaticSize = "Y";
+		make("UIPadding", { PaddingTop: UDim.new(0, 10), PaddingBottom: UDim.new(0, 10), PaddingLeft: UDim.new(0, 16), PaddingRight: UDim.new(0, 16), Parent: r });
+		const l = text(r, line, US(1, 0), null, 20, RGB(215, 215, 215), LEFT);
+		l.AutomaticSize = "Y";
+		l.TextWrapped = true;
+	}
+	vp.onOpen = () => watch(true);
+	vp.onClose = () => {
+		if (!R.inQueue) watch(false);
+	};
+
+	function refreshPanel() {
+		const q = Game.queueText();
+		statusL.Text = q || "VERSUS";
+		statusL.TextColor3 = q ? COIN : WHITE;
+		const list = fresh();
+		const others = list.filter((e) => e.id !== me()).length;
+		if (R.inQueue) subL.Text = pending() ? "others can still join" : "starts as soon as someone else joins";
+		else subL.Text = others > 0 ? (others === 1 ? "1 player is" : others + " players are") + " waiting, join them!" : "nobody's waiting yet, be the first";
+		joinBtn.Text = R.inQueue ? "LEAVE QUEUE" : "JOIN";
+		waitL.Visible = list.length === 0;
+		drawCards(list);
+	}
+
+	// ---------------- live standings while you race
+	const board = make("Frame", {
+		AnchorPoint: V2(1, 0.5),
+		Position: U2(1, -16, 0.5, 0),
+		Size: UO(300, 44),
+		BackgroundColor3: BLACK,
+		BackgroundTransparency: T.hud,
+		Visible: false,
+		ZIndex: 20,
+		Parent: gui,
+	});
+	const boardTitle = text(board, "VERSUS", U2(1, -24, 0, 34), UO(12, 4), 24, COIN, LEFT);
+	const boardRows = [];
+	function refreshBoard() {
+		const rows = [];
+		for (const id in R.runners) {
+			const mine = id === me();
+			let d, gone;
+			if (R.final) {
+				const f = R.final.find((e) => e.id === id);
+				d = f ? f.dist : 0;
+				gone = true;
+			} else if (mine) {
+				d = (stats && stats.dist) || 0;
+				gone = dead;
+			} else {
+				d = R.crashed[id] != null ? R.crashed[id] : R.live[id] || 0;
+				gone = R.crashed[id] != null;
+			}
+			rows.push({ name: R.runners[id], dist: d || 0, gone, mine });
+		}
+		rows.sort((a, b) => b.dist - a.dist);
+		boardTitle.Text = R.final ? "MATCH OVER" : "VERSUS";
+		rows.forEach((r, i) => {
+			let br = boardRows[i];
+			if (!br) {
+				br = {
+					name: text(board, "", U2(1, -156, 0, 28), UO(40, 40 + i * 30), 20, WHITE, LEFT),
+					dist: text(board, "", UO(110, 28), U2(1, -122, 0, 40 + i * 30), 20, WHITE, RIGHT),
+					skull: Icons.make("skull", board, 20),
+				};
+				br.skull.AnchorPoint = V2(0, 0.5);
+				br.skull.Position = UO(12, 40 + i * 30 + 14);
+				boardRows[i] = br;
+			}
+			const col = r.mine ? COIN : r.gone && !R.final ? DIM : WHITE;
+			br.name.Text = i + 1 + "  " + String(r.name).toUpperCase();
+			br.dist.Text = fmt(r.dist);
+			br.name.TextColor3 = col;
+			br.dist.TextColor3 = col;
+			br.name.Visible = br.dist.Visible = true;
+			br.skull.Visible = r.gone;
+		});
+		for (let i = rows.length; i < boardRows.length; i++) {
+			boardRows[i].name.Visible = boardRows[i].dist.Visible = boardRows[i].skull.Visible = false;
+		}
+		board.Size = UO(300, 48 + rows.length * 30);
+	}
+
+	// ---------------- spectating after you crash
+	const spec = { id: null };
+	const specBar = make("Frame", {
+		AnchorPoint: V2(0.5, 1),
+		Position: U2(0.5, 0, 1, -20),
+		Size: UO(560, 64),
+		BackgroundColor3: BLACK,
+		BackgroundTransparency: T.hud,
+		Visible: false,
+		ZIndex: 25,
+		Parent: gui,
+	});
+	const specL = text(specBar, "", U2(1, -250, 1, 0), UO(66, 0), 24, WHITE);
+	const aliveOthers = () => Object.keys(R.runners || {}).filter((id) => id !== me() && R.crashed[id] == null && ghosts.has(id));
+	function stopSpec() {
+		if (!spec.id) return;
+		spec.id = null;
+		specBar.Visible = false;
+		if (mode === "run" && dead) results.Visible = true;
+	}
+	function cycle(dir) {
+		const list = aliveOthers();
+		if (!list.length) return stopSpec();
+		const at = list.indexOf(spec.id);
+		spec.id = list[(((at < 0 ? 0 : at) + dir) % list.length + list.length) % list.length];
+		specL.Text = "SPECTATING  " + String(R.runners[spec.id]).toUpperCase();
+	}
+	button(specBar, "<", UO(50, 48), UO(8, 8), () => cycle(-1));
+	button(specBar, ">", UO(50, 48), U2(1, -178, 0, 8), () => cycle(1));
+	button(specBar, "BACK", UO(110, 48), U2(1, -118, 0, 8), stopSpec);
+	const specBtn = button(gui, "SPECTATE", UO(250, 52), U2(0.5, -125, 1, -66), () => {
+		results.Visible = false;
+		specBar.Visible = true;
+		spec.id = null;
+		cycle(1);
+	});
+	specBtn.Visible = false;
+	specBtn.ZIndex = 25;
+	Game.specCam = () => {
+		if (!spec.id) return null;
+		let g = ghosts.get(spec.id);
+		if (!g || R.crashed[spec.id] != null) {
+			cycle(1);
+			g = spec.id && ghosts.get(spec.id);
+			if (!g) return null;
+		}
+		const at = g.pos.add(g.vel.mul(Math.min(clock() - g.at, 0.3)));
+		trackChunks(at.X, at.Z);
+		return CFrame.lookAt(at.add(V3(0, 10, 28)), at.add(V3(0, 2, -60)));
+	};
+
+	// ---------------- every frame: draw the others, send yourself
+	let sendT = 0, sending = false;
+	RunService.RenderStepped.Connect((dt) => {
+		const now = clock();
+		const sg = spec.id && ghosts.get(spec.id);
+		const viewZ = sg && sg.pos ? sg.pos.Z : pos.Z;
+		const viewLoop = sg ? sg.loop : Game.loop || 0;
+		for (const [id, g] of ghosts) {
+			const age = now - g.at;
+			if (!g.pos || age > 3) {
+				g.model.Parent = null;
+				g.tag.Visible = false;
+				continue;
+			}
+			if (mode === "run" && Game.race && g.loop === viewLoop && Math.abs(g.pos.Z - viewZ) < 900) {
+				const p = g.pos.add(g.vel.mul(Math.min(age, 0.3)));
+				g.main.CFrame = CFrame.new(p).mul(g.rot);
+				g.model.Parent = workspace;
+				const [v, on] = camera.WorldToViewportPoint(p.add(V3(0, 5, 0)));
+				g.tag.Visible = on && v.Z < 700;
+				if (on) g.tag.Position = UO(v.X / uiScaleNow(), v.Y / uiScaleNow());
+			} else {
+				g.model.Parent = null;
+				g.tag.Visible = false;
+			}
+		}
+
+		if (!Game.race || !R.mid) return;
+		sendT -= dt;
+		if (sendT > 0) return;
+		sendT = 0.12;
+		const flying = mode === "run" && !dead && stats && planeMain && planeMain.Parent;
+		if (flying) {
+			const cf = planeMain.CFrame;
+			const [rx, ry, rz] = cf.ToEulerAnglesXYZ();
+			const r2 = (v) => Math.round(v * 100) / 100;
+			Online.put(`matches/${R.mid}/live/${me()}`, { x: r2(cf.X), y: r2(cf.Y), z: r2(cf.Z), rx: r2(rx), ry: r2(ry), rz: r2(rz), d: Math.floor(stats.dist || 0), s: Game.tierPlane(), l: Game.loop || 0 }).catch(() => {});
+			sending = true;
+		} else if (sending) {
+			sending = false;
+			Online.put(`matches/${R.mid}/live/${me()}`, { dead: true, d: Math.floor((stats && stats.dist) || 0) }).catch(() => {});
+		}
+	});
+	const uiScaleNow = () => Game._uis || 1;
+
+	// ---------------- slow loop: host duty, countdown, lead and falling behind
+	let leadT = 0;
+	setInterval(() => {
+		if (mode === "menu") Game.raceButton();
+		if (vp.frame.Visible) refreshPanel();
+		if (R.inQueue) {
+			host();
+			const p = pending();
+			if (p && Online.serverNow() >= p.m.startAt && !Game.race) go(p.mid, p.m);
+		}
+		specBtn.Visible = !!Game.race && mode === "run" && dead && results.Visible && !R.final && aliveOthers().length > 0;
+		if (spec.id && !(Game.race && mode === "run" && dead)) stopSpec();
+		const show = !!Game.race && !!R.runners && mode === "run";
+		board.Visible = show;
+		if (show) refreshBoard();
+		if (show && !R.final) checkOver();
+		// whoever's furthest builds up the coin multiplier, 600 behind them and your fuel burns double
+		let best = 0;
+		if (show && !R.final) {
+			for (const id in R.runners) if (id !== me() && R.crashed[id] == null) best = Math.max(best, R.live[id] || 0);
+		}
+		const mine = (stats && stats.dist) || 0;
+		Game.behind = show && !dead && !R.final && best - mine > 600;
+		Game.leading = show && !dead && !R.final && mine > best && mine > 0;
+		if (Game.leading && clock() - leadT >= 1) {
+			leadT = clock();
+			R.lead++;
+			Game.raceMult = 1 + Math.min(R.lead * 0.05, 2);
+		}
+		if (!Game.race && stopLive) {
+			stopLive();
+			stopLive = null;
+			R.mid = null;
+			for (const id of [...ghosts.keys()]) dropGhost(id);
+		}
+	}, 250);
+	window.addEventListener("beforeunload", () => leaveQueue(true));
+})();

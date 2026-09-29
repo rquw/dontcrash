@@ -174,16 +174,38 @@ function load() {
 	if (!d.created) d.created = Date.now();
 	return d;
 }
-function save() {
+// the game hooks in here to copy every save to your account
+let onSave = null;
+export function setOnSave(fn) {
+	onSave = fn;
+}
+function save(bump = true) {
 	try {
+		if (bump) s.data.savedAt = Date.now();
 		localStorage.setItem(KEY, JSON.stringify(s.data));
 		saving = true;
 	} catch (e) {
 		saving = false;
 	}
+	if (onSave) onSave();
+}
+export function exportData() {
+	return copy(s.data);
+}
+// logging in swaps in the save from your account. settings stay the ones from this device
+export function importData(d) {
+	if (!d || typeof d !== "object") return false;
+	const keepSettings = s.data.settings;
+	d = copy(d);
+	fill(d, DEFAULT);
+	d.settings = keepSettings;
+	s.data = d;
+	s.claimed = {};
+	save();
+	return true;
 }
 const s = { data: load(), joined: now(), claimed: {}, runStart: null, runFrom: 0 };
-save();
+save(false);
 
 function describe(r) {
 	const parts = [];
@@ -380,7 +402,9 @@ handlers.run_end = (r) => {
 	const glass = num(r.glass, cap * 3);
 	const closes = num(r.close, Math.floor(elapsed / 1.1) + 1);
 	const hearts = num(r.hearts, Math.floor(traveled / 4000) + 1);
-	const mult = 1 + 0.25 * (d.power.coins || 0);
+	// versus: time in the lead multiplies your coins, up to x3
+	const raceMult = Math.max(1, Math.min(3, Number(r.raceMult) || 1));
+	const mult = (1 + 0.25 * (d.power.coins || 0)) * raceMult;
 	const award = {
 		coins: Math.floor((Math.floor(traveled / 10) + maps * CONFIG.mapBonus + bosses * CONFIG.bossBonus + glass * 10 + kills * 5 + closes * CONFIG.closeBonus) * mult),
 		gems: gemPads * 5,
@@ -435,6 +459,15 @@ handlers.set_name = (name) => {
 	if (!/^[A-Za-z0-9_ .-]+$/.test(name)) return [false, "letters, numbers, _ . - only"];
 	s.data.name = name;
 	return [true, "hi " + name + "!"];
+};
+// versus prize for your place, the size of the match decides it
+handlers.race_prize = (info) => {
+	const n = Math.max(0, Math.min(12, Math.floor(Number(info && info.n) || 0)));
+	const place = Math.floor(Number(info && info.place) || 0);
+	const bonus = place === 1 ? 100 * n : place === 2 && n >= 3 ? 50 * n : 0;
+	if (bonus <= 0) return [true, ""];
+	grant(s.data, { coins: bonus });
+	return [true, "+" + bonus + " coins for your place"];
 };
 handlers.spawn_char = () => [true];
 handlers.despawn_char = () => [true];
