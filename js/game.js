@@ -3,9 +3,9 @@ import {
 	camera, Lighting, Instance, workspace, markQueryRoot, Enum, OverlapParams, TweenService, TweenInfo, Debris, UIS, playSfx, loopSound, loadSounds, setSfxVolume,
 	NumberSequence, NumberSequenceKeypoint, NumberRange, ColorSequence, ColorSequenceKeypoint, guiRootInst, setUiScale, setLowGraphics, physicsGround,
 	mergeFloor, start, perf,
-} from "./engine.js?v=1790689811";
-import * as Server from "./server.js?v=1790689811";
-import * as Online from "./online.js?v=1790689811";
+} from "./engine.js?v=1790693791";
+import * as Server from "./server.js?v=1790693791";
+import * as Online from "./online.js?v=1790693791";
 
 const V3 = (x, y, z) => new Vector3(x, y, z);
 const RGB = Color3.fromRGB;
@@ -958,40 +958,143 @@ function sparks(at, n, size, colorFn, speed) {
 	}
 }
 
-function smoke(at, n, spread, size, time) {
+function smoke(at, n, spread, size, time, color) {
 	for (let i = 0; i < n; i++) {
 		const off = V3(random(-spread, spread), random(idiv(-spread, 2), spread), random(-spread, spread));
-		ball(at.add(off), random(size, size * 2), RGB(50, 50, 50), random(time * 10, time * 18) / 10);
+		ball(at.add(off), random(size, size * 2), color || RGB(50, 50, 50), random(time * 10, time * 18) / 10);
 	}
 }
 
-function deathEffect(at) {
-	const kind = data.death;
-	if (kind === "Confetti") {
-		ball(at, 30, new Color3(1, 1, 1), 0.3);
-		sparks(at, 70, 0.8, () => Color3.fromHSV(Math.random(), 0.8, 1), 90);
-		shake = 0.5;
-		return 1;
-	} else if (kind === "Pixel") {
+// every death effect as a recipe on a few building blocks, the shop preview uses the exact same ones.
+// fx.ball(size, color, time)  fx.sparks(n, size, colorFn, speed)  fx.smoke(n, spread, size, time, color)  fx.ring(size, color, time)  fx.later(sec, fn)
+const DEATHS = {
+	Default: { sfx: "crash", run(fx) {
+		fx.ball(70, RGB(255, 240, 180), 0.4);
+		fx.ball(50, RGB(255, 120, 30), 0.9);
+		fx.smoke(5, 12, 18, 1.5);
+		fx.sparks(20, 1, () => (Math.random() < 0.5 ? RGB(255, 140, 40) : RGB(40, 40, 40)), 80);
+		return [0.8, 1];
+	} },
+	Confetti: { sfx: "crash_confetti", run(fx) {
+		fx.ball(30, new Color3(1, 1, 1), 0.3);
+		fx.sparks(70, 0.8, () => Color3.fromHSV(Math.random(), 0.8, 1), 90);
+		return [0.5, 1];
+	} },
+	Pixel: { sfx: "crash_pixel", run(fx) {
 		const cyan = RGB(60, 240, 255), pink = RGB(255, 60, 220);
-		ball(at, 45, cyan, 0.5);
-		sparks(at, 40, 2, () => (Math.random() < 0.5 ? cyan : pink), 70);
-		shake = 0.6;
-		return 1.2;
-	} else if (kind === "Nuke") {
-		ball(at, 200, new Color3(1, 1, 0.9), 0.9);
-		ball(at, 130, RGB(255, 120, 30), 1.6);
-		smoke(at, 10, 30, 40, 2.5);
-		sparks(at, 30, 1.5, () => RGB(255, 160, 50), 120);
-		shake = 1.6;
-		return 1.7;
-	}
-	ball(at, 70, RGB(255, 240, 180), 0.4);
-	ball(at, 50, RGB(255, 120, 30), 0.9);
-	smoke(at, 5, 12, 18, 1.5);
-	sparks(at, 20, 1, () => (Math.random() < 0.5 ? RGB(255, 140, 40) : RGB(40, 40, 40)), 80);
-	shake = 0.8;
-	return 1;
+		fx.ball(45, cyan, 0.5);
+		fx.sparks(40, 2, () => (Math.random() < 0.5 ? cyan : pink), 70);
+		return [0.6, 1.2];
+	} },
+	Nuke: { sfx: "crash_nuke", run(fx) {
+		fx.ball(200, new Color3(1, 1, 0.9), 0.9);
+		fx.ball(130, RGB(255, 120, 30), 1.6);
+		fx.smoke(10, 30, 40, 2.5);
+		fx.sparks(30, 1.5, () => RGB(255, 160, 50), 120);
+		return [1.6, 1.7];
+	} },
+	Firework: { sfx: "crash_confetti", run(fx) {
+		fx.ball(20, new Color3(1, 1, 1), 0.25);
+		fx.sparks(40, 0.7, () => Color3.fromHSV(Math.random(), 0.9, 1), 130);
+		fx.later(0.35, () => {
+			fx.ball(35, Color3.fromHSV(Math.random(), 0.7, 1), 0.4);
+			fx.sparks(40, 0.7, () => Color3.fromHSV(Math.random(), 0.9, 1), 110);
+		});
+		fx.later(0.7, () => fx.sparks(30, 0.6, () => RGB(255, 230, 150), 90));
+		return [0.5, 1.3];
+	} },
+	Freeze: { sfx: "glass", run(fx) {
+		fx.ball(40, RGB(200, 240, 255), 0.5);
+		fx.ring(60, RGB(160, 225, 255), 0.7);
+		fx.sparks(45, 1.6, () => (Math.random() < 0.6 ? RGB(170, 230, 255) : RGB(240, 250, 255)), 70);
+		fx.smoke(6, 10, 14, 1.4, RGB(225, 240, 255));
+		return [0.5, 1.2];
+	} },
+	BlackHole: { sfx: "crash_nuke", run(fx) {
+		fx.ball(110, RGB(40, 0, 70), 1.4);
+		fx.ball(50, RGB(170, 60, 255), 0.8);
+		fx.ring(140, RGB(190, 90, 255), 1.2);
+		fx.sparks(50, 0.8, () => (Math.random() < 0.5 ? RGB(150, 60, 255) : RGB(20, 0, 30)), 40);
+		return [1, 1.6];
+	} },
+	Lightning: { sfx: "laser_fire", run(fx) {
+		fx.ball(90, RGB(255, 255, 210), 0.18);
+		fx.ball(40, RGB(120, 190, 255), 0.5);
+		fx.sparks(60, 0.45, () => (Math.random() < 0.5 ? RGB(255, 250, 150) : RGB(150, 210, 255)), 160);
+		fx.later(0.2, () => fx.ball(70, RGB(255, 255, 230), 0.15));
+		return [0.9, 1.1];
+	} },
+	Coins: { sfx: "coin_land", run(fx) {
+		fx.ball(40, RGB(255, 215, 80), 0.4);
+		fx.sparks(60, 1.3, () => (Math.random() < 0.8 ? RGB(255, 200, 50) : RGB(255, 245, 180)), 95);
+		return [0.5, 1.3];
+	} },
+	Hearts: { sfx: "crash_confetti", run(fx) {
+		fx.ball(35, RGB(255, 150, 190), 0.4);
+		fx.sparks(50, 1.1, () => (Math.random() < 0.5 ? RGB(255, 70, 120) : RGB(255, 170, 200)), 75);
+		fx.ring(50, RGB(255, 120, 170), 0.6);
+		return [0.4, 1.1];
+	} },
+	Glitch: { sfx: "crash_pixel", run(fx) {
+		const cols = [RGB(255, 40, 60), RGB(40, 255, 120), RGB(40, 120, 255)];
+		fx.ball(40, RGB(255, 40, 255), 0.15);
+		fx.sparks(55, 2.2, () => cols[random(0, 2)], 55);
+		fx.later(0.12, () => fx.ball(30, RGB(40, 255, 255), 0.12));
+		fx.later(0.25, () => fx.ball(35, RGB(255, 255, 40), 0.12));
+		return [0.7, 1.1];
+	} },
+	Bubbles: { sfx: "crash_confetti", run(fx) {
+		fx.smoke(16, 18, 7, 1.8, RGB(150, 215, 255));
+		fx.ball(30, RGB(200, 240, 255), 0.4);
+		fx.sparks(20, 0.9, () => RGB(220, 245, 255), 50);
+		return [0.3, 1.2];
+	} },
+	SmokeBomb: { sfx: "crash", run(fx) {
+		fx.ball(40, RGB(90, 90, 95), 0.3);
+		fx.smoke(16, 22, 24, 2.2, RGB(70, 70, 75));
+		return [0.6, 1.4];
+	} },
+	Supernova: { sfx: "crash_nuke", run(fx) {
+		fx.ball(260, new Color3(1, 1, 1), 0.7);
+		fx.ball(170, RGB(255, 210, 90), 1.4);
+		fx.ring(320, RGB(255, 220, 120), 1.3);
+		fx.later(0.25, () => fx.ring(220, RGB(255, 255, 255), 1));
+		fx.sparks(50, 1.4, () => (Math.random() < 0.5 ? RGB(255, 230, 140) : new Color3(1, 1, 1)), 170);
+		return [2, 1.8];
+	} },
+};
+Game.DEATHS = DEATHS;
+
+function ring(at, size, color, time) {
+	const p = Instance.new("Part");
+	p.Shape = "Cylinder";
+	p.Anchored = true;
+	p.CanCollide = false;
+	p.CanQuery = false;
+	p.CastShadow = false;
+	p.Material = "Neon";
+	p.Color = color;
+	p.Size = V3(0.6, 4, 4);
+	p.CFrame = CFrame.fromPos(at).mul(Ang(0, 0, Math.PI / 2));
+	p.Transparency = 0.2;
+	p._uniqueMat = true;
+	p.Parent = junk;
+	TweenService.Create(p, new TweenInfo(time, "Quint"), { Size: V3(0.3, size, size), Transparency: 1 }).Play();
+	Debris.AddItem(p, time);
+}
+
+function deathEffect(at) {
+	const d = DEATHS[data.death] || DEATHS.Default;
+	const fx = {
+		ball: (size, color, time) => ball(at, size, color, time),
+		sparks: (n, size, colorFn, speed) => sparks(at, n, size, colorFn, speed),
+		smoke: (n, spread, size, time, color) => smoke(at, n, spread, size, time, color),
+		ring: (size, color, time) => ring(at, size, color, time),
+		later: (t, fn) => task.delay(t, fn),
+	};
+	const [sh, dur] = d.run(fx);
+	shake = sh;
+	return dur;
 }
 
 let shatter;
@@ -1150,6 +1253,114 @@ let buildPlane;
 		add("Part", V3(2, 0.6, 0.4), edge, CFn(0, 0, 5.2), { Material: "Neon" });
 	};
 
+	SKIN_BUILD.Glider = (add) => {
+		const white = RGB(235, 238, 245), blue = RGB(60, 120, 220);
+		add("Part", V3(1, 1, 8), white, CFn());
+		add("Part", V3(16, 0.25, 1.8), white, CFn(0, 0.3, -0.3));
+		add("Part", V3(0.2, 0.3, 1.8), blue, CFn(-8, 0.3, -0.3), { Material: "Neon" });
+		add("Part", V3(0.2, 0.3, 1.8), blue, CFn(8, 0.3, -0.3), { Material: "Neon" });
+		add("Part", V3(3.5, 0.2, 1), white, CFn(0, 0.2, 3.6));
+		add("Part", V3(0.2, 1.6, 1), blue, CFn(0, 1, 3.6));
+	};
+	SKIN_BUILD.Banana = (add) => {
+		const y = RGB(255, 220, 60), brown = RGB(110, 80, 40);
+		add("Part", V3(1.8, 1.8, 3.4), y, CFn(0, 0, 0));
+		add("Part", V3(1.6, 1.6, 3), y, CFn(0, 0.5, -2.8).mul(Ang(-0.35, 0, 0)));
+		add("Part", V3(1.6, 1.6, 3), y, CFn(0, 0.5, 2.8).mul(Ang(0.35, 0, 0)));
+		add("Part", V3(0.6, 0.6, 0.8), brown, CFn(0, 1.2, -4.5).mul(Ang(-0.6, 0, 0)));
+		add("Part", V3(0.6, 0.6, 0.6), brown, CFn(0, 1, 4.3));
+		add("Part", V3(9, 0.3, 2), RGB(120, 200, 80), CFn(0, 0, 0));
+	};
+	SKIN_BUILD.Duck = (add) => {
+		const y = RGB(255, 215, 40), o = RGB(255, 130, 30);
+		add("Part", V3(3, 2.6, 5), y, CFn(0, 0, 0.5));
+		add("Part", V3(2.4, 2.4, 2.4), y, CFn(0, 1.8, -2), { Shape: "Ball" });
+		add("Part", V3(1.4, 0.5, 1.2), o, CFn(0, 1.6, -3.4));
+		add("Part", V3(0.4, 0.4, 0.4), RGB(20, 20, 20), CFn(-0.7, 2.2, -2.9), { Shape: "Ball" });
+		add("Part", V3(0.4, 0.4, 0.4), RGB(20, 20, 20), CFn(0.7, 2.2, -2.9), { Shape: "Ball" });
+		add("Part", V3(9, 0.4, 2.4), y, CFn(0, 0.2, 0.6));
+		add("Part", V3(1.4, 1.2, 1.2), y, CFn(0, 1, 3.3).mul(Ang(0.5, 0, 0)));
+	};
+	SKIN_BUILD.Toaster = (add) => {
+		const metal = RGB(190, 195, 205), toast = RGB(210, 150, 80), dark = RGB(60, 60, 70);
+		add("Part", V3(4, 3, 5), metal, CFn(), { Material: "Metal" });
+		add("Part", V3(0.9, 1.4, 3.4), toast, CFn(-0.9, 2, 0));
+		add("Part", V3(0.9, 1.4, 3.4), toast, CFn(0.9, 2.2, 0));
+		add("Part", V3(0.3, 0.8, 0.5), dark, CFn(2.1, 0.8, 1.6));
+		add("Part", V3(10, 0.3, 2.2), RGB(240, 240, 245), CFn(0, 0.3, 0.2));
+		add("Part", V3(3.6, 0.25, 1.2), RGB(240, 240, 245), CFn(0, 0.2, 3));
+	};
+	SKIN_BUILD.Chopper = (add) => {
+		const green = RGB(80, 110, 70), dark = RGB(40, 45, 45);
+		add("Part", V3(2.8, 2.6, 5), green, CFn(0, 0, -0.5));
+		add("Part", V3(2.2, 1.6, 1.6), RGB(90, 200, 255), CFn(0, 0.2, -3.2), { Transparency: 0.3 });
+		add("Part", V3(0.8, 0.8, 5), green, CFn(0, 0.5, 4));
+		add("Part", V3(0.2, 2, 1.2), green, CFn(0, 1.2, 6.2));
+		add("Part", V3(0.4, 0.8, 0.4), dark, CFn(0, 1.7, -0.5));
+		add("Part", V3(13, 0.12, 0.6), dark, CFn(0, 2.1, -0.5).mul(Ang(0, 0.4, 0)));
+		add("Part", V3(13, 0.12, 0.6), dark, CFn(0, 2.1, -0.5).mul(Ang(0, 0.4 + Math.PI / 2, 0)));
+		add("Part", V3(0.2, 0.3, 4), dark, CFn(-1.2, -1.6, -0.5));
+		add("Part", V3(0.2, 0.3, 4), dark, CFn(1.2, -1.6, -0.5));
+	};
+	SKIN_BUILD.Blimp = (add) => {
+		const silver = RGB(210, 212, 220), red = RGB(220, 60, 60);
+		add("Part", V3(9, 4, 4), silver, Ang(0, Math.PI / 2, 0), { Shape: "Cylinder" });
+		add("Part", V3(4, 4, 4), silver, CFn(0, 0, -4.5), { Shape: "Ball" });
+		add("Part", V3(4, 4, 4), silver, CFn(0, 0, 4.5), { Shape: "Ball" });
+		add("Part", V3(0.2, 4.1, 1.2), red, CFn(0, 0, -1), { Material: "Neon" });
+		add("Part", V3(1.4, 1, 2.4), RGB(60, 60, 70), CFn(0, -2.4, 0));
+		add("Part", V3(0.3, 2.4, 1.8), red, CFn(0, 2, 5.5));
+		add("Part", V3(4, 0.3, 1.8), red, CFn(0, 0, 5.5));
+	};
+	SKIN_BUILD.Shark = (add) => {
+		const grey = RGB(120, 135, 150), white = RGB(230, 235, 240);
+		add("Part", V3(2.4, 2.2, 9), grey, CFn());
+		add("Part", V3(2, 0.6, 7), white, CFn(0, -1, 0));
+		add("Part", V3(0.3, 2.6, 2.2), grey, CFn(0, 2.2, 0).mul(Ang(0.35, 0, 0)));
+		add("Part", V3(0.3, 3.2, 1.6), grey, CFn(0, 0.6, 5.2).mul(Ang(0.25, 0, 0)));
+		add("Part", V3(8, 0.3, 2.4), grey, CFn(0, -0.4, -0.5).mul(Ang(0, 0, 0)));
+		add("Part", V3(1.8, 0.2, 0.4), RGB(250, 250, 250), CFn(0, -0.3, -4.4));
+		add("Part", V3(0.35, 0.35, 0.35), RGB(10, 10, 10), CFn(-1, 0.4, -3.6), { Shape: "Ball" });
+		add("Part", V3(0.35, 0.35, 0.35), RGB(10, 10, 10), CFn(1, 0.4, -3.6), { Shape: "Ball" });
+	};
+	SKIN_BUILD.Neon = (add) => {
+		const black = RGB(15, 15, 20), cyan = RGB(40, 240, 255);
+		add("Part", V3(1.8, 1.4, 9), black, CFn());
+		add("Part", V3(11, 0.3, 3), black, CFn(0, 0, 0.5));
+		for (const side of [-1, 1]) {
+			add("Part", V3(0.25, 0.35, 3), cyan, CFn(side * 5.5, 0, 0.5), { Material: "Neon" });
+			add("Part", V3(5.5, 0.35, 0.2), cyan, CFn(side * 2.75, 0, -1), { Material: "Neon" });
+			add("Part", V3(0.2, 0.2, 9), cyan, CFn(side * 0.9, 0.7, 0), { Material: "Neon" });
+		}
+		add("Part", V3(4, 0.25, 1.4), black, CFn(0, 0, 4));
+		add("Part", V3(0.25, 1.8, 1.4), cyan, CFn(0, 1, 4), { Material: "Neon" });
+	};
+	SKIN_BUILD.Dragon = (add) => {
+		const green = RGB(60, 160, 80), dark = RGB(30, 90, 45), red = RGB(230, 70, 40);
+		add("Part", V3(2.2, 2, 7), green, CFn());
+		add("Part", V3(1.8, 1.6, 2.4), green, CFn(0, 0.6, -4.2));
+		add("Part", V3(0.6, 0.6, 0.6), RGB(255, 220, 60), CFn(-0.7, 1.2, -5), { Material: "Neon" });
+		add("Part", V3(0.6, 0.6, 0.6), RGB(255, 220, 60), CFn(0.7, 1.2, -5), { Material: "Neon" });
+		add("Part", V3(0.3, 0.9, 0.3), dark, CFn(-0.6, 1.8, -3.8).mul(Ang(0.5, 0, 0)));
+		add("Part", V3(0.3, 0.9, 0.3), dark, CFn(0.6, 1.8, -3.8).mul(Ang(0.5, 0, 0)));
+		for (const side of [-1, 1]) {
+			add("Part", V3(6, 0.25, 4), dark, CFn(side * 3.8, 0.8, 0).mul(Ang(0, 0, side * 0.25)));
+			add("Part", V3(3, 0.2, 2.5), red, CFn(side * 5.8, 1.3, 1.2).mul(Ang(0, side * 0.3, side * 0.25)));
+		}
+		add("Part", V3(0.9, 0.9, 4), green, CFn(0, 0.2, 5).mul(Ang(0.15, 0, 0)));
+		add("Part", V3(1.8, 0.25, 1.4), red, CFn(0, 0.4, 7.2));
+		for (let i = 0; i < 4; i++) add("Part", V3(0.25, 0.7, 0.5), red, CFn(0, 1.2, -2 + i * 1.5));
+	};
+	SKIN_BUILD.Gold = (add) => {
+		const gold = RGB(255, 200, 60), shine = RGB(255, 240, 170);
+		add("Part", V3(2, 2, 8), gold, CFn(), { Material: "Metal" });
+		add("Part", V3(12, 0.5, 3), gold, CFn(0, 0, -0.5), { Material: "Metal" });
+		add("Part", V3(5, 0.4, 1.5), gold, CFn(0, 0, 3.3), { Material: "Metal" });
+		add("Part", V3(0.4, 2, 1.5), gold, CFn(0, 1.4, 3.3), { Material: "Metal" });
+		add("Part", V3(12.2, 0.15, 0.3), shine, CFn(0, 0.3, -1.9), { Material: "Neon" });
+		add("Part", V3(1.2, 0.8, 2), RGB(255, 250, 220), CFn(0, 1.1, -2), { Material: "Neon", Transparency: 0.2 });
+	};
+
 	// every skin leaves something behind it
 	const FX = {
 		Default: (fx) => {
@@ -1177,6 +1388,38 @@ let buildPlane;
 		},
 		TeamJet: (fx) => fx.flame(V3(0, 0, 6.8), RGB(170, 220, 255), RGB(40, 110, 255), 1.4),
 		Stealth: (fx) => fx.flame(V3(0, 0, 5.6), RGB(230, 190, 255), RGB(150, 60, 255), 1.5),
+		Glider: (fx) => {
+			for (const x of [-8, 8]) fx.trail(V3(x, 0.3, 0), { Lifetime: 1, Width: 0.2, Color: new ColorSequence(new Color3(1, 1, 1)), Transparency: new NumberSequence(0.4, 1) });
+		},
+		Banana: (fx) => {
+			fx.emit(V3(0, 0, 4), { Texture: "sparkles", Color: new ColorSequence(RGB(255, 230, 90)), LightEmission: 0.7, Size: new NumberSequence(0.7, 0.1), Lifetime: new NumberRange(0.6, 1), Rate: 16, Speed: new NumberRange(2, 5), SpreadAngle: V2(60, 60), EmissionDirection: "Back" });
+		},
+		Duck: (fx) => {
+			fx.emit(V3(0, 0, 3), { Texture: "sparkles", Color: new ColorSequence(RGB(140, 210, 255)), LightEmission: 0.5, Size: new NumberSequence(0.8, 0.2), Lifetime: new NumberRange(0.6, 1.1), Rate: 18, Speed: new NumberRange(3, 7), SpreadAngle: V2(40, 40), EmissionDirection: "Back", Acceleration: V3(0, -10, 0) });
+		},
+		Toaster: (fx) => {
+			fx.emit(V3(0, 2.5, 0), { Texture: "smoke", Color: new ColorSequence(RGB(140, 120, 100), RGB(90, 80, 70)), Size: new NumberSequence(0.8, 2.4), Transparency: new NumberSequence(0.4, 1), Lifetime: new NumberRange(0.6, 1), Rate: 12, Speed: new NumberRange(2, 4), EmissionDirection: "Top", SpreadAngle: V2(20, 20) });
+		},
+		Chopper: (fx) => {
+			fx.emit(V3(0, 0, 3), { Texture: "smoke", Color: new ColorSequence(RGB(200, 200, 200), RGB(120, 120, 120)), Size: new NumberSequence(1, 3), Transparency: new NumberSequence(0.5, 1), Lifetime: new NumberRange(0.5, 0.9), Rate: 14, Speed: new NumberRange(3, 6), EmissionDirection: "Back", SpreadAngle: V2(15, 15) });
+		},
+		Blimp: (fx) => {
+			fx.emit(V3(0, -2.4, 1.4), { Texture: "smoke", Color: new ColorSequence(RGB(240, 240, 240), RGB(170, 170, 170)), Size: new NumberSequence(1.2, 4), Transparency: new NumberSequence(0.5, 1), Lifetime: new NumberRange(1, 1.6), Rate: 8, Speed: new NumberRange(2, 4), EmissionDirection: "Back", SpreadAngle: V2(10, 10) });
+		},
+		Shark: (fx) => {
+			fx.emit(V3(0, 0, 5), { Texture: "sparkles", Color: new ColorSequence(RGB(120, 200, 255)), LightEmission: 0.6, Size: new NumberSequence(0.9, 0.1), Lifetime: new NumberRange(0.5, 0.9), Rate: 20, Speed: new NumberRange(3, 8), SpreadAngle: V2(30, 30), EmissionDirection: "Back" });
+		},
+		Neon: (fx) => {
+			for (const x of [-5.5, 5.5]) fx.trail(V3(x, 0, 0.5), { Lifetime: 0.6, Width: 0.35, Color: new ColorSequence(RGB(40, 240, 255)), Transparency: new NumberSequence(0.1, 1), LightEmission: 1 });
+		},
+		Dragon: (fx) => {
+			fx.flame(V3(0, 0.4, -5.6), RGB(255, 240, 150), RGB(255, 80, 20), 1.6, 60);
+			fx.emit(V3(0, 0, 6), { Texture: "sparkles", Color: new ColorSequence(RGB(255, 140, 40)), LightEmission: 1, Size: new NumberSequence(0.6, 0), Lifetime: new NumberRange(0.5, 0.9), Rate: 18, Speed: new NumberRange(3, 7), SpreadAngle: V2(40, 40), EmissionDirection: "Back" });
+		},
+		Gold: (fx) => {
+			for (const x of [-6, 6]) fx.trail(V3(x, 0, 0), { Lifetime: 0.8, Width: 0.35, Color: new ColorSequence(RGB(255, 220, 90)), Transparency: new NumberSequence(0.2, 1), LightEmission: 1 });
+			fx.emit(V3(0, 0, 3), { Texture: "sparkles", Color: new ColorSequence(RGB(255, 230, 120)), LightEmission: 1, Size: new NumberSequence(0.6, 0), Lifetime: new NumberRange(0.5, 1), Rate: 16, Speed: new NumberRange(2, 5), SpreadAngle: V2(60, 60) });
+		},
 	};
 	function addFx(id, main) {
 		const f = FX[id];
@@ -1957,6 +2200,9 @@ let fuelFill;
 	};
 })();
 
+// "BlackHole" reads as BLACK HOLE
+const niceName = (id) => String(id).replace(/([a-z])([A-Z])/g, "$1 $2").toUpperCase();
+
 // ------------------------------------------------------------------ touch controls
 
 (() => {
@@ -2018,8 +2264,9 @@ let fuelFill;
 		return b;
 	}
 
-	const left = pad(130, U2(0, 110, 1, -40), null, "left");
-	const right = pad(130, U2(0, 256, 1, -40), null, "right");
+	// left thumb steers and dashes, right thumb does nitro and fire. everything sits well inside the edges
+	const left = pad(150, U2(0, 150, 1, -60), null, "left");
+	const right = pad(150, U2(0, 330, 1, -60), null, "right");
 	for (const [b, flip] of [[left, true], [right, false]]) {
 		const ic = Icons.make("play", b, 52);
 		ic.AnchorPoint = V2(0.5, 0.5);
@@ -2027,10 +2274,10 @@ let fuelFill;
 		ic.Rotation = flip ? 180 : 0;
 		ic.el.style.pointerEvents = "none";
 	}
-	pad(150, U2(1, -115, 1, -40), "NITRO", "nitro");
-	TC.fireBtn = pad(120, U2(1, -270, 1, -40), "FIRE", "shoot");
-	pad(84, U2(1, -300, 1, -176), "«", null, () => Game.roll(-1));
-	pad(84, U2(1, -78, 1, -206), "»", null, () => Game.roll(1));
+	pad(170, U2(1, -160, 1, -60), "NITRO", "nitro");
+	TC.fireBtn = pad(130, U2(1, -350, 1, -70), "FIRE", "shoot");
+	pad(96, U2(0, 150, 1, -240), "«", null, () => Game.roll(-1));
+	pad(96, U2(0, 330, 1, -240), "»", null, () => Game.roll(1));
 
 	if (TC.on) {
 		Game.fuelBar.Position = U2(0.5, 0, 1, -10);
@@ -2060,10 +2307,10 @@ let openPanel, closePanels, startRun, toMenu;
 	const menuIcons = new Map();
 
 	function menuButton(str, icon, fn, base) {
-		const holder = make("Frame", { Size: UO(320, 56), BackgroundTransparency: 1, LayoutOrder: nextOrder(), Parent: col });
+		const holder = make("Frame", { Size: UO(320, 52), BackgroundTransparency: 1, LayoutOrder: nextOrder(), Parent: col });
 		const b = button(holder, str, US(1, 1), null, fn, base);
 		b.TextXAlignment = LEFT;
-		b.TextSize = 28;
+		b.TextSize = 26;
 		make("UIPadding", { PaddingLeft: UDim.new(0, 64), Parent: b });
 		const ic = Icons.make(icon, b, 30, true);
 		ic.AnchorPoint = V2(0, 0.5);
@@ -2217,14 +2464,22 @@ let openPanel, closePanels, startRun, toMenu;
 		Game.closeStrip();
 		openPanel("rewards");
 	});
-	menuButton("SETTINGS", "gear", () => {
-		Game.closeStrip();
-		openPanel("settings");
-	});
-	menuButton("HOW TO PLAY", "help", () => {
-		Game.closeStrip();
-		openPanel("howto");
-	});
+	{
+		const small = make("Frame", { Size: UO(320, 46), BackgroundTransparency: 1, LayoutOrder: nextOrder(), Parent: col });
+		make("UIListLayout", { FillDirection: "row", Padding: UDim.new(0, 8), Parent: small });
+		for (const [icon, label, name] of [["gear", "SETTINGS", "settings"], ["help", "HOW TO PLAY", "howto"]]) {
+			const b = button(small, label, UO(156, 46), null, () => {
+				Game.closeStrip();
+				openPanel(name);
+			}, 0.55);
+			b.TextSize = 17;
+			b.TextColor3 = DIM;
+			make("UIPadding", { PaddingLeft: UDim.new(0, 30), Parent: b });
+			const ic = Icons.make(icon, b, 20, true);
+			ic.AnchorPoint = V2(0, 0.5);
+			ic.Position = U2(0, -22, 0.5, 0);
+		}
+	}
 
 	animateMenu = () => {
 		Game.closeStrip();
@@ -2683,22 +2938,48 @@ const rewardRefs = { play: [] };
 		button(r, "REDEEM", UO(170, 44), U2(1, -184, 0.5, -22), redeem, 0.1);
 	}
 	header(rewardsPanel.body, "CHESTS");
-	rewardRefs.daily = rewardRow(rewardsPanel.body, "DAILY GOLD CHEST", describe(CONFIG.daily), (b) => {
-		if (serverNow() - data.lastDaily >= 86400) result(Game.claim(b, "claim_daily"));
-		else sfx("bad");
-	});
-	rewardRefs.hourly = rewardRow(rewardsPanel.body, "HOURLY SMALL CHEST", describe(CONFIG.hourly), (b) => {
-		if (serverNow() - data.lastHourly >= 3600) result(Game.claim(b, "claim_hourly"));
-		else sfx("bad");
-	});
-	header(rewardsPanel.body, "GAMEPLAY REWARDS (STAY WITHOUT LEAVING)");
+	// two big chest cards side by side
+	{
+		const cardsR = make("Frame", { Size: U2(1, -10, 0, 190), BackgroundTransparency: 1, LayoutOrder: nextOrder(), Parent: rewardsPanel.body });
+		const chest = (x, title, sub, reward, color, fn) => {
+			const c = make("Frame", { Position: U2(x, x > 0 ? 5 : 0, 0, 0), Size: U2(0.5, -5, 1, 0), BackgroundColor3: BLACK, BackgroundTransparency: 0.35, Parent: cardsR });
+			make("UICorner", { CornerRadius: UDim.new(0, 12), Parent: c });
+			make("UIStroke", { Color: color, Thickness: 2, Transparency: 0.4, ApplyStrokeMode: "Border", Parent: c });
+			const glow = make("Frame", { Size: US(1, 1), BackgroundColor3: color, BackgroundTransparency: 0.8, Parent: c });
+			make("UICorner", { CornerRadius: UDim.new(0, 12), Parent: glow });
+			make("UIGradient", { Transparency: new NumberSequence(0.2, 1), Rotation: 90, Parent: glow });
+			const ic = Icons.make("gift", c, 54);
+			ic.Position = UO(16, 16);
+			text(c, title, U2(1, -90, 0, 28), UO(84, 16), 24, WHITE, LEFT);
+			text(c, sub, U2(1, -90, 0, 20), UO(84, 44), 15, DIM, LEFT);
+			Icons.text(c, U2(1, -24, 0, 30), UO(16, 86), 22, color, LEFT).Text = reward;
+			return button(c, "", U2(1, -24, 0, 50), U2(0, 12, 1, -62), fn, 0.2);
+		};
+		rewardRefs.daily = chest(0, "DAILY CHEST", "once every 24 hours", describe(CONFIG.daily), COIN, (b) => {
+			if (serverNow() - data.lastDaily >= 86400) result(Game.claim(b, "claim_daily"));
+			else sfx("bad");
+		});
+		rewardRefs.hourly = chest(0.5, "HOURLY CHEST", "once every hour", describe(CONFIG.hourly), GEM, (b) => {
+			if (serverNow() - data.lastHourly >= 3600) result(Game.claim(b, "claim_hourly"));
+			else sfx("bad");
+		});
+	}
+	header(rewardsPanel.body, "PLAYTIME REWARDS  (KEEP THE GAME OPEN)");
+	rewardRefs.bars = [];
 	CONFIG.playRewards.forEach((r, idx) => {
 		const i = idx + 1;
 		const label = r.min < 60 ? r.min + " MIN" : idiv(r.min, 60) + "H" + (r.min % 60 > 0 ? " " + (r.min % 60) + "M" : "");
-		rewardRefs.play[idx] = rewardRow(rewardsPanel.body, label, describe(r), (b) => {
+		const rw = row(rewardsPanel.body, 60);
+		make("UICorner", { CornerRadius: UDim.new(0, 8), Parent: rw });
+		text(rw, label, UO(90, 60), UO(14, -4), 22, WHITE, LEFT);
+		Icons.text(rw, U2(1, -300, 0, 60), UO(104, -4), 19, RGB(215, 215, 215), LEFT).Text = describe(r);
+		const barBg = make("Frame", { Position: U2(0, 14, 1, -10), Size: U2(1, -210, 0, 4), BackgroundColor3: WHITE, BackgroundTransparency: 0.85, Parent: rw });
+		const bar = make("Frame", { Size: US(0, 1), BackgroundColor3: GOOD, Parent: barBg });
+		rewardRefs.bars[idx] = bar;
+		rewardRefs.play[idx] = button(rw, "", UO(160, 42), U2(1, -172, 0.5, -21), (b) => {
 			if (!claimed["p" + i] && sessionTime() >= r.min * 60) result(Game.claim(b, "claim_play", i));
 			else sfx("bad");
-		});
+		}, 0.3);
 	});
 })();
 
@@ -2723,6 +3004,7 @@ function updateRewards() {
 	const t = sessionTime();
 	CONFIG.playRewards.forEach((r, idx) => {
 		const b = rewardRefs.play[idx];
+		if (rewardRefs.bars[idx]) rewardRefs.bars[idx].Size = US(clamp(t / (r.min * 60), 0, 1), 1);
 		if (claimed["p" + (idx + 1)]) setState(b, "done", "CLAIMED");
 		else if (t >= r.min * 60) {
 			ready++;
@@ -2813,24 +3095,33 @@ function deathView(vp, kind) {
 				task.delay(tt, () => p.Destroy());
 			}
 		};
-		if (kind === "Confetti") {
-			bl(30, new Color3(1, 1, 1), 0.3);
-			sp(70, 0.8, () => Color3.fromHSV(Math.random(), 0.8, 1), 90);
-		} else if (kind === "Pixel") {
-			const cyan = RGB(60, 240, 255), pink = RGB(255, 60, 220);
-			bl(45, cyan, 0.5);
-			sp(40, 2, () => (Math.random() < 0.5 ? cyan : pink), 70);
-		} else if (kind === "Nuke") {
-			bl(200, new Color3(1, 1, 0.9), 0.9);
-			bl(130, RGB(255, 120, 30), 1.6);
-			sm(10, 30, 40, 2.5);
-			sp(30, 1.5, () => RGB(255, 160, 50), 120);
-		} else {
-			bl(70, RGB(255, 240, 180), 0.4);
-			bl(50, RGB(255, 120, 30), 0.9);
-			sm(5, 12, 18, 1.5);
-			sp(20, 1, () => (Math.random() < 0.5 ? RGB(255, 140, 40) : RGB(40, 40, 40)), 80);
-		}
+		const ringP = (size, color, time) => {
+			const p = Instance.new("Part");
+			p.Shape = "Cylinder";
+			p.Material = "Neon";
+			p.Color = color;
+			p.Size = V3(0.6, 4, 4);
+			p.CFrame = CFrame.fromPos(at).mul(Ang(0, 0, Math.PI / 2));
+			p.Transparency = 0.2;
+			p._uniqueMat = true;
+			p.Parent = fxFolder;
+			TweenService.Create(p, new TweenInfo(time, "Quint"), { Size: V3(0.3, size * 0.6, size * 0.6), Transparency: 1 }).Play();
+			task.delay(time, () => p.Destroy());
+		};
+		const smc = (n, spread, size, time, color) => {
+			for (let i = 0; i < n; i++) {
+				const p = Instance.new("Part");
+				p.Shape = "Ball";
+				p.Color = color || RGB(50, 50, 50);
+				p.Size = Vector3.one.mul(2);
+				p.CFrame = CFrame.fromPos(at.add(V3(random(-spread, spread), random(idiv(-spread, 2), spread), random(-spread, spread)).mul(0.6)));
+				p.Parent = fxFolder;
+				const tt = random(time * 10, time * 18) / 10;
+				TweenService.Create(p, new TweenInfo(tt, "Quint"), { Size: Vector3.one.mul(random(size, size * 2) * 0.6), Transparency: 1 }).Play();
+				task.delay(tt, () => p.Destroy());
+			}
+		};
+		(Game.DEATHS[kind] || Game.DEATHS.Default).run({ ball: bl, sparks: sp, smoke: smc, ring: ringP, later: (t, fn) => task.delay(t, fn) });
 	};
 	const conn = RunService.RenderStepped.Connect((dt) => {
 		if (vp._destroyed || !vp.Parent) {
@@ -2892,15 +3183,39 @@ function deathView(vp, kind) {
 			Paper: ["folded out of homework", "confetti trail"],
 			UFO: ["not from around here", "green tractor beam"],
 			Rocket: ["basically a missile with a seat", "fire and smoke, flies higher"],
+			Glider: ["huge wings, zero engine", "long white contrails"],
+			Banana: ["potassium powered", "yellow sparkles"],
+			Duck: ["quack", "splashing water drops"],
+			Toaster: ["breakfast at 300 km/h", "burnt toast smoke"],
+			Chopper: ["get to the chopper", "rotor exhaust"],
+			Blimp: ["big, slow looking, not slow", "lazy smoke puffs"],
+			Shark: ["the sky is the ocean now", "bubbles behind you"],
+			Neon: ["straight out of the grid", "glowing cyan light trails"],
+			Dragon: ["breathes fire, obviously", "flames and embers"],
+			Gold: ["for people with too many gems", "golden trails and sparkles"],
 		},
 		death: {
 			Default: ["a normal explosion", "fire, smoke, debris"],
 			Confetti: ["party time", "70 bits of confetti"],
 			Pixel: ["retro blocks everywhere", "cyan and pink pixels"],
 			Nuke: ["way too much", "you'll see"],
+			Firework: ["happy new year", "three bursts of colour"],
+			Freeze: ["ice cold", "shards and frost"],
+			BlackHole: ["gone, just gone", "a purple void swallows you"],
+			Lightning: ["zap", "a crack of electricity"],
+			Coins: ["cha-ching", "a shower of gold coins"],
+			Hearts: ["died of love", "pink hearts everywhere"],
+			Glitch: ["err0r", "rgb pixels and flicker"],
+			Bubbles: ["blub", "a cloud of bubbles"],
+			SmokeBomb: ["ninja vanish", "a thick cloud of smoke"],
+			Supernova: ["a star is gone", "white and gold shockwaves"],
 		},
 	};
-	const DEATH_COLOR = { Default: RGB(255, 130, 40), Confetti: RGB(255, 90, 200), Pixel: RGB(60, 240, 255), Nuke: RGB(255, 230, 120) };
+	const DEATH_COLOR = {
+		Default: RGB(255, 130, 40), Confetti: RGB(255, 90, 200), Pixel: RGB(60, 240, 255), Nuke: RGB(255, 230, 120),
+		Firework: RGB(255, 120, 60), Freeze: RGB(150, 220, 255), BlackHole: RGB(150, 60, 255), Lightning: RGB(255, 245, 120), Coins: RGB(255, 200, 50),
+		Hearts: RGB(255, 100, 150), Glitch: RGB(60, 255, 140), Bubbles: RGB(140, 210, 255), SmokeBomb: RGB(130, 130, 140), Supernova: RGB(255, 235, 170),
+	};
 
 	// the rarer, the more it glows
 	function rarity(price, isSkin) {
@@ -2958,7 +3273,7 @@ function deathView(vp, kind) {
 		tl.AutomaticSize = "X";
 		tl.TextWrapped = false;
 		const side = make("Frame", { Position: U2(0.58, 14, 0, 0), Size: U2(0.42, -14, 1, 0), BackgroundTransparency: 1, Parent: r });
-		text(side, it.id.toUpperCase(), U2(1, 0, 0, 44), UO(0, 4), 40, WHITE, LEFT);
+		text(side, niceName(it.id), U2(1, 0, 0, 44), UO(0, 4), 40, WHITE, LEFT);
 		const d = DESC[isSkin ? "skin" : "death"][it.id] || ["", ""];
 		text(side, d[0], U2(1, 0, 0, 24), UO(0, 50), 20, RGB(210, 210, 210), LEFT);
 		const fxRow = make("Frame", { Position: UO(0, 82), Size: U2(1, 0, 0, 30), BackgroundColor3: BLACK, BackgroundTransparency: 0.5, Parent: side });
@@ -2994,7 +3309,7 @@ function deathView(vp, kind) {
 				sk.AnchorPoint = V2(0.5, 0.5);
 				sk.Position = US(0.5, 0.5);
 			}
-			text(c, it.id.toUpperCase(), U2(1, -10, 0, 24), UO(5, 114), 21, WHITE);
+			text(c, niceName(it.id), U2(1, -10, 0, 24), UO(5, 114), 21, WHITE);
 			const st = Icons.text(c, U2(1, -10, 0, 22), UO(5, 142), 17, DIM);
 			if (equipped === it.id) {
 				st.Text = "EQUIPPED";
@@ -3950,8 +4265,8 @@ function xpBar(parent, size, pos, k, color) {
 			["HEARTS FOUND", fmt(st.hearts || 0), RGB(255, 100, 130)],
 			["FARTHEST LOOP", fmt((st.loops || 0) + 1), RGB(200, 185, 255)],
 			["TIME FLOWN", hours(st.time), WHITE],
-			["SKIN", String(p.skin || "Default").toUpperCase(), GEM],
-			["DEATH EFFECT", String(p.death || "Default").toUpperCase(), KEY],
+			["SKIN", niceName(p.skin || "Default"), GEM],
+			["DEATH EFFECT", niceName(p.death || "Default"), KEY],
 			["ACHIEVEMENTS", (p.ach || 0) + " / " + (Game.ACH_TOTAL || 0), COIN],
 			["PLAYING SINCE", ago(p.created), DIM],
 		];
@@ -6013,7 +6328,7 @@ async function crash(hits) {
 	Missiles.clear();
 	const my = runId;
 	const at = pos;
-	sfx(data.death === "Nuke" ? "crash_nuke" : data.death === "Confetti" ? "crash_confetti" : data.death === "Pixel" ? "crash_pixel" : "crash");
+	sfx((Game.DEATHS[data.death] || Game.DEATHS.Default).sfx);
 	wreck(vx);
 	const blastK = deathEffect(at);
 	for (const h of hits) if (h.GetAttribute("Break") && h.Parent) shatter(h, at, blastK);
@@ -6131,7 +6446,9 @@ Game.loopAround = () => {
 	Game.loopBase += Math.floor(-pos.Z);
 	Game.fireAfter = runTime + 5;
 	Missiles.clear();
+	const tier = Game.flow.tier;
 	Game.flow.reset();
+	Game.flow.tier = tier;
 	Game.boss2.reset();
 	Game.guns.clear();
 	for (const k in Game.marks) delete Game.marks[k];
@@ -6152,7 +6469,7 @@ Game.loopAround = () => {
 	Game.cam.last = null;
 	Game.cam.blend = null;
 	regenerate(0, 0);
-	buildPlane(data.skin);
+	buildPlane(Game.tierPlane());
 	banner("LOOP " + (Game.loop + 1) + ", FASTER", COIN, 3);
 	sfx("loop_banner");
 };
@@ -6418,7 +6735,7 @@ function step(dt) {
 	if (Game.hitFor !== planeParts) {
 		Game.hitFor = planeParts;
 		// the big ones (ufo, biplane) get the normal plane's shape, so no skin is harder than the default
-		if (Game.planeSkin === "UFO" || Game.planeSkin === "Biplane") {
+		if (!["Default", "Jet", "Paper", "Rocket", "TeamJet", "Stealth", "Neon", "Gold"].includes(Game.planeSkin)) {
 			Game.hitParts = [[CFn(0, 0, 0), V3(2, 2, 8)], [CFn(0, 0, -0.5), V3(12, 0.5, 3)], [CFn(0, 0, 3.3), V3(5, 0.4, 1.5)], [CFn(0, 1.4, 3.3), V3(0.4, 2, 1.5)]].map(([off, size]) => ({ off, size }));
 		} else {
 			Game.hitParts = (planeParts || [])
@@ -7947,7 +8264,7 @@ if (DEV) window.__dev = { crash: () => task.spawn(crash, []), data: () => data, 
 // ------------------------------------------------------------------ old version warning
 // every build has its own number, the page checks now and then whether a newer one is online
 (() => {
-	const BUILD = "1790689811";
+	const BUILD = "1790693791";
 	if (BUILD.startsWith("__")) return;
 	const bar = make("TextButton", {
 		AnchorPoint: V2(0.5, 0),
