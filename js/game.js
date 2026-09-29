@@ -3,9 +3,9 @@ import {
 	camera, Lighting, Instance, workspace, markQueryRoot, Enum, OverlapParams, TweenService, TweenInfo, Debris, UIS, playSfx, loopSound, loadSounds, setSfxVolume,
 	NumberSequence, NumberSequenceKeypoint, NumberRange, ColorSequence, ColorSequenceKeypoint, guiRootInst, setUiScale, setLowGraphics, physicsGround,
 	mergeFloor, start, perf,
-} from "./engine.js?v=1790682817";
-import * as Server from "./server.js?v=1790682817";
-import * as Online from "./online.js?v=1790682817";
+} from "./engine.js?v=1790689811";
+import * as Server from "./server.js?v=1790689811";
+import * as Online from "./online.js?v=1790689811";
 
 const V3 = (x, y, z) => new Vector3(x, y, z);
 const RGB = Color3.fromRGB;
@@ -598,9 +598,16 @@ let trackChunks, updateMovers, regenerate, canyonPath, canyonHalfGap, updatePads
 			part(Vector3.one.mul(3.6), RGB(80, 200, 255), tip, { Material: "Glass", Transparency: 0.2, Reflectance: 0.15 });
 			part(Vector3.one.mul(2), RGB(200, 245, 255), tip, { Material: "Neon", Transparency: 0.1 });
 		} else if (kind === "heart") {
-			const red = RGB(235, 30, 60);
+			const red = RGB(235, 30, 60), gold = RGB(255, 200, 50);
 			for (const sx of [-0.75, 0.75]) part(Vector3.one.mul(2.3), red, CFn(sx, 0.55, 0), { Shape: "Ball", Material: "Neon" });
 			part(V3(2.5, 2.5, 1.9), red, CFn(0, -0.45, 0).mul(Ang(0, 0, rad(45))), { Material: "Neon" });
+			// a golden rim: the same heart a bit bigger just behind it, plus a ring of gold around it
+			for (const sx of [-0.75, 0.75]) part(Vector3.one.mul(2.9), gold, CFn(sx, 0.55, 0.45), { Shape: "Ball", Material: "Neon" });
+			part(V3(3.1, 3.1, 1.2), gold, CFn(0, -0.45, 0.6).mul(Ang(0, 0, rad(45))), { Material: "Neon" });
+			for (let i = 0; i < 12; i++) {
+				const a = (i * Math.PI) / 6;
+				part(V3(0.5, 1.5, 0.5), gold, CFn(Math.cos(a) * 3.4, Math.sin(a) * 3.4, 0).mul(Ang(0, 0, a)), { Material: "Neon" });
+			}
 		} else {
 			const gold = RGB(255, 190, 45);
 			part(V3(0.7, 3.8, 0.7), gold, CFn(0, -1.3, 0), { Material: "Metal" });
@@ -2070,6 +2077,11 @@ let openPanel, closePanels, startRun, toMenu;
 
 	Game.go = async (id) => {
 		if (Game.going) return;
+		// no account yet: that comes first
+		if (Game.forceAccount && !Online.account() && Online.enabled() && !Game.offlineOk()) {
+			Game.forceAccount();
+			return;
+		}
 		Game.race = null;
 		if (Game.leaveQueue) Game.leaveQueue();
 		Game.going = true;
@@ -3549,6 +3561,7 @@ function xpBar(parent, size, pos, k, color) {
 	// logged in: who you are and a way out
 	const offR = row(ap.body, 50, 1);
 	const offBtn = button(offR, "NO INTERNET? PLAY OFFLINE", U2(1, -10, 0, 42), UO(0, 4), () => {
+		ap.offlineOk = true;
 		unlock();
 		closePanels();
 	}, 0.5);
@@ -3616,12 +3629,13 @@ function xpBar(parent, size, pos, k, color) {
 	}
 	// first time here: no account, no playing. the panel can't be closed until you're in
 	Game.forceAccount = () => {
-		if (Online.account()) return;
+		if (Online.account() || ap.offlineOk || mode !== "menu") return;
 		ap.locked = true;
 		ap.then = null;
 		makeNew = !data.name || !data.best;
 		openPanel("name");
 	};
+	Game.offlineOk = () => !!ap.offlineOk;
 	function unlock() {
 		ap.locked = false;
 		ap.xBtn.Visible = true;
@@ -5740,8 +5754,31 @@ function collect(p) {
 		stats.hearts = (stats.hearts || 0) + 1;
 		popup(PAD.heart[1], PAD.heart[0]);
 		shake = Math.max(shake, 0.2);
+		Game.heartFx();
 	}
 }
+
+// picking up a heart: gold washes over the screen and a big heart pops out of the middle
+Game.heartFx = () => {
+	const wash = make("Frame", { Size: US(1, 1), BackgroundColor3: RGB(255, 200, 60), BackgroundTransparency: 0.45, ZIndex: 30, Parent: gui });
+	wash.el.style.pointerEvents = "none";
+	make("UIGradient", { Transparency: new NumberSequence([NumberSequenceKeypoint.new(0, 0), NumberSequenceKeypoint.new(0.5, 0.85), NumberSequenceKeypoint.new(1, 0)]), Rotation: 90, Parent: wash });
+	tw(wash, 0.9, { BackgroundTransparency: 1 });
+	Debris.AddItem(wash, 1);
+	const h = Icons.make("heart", gui, 120);
+	h.AnchorPoint = V2(0.5, 0.5);
+	h.Position = US(0.5, 0.45);
+	h.ZIndex = 31;
+	const sc = make("UIScale", { Scale: 0.2, Parent: h });
+	tw(sc, 0.35, { Scale: 1.3 }, "Back");
+	task.delay(0.45, () => {
+		tw(sc, 0.5, { Scale: 2.2 });
+		tw(h, 0.5, { Position: US(0.5, 0.35) });
+		for (const d of h.GetDescendants()) if (d.BackgroundTransparency !== undefined) tw(d, 0.5, { BackgroundTransparency: 1 });
+	});
+	Debris.AddItem(h, 1.1);
+	flash();
+};
 
 Game.pickupFx = (m, kind) => {
 	m.SetAttribute("Taken", true);
@@ -6836,7 +6873,7 @@ applySettings();
 toMenu();
 start();
 document.getElementById("boot").remove();
-if (DEV) window.__dev = { crash: () => task.spawn(crash, []), data: () => data, stats: () => stats, vs: () => Game.versusToggle(), reg: async (n, p) => { await Online.register(n, p); request("set_name", n); return Online.account(); }, win: () => Game._vsWin(), vsd: () => Game._vsDebug(), dbg: () => [mode, dead, !!stats, !!planeMain, planeMain && !!planeMain.Parent, Game.raceState.mid], race: () => [Game.race, Game.raceState.inQueue, Game.queueText(), JSON.stringify(Game.raceState.final)], shot: () => Game.flow.startApproach(), state: () => [mode, curStage, Game.flow.cine && Game.flow.cine.kind, Math.round(-pos.Z)] };
+if (DEV) window.__dev = { crash: () => task.spawn(crash, []), data: () => data, stats: () => stats, vs: () => Game.versusToggle(), heart: () => Game.heartFx(), pad: (k) => Game.makePad(k, pos.X, pos.Z - 45, pickups), reg: async (n, p) => { await Online.register(n, p); request("set_name", n); return Online.account(); }, win: () => Game._vsWin(), vsd: () => Game._vsDebug(), dbg: () => [mode, dead, !!stats, !!planeMain, planeMain && !!planeMain.Parent, Game.raceState.mid], race: () => [Game.race, Game.raceState.inQueue, Game.queueText(), JSON.stringify(Game.raceState.final)], shot: () => Game.flow.startApproach(), state: () => [mode, curStage, Game.flow.cine && Game.flow.cine.kind, Math.round(-pos.Z)] };
 
 // ------------------------------------------------------------------ versus
 // same idea as roblox: queue up, everyone starts on the same map, farthest wins.
@@ -6936,7 +6973,7 @@ if (DEV) window.__dev = { crash: () => task.spawn(crash, []), data: () => data, 
 					const g = ghosts.get(id);
 					if (g && g.model.Parent) ghostBoom(g.main.Position);
 					const name = R.runners && R.runners[id];
-					if (name && !v.won) notify(name + " crashed!", BAD);
+
 					dropGhost(id);
 					checkOver();
 				}
@@ -7057,12 +7094,16 @@ if (DEV) window.__dev = { crash: () => task.spawn(crash, []), data: () => data, 
 	}
 	RunService.RenderStepped.Connect(() => {
 		const on = !!Game.race && !!R.runners && mode === "run" && !dead && !R.final && !Game.hold;
-		status.Visible = on;
+		// no text bar while racing, the standings on the right say enough. only the 2x tag when it matters
+		status.Visible = false;
 		if (!drainTag && Game.fuelBar) {
-			drainTag = text(Game.fuelBar, "2X DRAIN", UO(110, 26), U2(1, 58, 0, 0), 20, BAD, LEFT);
+			drainTag = text(Game.fuelBar, "2X", UO(60, 26), U2(1, 58, 0, 0), 24, BAD, LEFT);
 			drainTag.TextStrokeTransparency = 0.4;
 		}
-		if (drainTag) drainTag.Visible = on && Game.behind;
+		if (drainTag) {
+			drainTag.Visible = on && Game.behind;
+			drainTag.TextTransparency = 0.5 - 0.5 * Math.sin(clock() * 10);
+		}
 		if (!on) return;
 		const mine = (stats && stats.dist) || 0;
 		let best = 0, bestName = "";
@@ -7105,13 +7146,8 @@ if (DEV) window.__dev = { crash: () => task.spawn(crash, []), data: () => data, 
 		}
 		// overtakes get called out
 		if (lastPlace && place !== lastPlace) {
-			if (place === 1) {
-				banner("YOU TOOK THE LEAD!", COIN, 1.6);
-				sfx("map_clear");
-			} else if (lastPlace === 1) {
-				notify(bestName + " took the lead", BAD);
-				sfx("bad");
-			}
+			if (place === 1) sfx("map_clear");
+			else if (lastPlace === 1) sfx("bad");
 		}
 		lastPlace = place;
 	});
@@ -7911,7 +7947,7 @@ if (DEV) window.__dev = { crash: () => task.spawn(crash, []), data: () => data, 
 // ------------------------------------------------------------------ old version warning
 // every build has its own number, the page checks now and then whether a newer one is online
 (() => {
-	const BUILD = "1790682817";
+	const BUILD = "1790689811";
 	if (BUILD.startsWith("__")) return;
 	const bar = make("TextButton", {
 		AnchorPoint: V2(0.5, 0),
