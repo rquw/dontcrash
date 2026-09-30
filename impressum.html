@@ -16,24 +16,31 @@ p, li { color: var(--text); font-size: 16px; }
 .dim { color: var(--dim); }
 .card { background: var(--card); border-radius: 12px; padding: 18px 22px; }
 a { color: var(--accent); }
-.back { display: inline-block; margin-bottom: 24px; text-decoration: none; font-weight: 700; }
+.top { display: flex; justify-content: space-between; align-items: center; gap: 12px; margin-bottom: 24px; }
+.back { text-decoration: none; font-weight: 700; }
+.lang { display: flex; background: var(--card); border-radius: 10px; padding: 4px; }
+.lang button { font: inherit; font-weight: 700; color: var(--dim); background: none; border: 0; border-radius: 8px; padding: 6px 14px; cursor: pointer; }
+.lang button.on { background: var(--accent); color: #0b0d12; }
 ul { padding-left: 20px; }
+[data-lang] { display: none; }
+body.de [data-lang="de"], body.en [data-lang="en"] { display: block; }
 </style>
 </head>
-<body>
+<body class="de">
 <main>
-<a class="back" href="./">← ZURÜCK ZUM SPIEL</a>
+<div class="top">
+	<a class="back" href="./"><span data-lang="de">← ZURÜCK ZUM SPIEL</span><span data-lang="en">← BACK TO THE GAME</span></a>
+	<div class="lang"><button id="b-de" class="on" onclick="setLang('de')">DE</button><button id="b-en" onclick="setLang('en')">EN</button></div>
+</div>
+
+<!-- ---------------- deutsch -->
+<div data-lang="de">
 <h1>IMPRESSUM</h1>
 <p class="dim">Informationen gemäß § 5 E-Commerce-Gesetz und Offenlegung gemäß § 25 Mediengesetz</p>
-
 <div class="card">
-<p><b>Fabio Schwaiger</b><br>
-STRASSE HAUSNUMMER<br>
-4452 Ternberg<br>
-Österreich</p>
-<p>E-Mail: <a href="mailto:EMAIL">EMAIL</a></p>
-<p class="dim">Betrieb des Browserspiels „DON'T CRASH!“.<br>
-Umsatzsteuerbefreit als Kleinunternehmer gemäß § 6 Abs. 1 Z 27 UStG.</p>
+<p><b>Fabio Schwaiger</b><br>Wildgansstraße 5<br>4452 Ternberg<br>Österreich</p>
+<p>E-Mail: <a href="mailto:schwaiger.fabio0907@gmail.com">schwaiger.fabio0907@gmail.com</a></p>
+<p class="dim">Betrieb des Browserspiels „DON'T CRASH!“.<br>Umsatzsteuerbefreit als Kleinunternehmer gemäß § 6 Abs. 1 Z 27 UStG.</p>
 </div>
 
 <h2>Käufe im Spiel</h2>
@@ -54,8 +61,52 @@ Umsatzsteuerbefreit als Kleinunternehmer gemäß § 6 Abs. 1 Z 27 UStG.</p>
 <li><b>Hosting:</b> Die Website liegt auf GitHub Pages (GitHub, Inc.). Dabei fallen technisch nötige Server-Logs an, zum Beispiel deine IP-Adresse.</li>
 </ul>
 <p>Es gibt keine Werbung und kein Tracking. Deinen Account und alle Daten kannst du jederzeit im Spiel im Account-Menü mit DELETE ACCOUNT selbst löschen. Du hast das Recht auf Auskunft, Berichtigung, Löschung und Einschränkung deiner Daten. Schreib dafür an die E-Mail oben. Beschweren kannst du dich bei der österreichischen Datenschutzbehörde (<a href="https://www.dsb.gv.at" target="_blank">dsb.gv.at</a>).</p>
-
 <p class="dim" style="margin-top:40px">Stand: September 2026</p>
+</div>
+
+<!-- ---------------- english -->
+<div data-lang="en">
+<h1>LEGAL NOTICE</h1>
+<p class="dim">Information according to § 5 of the Austrian E-Commerce Act and § 25 of the Austrian Media Act</p>
+<div class="card">
+<p><b>Fabio Schwaiger</b><br>Wildgansstraße 5<br>4452 Ternberg<br>Austria</p>
+<p>Email: <a href="mailto:schwaiger.fabio0907@gmail.com">schwaiger.fabio0907@gmail.com</a></p>
+<p class="dim">Operator of the browser game "DON'T CRASH!".<br>VAT exempt as a small business according to § 6 (1) 27 of the Austrian VAT Act.</p>
+</div>
+
+<h2>Purchases</h2>
+<ul>
+<li>In the shop you can buy gems, packs and exclusive skins with real money. Everything except the exclusive skins can also be earned for free by playing.</li>
+<li>All prices are final prices. As a small business, no VAT is charged.</li>
+<li>Payments are handled by Stripe (Stripe Payments Europe Ltd.). We never see your card details.</li>
+<li>Purchased content is added to your account right after payment. Since it's digital content delivered immediately, your right of withdrawal ends once it's delivered (§ 18 (1) 11 FAGG).</li>
+<li>If something didn't arrive or went wrong, send an email to the address above and we'll sort it out.</li>
+</ul>
+
+<h2>Privacy</h2>
+<p>We only store what the game needs:</p>
+<ul>
+<li><b>Your account:</b> name and password (encrypted) at Google Firebase (Google Ireland Ltd.).</li>
+<li><b>Your progress:</b> save data, leaderboard, online status and purchases, also at Google Firebase and locally in your browser.</li>
+<li><b>Payments:</b> processed by Stripe. We only learn which pack was paid for. Stripe's confirmation goes through a Cloudflare Worker (Cloudflare, Inc.).</li>
+<li><b>Hosting:</b> the website is hosted on GitHub Pages (GitHub, Inc.), which keeps technically necessary server logs such as your IP address.</li>
+</ul>
+<p>No ads, no tracking. You can delete your account and all your data yourself at any time in the account menu with DELETE ACCOUNT. You have the right to access, correct, delete and restrict your data. Just email the address above. You can file a complaint with the Austrian Data Protection Authority (<a href="https://www.dsb.gv.at" target="_blank">dsb.gv.at</a>).</p>
+<p class="dim" style="margin-top:40px">Last updated: September 2026</p>
+</div>
 </main>
+<script>
+function setLang(l) {
+	document.body.className = l;
+	document.documentElement.lang = l;
+	document.title = (l === "de" ? "Impressum" : "Legal notice") + " – DON'T CRASH!";
+	document.getElementById("b-de").className = l === "de" ? "on" : "";
+	document.getElementById("b-en").className = l === "en" ? "on" : "";
+	try { localStorage.setItem("dontcrash_imp_lang", l); } catch (e) {}
+}
+let start = "de";
+try { start = localStorage.getItem("dontcrash_imp_lang") || (navigator.language.startsWith("de") ? "de" : "en"); } catch (e) {}
+setLang(start);
+</script>
 </body>
 </html>
