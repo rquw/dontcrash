@@ -3,9 +3,9 @@ import {
 	camera, Lighting, Instance, workspace, markQueryRoot, Enum, OverlapParams, TweenService, TweenInfo, Debris, UIS, playSfx, loopSound, loadSounds, setSfxVolume,
 	NumberSequence, NumberSequenceKeypoint, NumberRange, ColorSequence, ColorSequenceKeypoint, guiRootInst, setUiScale, setLowGraphics, physicsGround,
 	mergeFloor, start, perf,
-} from "./engine.js?v=1790696329";
-import * as Server from "./server.js?v=1790696329";
-import * as Online from "./online.js?v=1790696329";
+} from "./engine.js?v=1790756129";
+import * as Server from "./server.js?v=1790756129";
+import * as Online from "./online.js?v=1790756129";
 
 const V3 = (x, y, z) => new Vector3(x, y, z);
 const RGB = Color3.fromRGB;
@@ -6751,21 +6751,13 @@ function step(dt) {
 	const phasing = nitroK > 0.2 || cheat || Game.flow.approach || Game.god;
 	if (buff.immortal > 0 || phasing) ghost = true;
 	const hits = [];
-	// the hitbox is the plane itself: every visible piece of the skin checks its own shape
-	if (Game.hitFor !== planeParts) {
-		Game.hitFor = planeParts;
-		// the big ones (ufo, biplane) get the normal plane's shape, so no skin is harder than the default
-		if (!["Default", "Jet", "Paper", "Rocket", "TeamJet", "Stealth", "Neon", "Gold"].includes(Game.planeSkin)) {
-			Game.hitParts = [[CFn(0, 0, 0), V3(2, 2, 8)], [CFn(0, 0, -0.5), V3(12, 0.5, 3)], [CFn(0, 0, 3.3), V3(5, 0.4, 1.5)], [CFn(0, 1.4, 3.3), V3(0.4, 2, 1.5)]].map(([off, size]) => ({ off, size }));
-		} else {
-			Game.hitParts = (planeParts || [])
-				.filter((p) => p.Transparency < 0.95 && p.Size.Magnitude > 0.8)
-				.map((p) => ({
-					part: p,
-					// round shapes get a slightly smaller box so the corners don't count
-					size: p._shape === "Ball" ? V3(1, 1, 1).mul(Math.min(p.Size.X, p.Size.Y, p.Size.Z) * 0.82) : p._shape === "Cylinder" ? V3(p.Size.X, p.Size.Y * 0.85, p.Size.Z * 0.85) : p.Size,
-				}));
-		}
+	// every skin gets the rocket's hitbox: a thin body plus its little fins. same for everyone, big skins aren't worse off
+	if (!Game.hitParts) {
+		Game.hitParts = [
+			[CFn(0, 0, -0.5), V3(2, 2, 11)],
+			[CFn(0, 0, 4), V3(5, 0.3, 2)],
+			[CFn(0, 0, 4), V3(0.3, 5, 2)],
+		].map(([off, size]) => ({ off, size }));
 	}
 	const touched = new Set();
 	for (const e of Game.hitParts) {
@@ -8284,7 +8276,7 @@ if (DEV) window.__dev = { crash: () => task.spawn(crash, []), data: () => data, 
 // ------------------------------------------------------------------ old version warning
 // every build has its own number, the page checks now and then whether a newer one is online
 (() => {
-	const BUILD = "1790696329";
+	const BUILD = "1790756129";
 	if (BUILD.startsWith("__")) return;
 	const bar = make("TextButton", {
 		AnchorPoint: V2(0.5, 0),
