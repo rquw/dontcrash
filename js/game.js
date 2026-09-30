@@ -3,9 +3,9 @@ import {
 	camera, Lighting, Instance, workspace, markQueryRoot, Enum, OverlapParams, TweenService, TweenInfo, Debris, UIS, playSfx, loopSound, loadSounds, setSfxVolume,
 	NumberSequence, NumberSequenceKeypoint, NumberRange, ColorSequence, ColorSequenceKeypoint, guiRootInst, setUiScale, setLowGraphics, physicsGround,
 	mergeFloor, start, perf,
-} from "./engine.js?v=1790763292";
-import * as Server from "./server.js?v=1790763292";
-import * as Online from "./online.js?v=1790763292";
+} from "./engine.js?v=1790764490";
+import * as Server from "./server.js?v=1790764490";
+import * as Online from "./online.js?v=1790764490";
 
 const V3 = (x, y, z) => new Vector3(x, y, z);
 const RGB = Color3.fromRGB;
@@ -7316,7 +7316,7 @@ applySettings();
 toMenu();
 start();
 document.getElementById("boot").remove();
-if (DEV) window.__dev = { crash: () => task.spawn(crash, []), data: () => data, stats: () => stats, vs: () => Game.versusToggle(), heart: () => Game.heartFx(), pad: (k) => Game.makePad(k, pos.X, pos.Z - 45, pickups), reg: async (n, p) => { await Online.register(n, p); request("set_name", n); return Online.account(); }, win: () => Game._vsWin(), vsd: () => Game._vsDebug(), dbg: () => [mode, dead, !!stats, !!planeMain, planeMain && !!planeMain.Parent, Game.raceState.mid], race: () => [Game.race, Game.raceState.inQueue, Game.queueText(), JSON.stringify(Game.raceState.final)], shot: () => Game.flow.startApproach(), uid: () => Online.myId(), gems: () => { Game.openShop(); shopTab = "GEMS"; rebuildShop(); }, run: (id) => startRun(id || "towers"), skip: () => Game.skip(), ahead: () => { const r = Math.floor(-pos.Z / CHUNK); return [r, beyondStart, stageFor(-pos.Z)[0], stageFor((r + 5) * CHUNK + 1)[0], stageFor((r + 40) * CHUNK + 1)[0]]; }, state: () => [mode, curStage, Game.flow.cine && Game.flow.cine.kind, Math.round(-pos.Z)] };
+if (DEV) window.__dev = { crash: () => task.spawn(crash, []), data: () => data, stats: () => stats, vs: () => Game.versusToggle(), heart: () => Game.heartFx(), pad: (k) => Game.makePad(k, pos.X, pos.Z - 45, pickups), reg: async (n, p) => { await Online.register(n, p); request("set_name", n); return Online.account(); }, win: () => Game._vsWin(), vsd: () => Game._vsDebug(), dbg: () => [mode, dead, !!stats, !!planeMain, planeMain && !!planeMain.Parent, Game.raceState.mid], race: () => [Game.race, Game.raceState.inQueue, Game.queueText(), JSON.stringify(Game.raceState.final)], shot: () => Game.flow.startApproach(), uid: () => Online.myId(), gift: () => openPanel("gift"), push: () => Game.pushProfile(), gems: () => { Game.openShop(); shopTab = "GEMS"; rebuildShop(); }, run: (id) => startRun(id || "towers"), skip: () => Game.skip(), ahead: () => { const r = Math.floor(-pos.Z / CHUNK); return [r, beyondStart, stageFor(-pos.Z)[0], stageFor((r + 5) * CHUNK + 1)[0], stageFor((r + 40) * CHUNK + 1)[0]]; }, state: () => [mode, curStage, Game.flow.cine && Game.flow.cine.kind, Math.round(-pos.Z)] };
 
 // ------------------------------------------------------------------ versus
 // same idea as roblox: queue up, everyone starts on the same map, farthest wins.
@@ -8390,7 +8390,7 @@ if (DEV) window.__dev = { crash: () => task.spawn(crash, []), data: () => data, 
 // ------------------------------------------------------------------ old version warning
 // every build has its own number, the page checks now and then whether a newer one is online
 (() => {
-	const BUILD = "1790763292";
+	const BUILD = "1790764490";
 	if (BUILD.startsWith("__")) return;
 	const bar = make("TextButton", {
 		AnchorPoint: V2(0.5, 0),
@@ -8716,10 +8716,13 @@ for (const id in PACKS) if (PACKS[id].link.includes("/test_") && !DEV) PACKS[id]
 		Debris.AddItem(wash, 1.3);
 		const bits = [];
 		if (g.skin) bits.push(niceName(g.skin) + " SKIN");
+		if (g.death) bits.push(niceName(g.death));
 		if (g.gems) bits.push("+" + fmt(g.gems) + " GEMS");
 		if (g.coins) bits.push("+" + fmt(g.coins) + " COINS");
+		if (!bits.length && g.keys) bits.push("+" + g.keys + " KEYS");
+		if (!bits.length && g.revives) bits.push("+" + g.revives + " REVIVES");
 		banner(bits.slice(0, 2).join("  "), g.skin ? PINK : GEM, 3.5);
-		notify("thanks for supporting the game!", GOOD);
+		notify(g.pack === "gift" ? "a gift from " + String(g.from || "the dev").toUpperCase() + (g.note ? ": " + String(g.note).slice(0, 80) : "") : "thanks for supporting the game!", GOOD);
 		sfx("levelup");
 		if (g.skin && mode === "menu") buildPlane(g.skin);
 		Game.pushProfile();
@@ -8730,7 +8733,7 @@ for (const id in PACKS) if (PACKS[id].link.includes("/test_") && !DEV) PACKS[id]
 	async function claim(uid, id, g) {
 		if (busy.has(id)) return;
 		busy.add(id);
-		const [ok] = request("paid", { id, gems: g.gems, coins: g.coins, keys: g.keys, revives: g.revives, skin: g.skin });
+		const [ok] = request("paid", { id, gems: g.gems, coins: g.coins, keys: g.keys, revives: g.revives, skin: g.skin, death: g.death });
 		try {
 			await Online.put(`grants/${uid}/${id}/claimed`, true);
 		} catch (e) {
@@ -8775,4 +8778,76 @@ for (const id in PACKS) if (PACKS[id].link.includes("/test_") && !DEV) PACKS[id]
 			history.replaceState(null, "", location.pathname);
 		} catch (e) {}
 	}
+})();
+
+// ------------------------------------------------------------------ gifts, only in ?dev
+// drops a grant for someone, their game picks it up like a purchase. the database only lets the dev account write these
+(() => {
+	if (!DEV) return;
+	const gp = panel("gift", "GIVE SOMEONE STUFF", UO(640, 560));
+	function box(parent, ph, size, pos) {
+		const b = make("TextBox", { Size: size, Position: pos, BackgroundColor3: BLACK, BackgroundTransparency: 0.2, PlaceholderText: ph, Text: "", Font: FONT, TextSize: 22, TextColor3: WHITE, Parent: parent });
+		return b;
+	}
+	const r1 = row(gp.body, 64, 1);
+	const who = box(r1, "PLAYER NAME", U2(1, -10, 0, 54), UO(0, 5));
+	const r2 = row(gp.body, 64, 1);
+	const nums = {};
+	[["gems", "GEMS"], ["coins", "COINS"], ["keys", "KEYS"], ["revives", "REVIVES"]].forEach(([k, ph], i) => {
+		nums[k] = box(r2, ph, U2(0.25, -8, 0, 54), U2(0.25 * i, 0, 0, 5));
+	});
+	// click to cycle through everything there is
+	function picker(label, list) {
+		const r = row(gp.body, 64, 1);
+		text(r, label, UO(120, 54), UO(4, 5), 20, DIM, LEFT);
+		let i = -1;
+		const b = button(r, "NONE", U2(1, -130, 0, 54), UO(124, 5), () => {
+			i = i + 1 >= list.length ? -1 : i + 1;
+			b.Text = i < 0 ? "NONE" : niceName(list[i].id) + (list[i].eur ? "  (€)" : "");
+		}, 0.3);
+		b.TextSize = 22;
+		return () => (i < 0 ? null : list[i].id);
+	}
+	const skin = picker("SKIN", CONFIG.skins.filter((x) => x.id !== "Default"));
+	const death = picker("DEATH", CONFIG.deaths.filter((x) => x.id !== "Default"));
+	const r5 = row(gp.body, 64, 1);
+	const note = box(r5, "MESSAGE (OPTIONAL)", U2(1, -10, 0, 54), UO(0, 5));
+	note.el.maxLength = 80;
+	const r6 = row(gp.body, 70, 1);
+	const send = async () => {
+		const name = who.Text.trim().toLowerCase();
+		if (!name) return notify("type a name", BAD);
+		let players;
+		try {
+			players = (await Online.get("players")) || {};
+		} catch (e) {
+			return notify("couldn't load players", BAD);
+		}
+		const uid = Object.keys(players).find((id) => players[id] && String(players[id].name || "").toLowerCase() === name);
+		if (!uid) return notify("nobody called " + name, BAD);
+		const g = { pack: "gift", from: Online.account() || "the dev", at: Online.SERVER_TIME };
+		for (const k in nums) {
+			const n = Math.floor(Number(nums[k].Text) || 0);
+			if (n > 0) g[k] = n;
+		}
+		if (skin()) g.skin = skin();
+		if (death()) g.death = death();
+		if (note.Text.trim()) g.note = note.Text.trim();
+		if (Object.keys(g).length <= 3) return notify("pick something to give", BAD);
+		try {
+			await Online.put(`grants/${uid}/gift_${Date.now().toString(36)}`, g);
+			notify("sent to " + players[uid].name, GOOD);
+			sfx("good");
+			for (const k in nums) nums[k].Text = "";
+			note.Text = "";
+		} catch (e) {
+			notify("not allowed, log in with the dev account", BAD);
+			sfx("bad");
+		}
+	};
+	const sb = button(r6, "SEND GIFT", U2(1, -10, 0, 60), UO(0, 5), send, 0.05);
+	sb.TextColor3 = GOOD;
+	const b = button(menu, "GIVE STUFF", UO(200, 40), U2(1, -216, 1, -104), () => openPanel("gift"), 0.3);
+	b.TextSize = 18;
+	b.TextColor3 = GEM;
 })();

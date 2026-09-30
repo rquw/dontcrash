@@ -412,6 +412,10 @@ handlers.paid = (g) => {
 		s.data.skins[g.skin] = true;
 		s.data.skin = g.skin;
 	}
+	if (typeof g.death === "string" && CONFIG.deaths.some((x) => x.id === g.death)) {
+		s.data.deaths[g.death] = true;
+		s.data.death = g.death;
+	}
 	return [true, "thanks!"];
 };
 handlers.buy_revive = (n) => {

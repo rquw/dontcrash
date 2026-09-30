@@ -27,11 +27,12 @@ export default {
 		if (ev.type !== "checkout.session.completed" && ev.type !== "checkout.session.async_payment_succeeded") return new Response("ignored");
 
 		const s = ev.data.object;
-		if (s.payment_status !== "paid") return new Response("not paid yet");
-		// the game sends "<player>__<pack>", the price has to match the pack so nobody gets the big one for 1,99
+		// a 100% coupon comes through as "no_payment_required"
+		if (s.payment_status !== "paid" && s.payment_status !== "no_payment_required") return new Response("not paid yet");
+		// the game sends "<player>__<pack>", the price before any coupon has to match the pack so nobody gets the big one for 1,99
 		const [uid, packId] = String(s.client_reference_id || "").split("__");
 		const pack = PACKS[packId];
-		if (!uid || !/^[A-Za-z0-9-]{6,128}$/.test(uid) || !pack || pack.amt !== s.amount_total) return new Response("no player or wrong pack");
+		if (!uid || !/^[A-Za-z0-9-]{6,128}$/.test(uid) || !pack || pack.amt !== (s.amount_subtotal ?? s.amount_total)) return new Response("no player or wrong pack");
 
 		const url = `${env.FIREBASE_DB.replace(/\/+$/, "")}/grants/${uid}/${s.id}.json?auth=${env.FIREBASE_SECRET}`;
 		// stripe sometimes sends the same event twice, one payment only counts once
