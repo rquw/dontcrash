@@ -348,14 +348,38 @@ const bloom = new UnrealBloomPass(new THREE.Vector2(window.innerWidth, window.in
 composer.addPass(bloom);
 composer.addPass(new OutputPass());
 
+// on tablets the keyboard squeezes the window while you type. rescaling everything then makes the whole ui jump around,
+// so that waits until the keyboard is gone
+let pendingResize = false;
+const typingOnTouch = () => ("ontouchstart" in window || navigator.maxTouchPoints > 0) && document.activeElement && document.activeElement.tagName === "INPUT";
+document.addEventListener("focusout", () => {
+	setTimeout(() => {
+		if (document.activeElement && document.activeElement.tagName === "INPUT") return;
+		// ios scrolls the page to show the text field and leaves it there
+		window.scrollTo(0, 0);
+		document.documentElement.scrollTop = 0;
+		document.body.scrollTop = 0;
+		if (pendingResize) {
+			pendingResize = false;
+			applySize();
+		}
+	}, 60);
+}, true);
 window.addEventListener("resize", () => {
+	if (typingOnTouch()) {
+		pendingResize = true;
+		return;
+	}
+	applySize();
+});
+function applySize() {
 	renderer.setSize(window.innerWidth, window.innerHeight);
 	composer.setSize(window.innerWidth, window.innerHeight);
 	cam3.aspect = window.innerWidth / window.innerHeight;
 	cam3.updateProjectionMatrix();
 	camera.ViewportSize = new Vector2(window.innerWidth, window.innerHeight);
 	camera._vpSignal.Fire();
-});
+}
 
 export const camera = {
 	CFrame: new CFrame(0, 50, 50),
@@ -2106,6 +2130,13 @@ export class GuiObject extends Instance {
 			this.el = document.createElement(tag);
 			this.el.className = "gui " + (this._isButton ? "gui-btn" : "") + (cls === "ScrollingFrame" ? " gui-scroll" : "");
 			this.el._inst = this;
+			if (cls === "TextBox") {
+				// no auto capitals, autocorrect or spell check, names and codes aren't sentences
+				this.el.setAttribute("autocapitalize", "off");
+				this.el.setAttribute("autocorrect", "off");
+				this.el.setAttribute("autocomplete", "off");
+				this.el.spellcheck = false;
+			}
 			if (cls === "TextLabel" || cls === "TextButton" || cls === "TextBox") {
 				this.txt = cls === "TextBox" ? null : document.createElement("span");
 				if (this.txt) {

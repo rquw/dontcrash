@@ -3,9 +3,9 @@ import {
 	camera, Lighting, Instance, workspace, markQueryRoot, Enum, OverlapParams, TweenService, TweenInfo, Debris, UIS, playSfx, loopSound, loadSounds, setSfxVolume,
 	NumberSequence, NumberSequenceKeypoint, NumberRange, ColorSequence, ColorSequenceKeypoint, guiRootInst, setUiScale, setLowGraphics, physicsGround,
 	mergeFloor, start, perf,
-} from "./engine.js?v=1790764490";
-import * as Server from "./server.js?v=1790764490";
-import * as Online from "./online.js?v=1790764490";
+} from "./engine.js?v=1790765465";
+import * as Server from "./server.js?v=1790765465";
+import * as Online from "./online.js?v=1790765465";
 
 const V3 = (x, y, z) => new Vector3(x, y, z);
 const RGB = Color3.fromRGB;
@@ -1380,8 +1380,8 @@ let buildPlane;
 		add("Part", V3(12.2, 0.15, 0.3), shine, CFn(0, 0.3, -1.9), { Material: "Neon" });
 		add("Part", V3(1.2, 0.8, 2), RGB(255, 250, 220), CFn(0, 1.1, -2), { Material: "Neon", Transparency: 0.2 });
 	};
-	// ---------------- the ones you can only get with real money
-	SKIN_BUILD.Phoenix = (add) => {
+	// the first version of the phoenix, now for gems
+	SKIN_BUILD.Firebird = (add) => {
 		const red = RGB(200, 40, 20), orange = RGB(255, 120, 20), yellow = RGB(255, 210, 60);
 		add("Part", V3(1.6, 1.6, 7), red, CFn());
 		add("Part", V3(1.2, 1.2, 2), orange, CFn(0, 0.3, -4.2), { Material: "Neon" });
@@ -1396,59 +1396,194 @@ let buildPlane;
 		add("Part", V3(0.25, 0.2, 5), yellow, CFn(0, 0, 6), { Material: "Neon" });
 		add("Part", V3(0.25, 1.4, 1.6), orange, CFn(0, 1.1, -3.4).mul(Ang(-0.5, 0, 0)), { Material: "Neon" });
 	};
-	SKIN_BUILD.Galaxy = (add) => {
-		const deep = RGB(25, 10, 60), purple = RGB(150, 60, 255), pink = RGB(255, 90, 220), cyan = RGB(90, 220, 255);
-		add("Part", V3(2, 1.6, 8.5), deep, CFn());
-		add("Part", V3(1.3, 1, 2.4), cyan, CFn(0, 0.9, -2), { Material: "Neon", Transparency: 0.3 });
-		add("Part", V3(11, 0.3, 3.2), deep, CFn(0, 0, 0.6));
-		for (const side of [-1, 1]) {
-			add("Part", V3(10.5, 0.1, 0.35), purple, CFn(side * 0.1, 0.2, -0.9).mul(Ang(0, side * 0.04, 0)), { Material: "Neon" });
-			add("Part", V3(0.8, 0.8, 0.8), pink, CFn(side * 5.6, 0, 0.6), { Material: "Neon", Shape: "Ball" });
-			add("Part", V3(0.3, 2.2, 1.6), deep, CFn(side * 1.3, 1.1, 3.8).mul(Ang(0, 0, -side * 0.35)));
-			add("Part", V3(0.12, 2.2, 0.3), pink, CFn(side * 1.3, 1.1, 3.1).mul(Ang(0, 0, -side * 0.35)), { Material: "Neon" });
+	// ---------------- the ones you can only get with real money. these move: wings flap, rings spin, capes wave
+	// parts with a _tag get animated by SKIN_ANIM below
+	const NEON = { Material: "Neon" };
+	const tagged = (t, extra) => Object.assign({ _tag: t }, extra || {});
+	SKIN_BUILD.Phoenix = (add) => {
+		const crimson = RGB(150, 18, 8), red = RGB(255, 50, 15), orange = RGB(255, 130, 20), yellow = RGB(255, 220, 70), white = RGB(255, 250, 220);
+		// body and head
+		add("Part", V3(1.7, 1.5, 5.2), crimson, CFn(0, 0, 0.2));
+		add("Part", V3(1.1, 0.5, 4.6), orange, CFn(0, -0.55, 0.2), NEON);
+		add("Part", V3(1.3, 1.2, 1.7), red, CFn(0, 0.45, -3), NEON);
+		add("Part", V3(0.45, 0.4, 1.2), yellow, CFn(0, 0.3, -4.3).mul(Ang(-0.25, 0, 0)), NEON);
+		for (const s of [-1, 1]) add("Part", V3(0.25, 0.25, 0.25), white, CFn(s * 0.5, 0.75, -3.5), NEON);
+		// crest
+		for (let i = 0; i < 3; i++) add("Part", V3(0.15, 1.3 - i * 0.25, 0.4), i ? orange : yellow, CFn(0, 1.4 - i * 0.1, -2.9 + i * 0.45).mul(Ang(0.5 + i * 0.2, 0, 0)), tagged("crest", NEON));
+		// wings, three layers each, burning brighter to the tips
+		for (const s of [-1, 1]) {
+			const w = s < 0 ? "wingL" : "wingR";
+			add("Part", V3(3.2, 0.3, 2.8), crimson, CFn(s * 2.4, 0.25, -0.1).mul(Ang(0, s * 0.18, s * 0.08)), tagged(w));
+			add("Part", V3(3.2, 0.25, 2.3), red, CFn(s * 5.2, 0.5, 0.5).mul(Ang(0, s * 0.35, s * 0.12)), tagged(w, NEON));
+			add("Part", V3(2.8, 0.2, 1.7), orange, CFn(s * 7.8, 0.8, 1.4).mul(Ang(0, s * 0.6, s * 0.16)), tagged(w + "Tip", NEON));
+			for (let i = 0; i < 4; i++) add("Part", V3(0.28, 0.14, 2.6 - i * 0.3), i % 2 ? orange : yellow, CFn(s * (5 + i * 1.2), 0.55 + i * 0.1, 2.3 + i * 0.3).mul(Ang(0, s * (0.2 + i * 0.12), 0)), tagged(i > 1 ? w + "Tip" : w, NEON));
 		}
-		// a ring around the whole thing like a little planet
-		add("Part", V3(0.2, 9, 9), purple, CFn(0, 0, 0.6).mul(Ang(0, 0, Math.PI / 2)), { Shape: "Cylinder", Material: "Neon", Transparency: 0.75 });
-		add("Part", V3(1.4, 1.4, 0.6), cyan, CFn(0, 0, 4.4), { Material: "Neon" });
+		// tail: a fan of long burning feathers
+		for (let i = -2; i <= 2; i++) add("Part", V3(0.3, 0.14, 5 - Math.abs(i) * 0.6), i % 2 ? yellow : orange, CFn(i * 0.45, 0, 4.9).mul(Ang(0, -i * 0.22, 0)), tagged("tail" + (i + 2), NEON));
+	};
+	SKIN_BUILD.Galaxy = (add) => {
+		const deep = RGB(22, 8, 55), purple = RGB(150, 60, 255), pink = RGB(255, 90, 220), cyan = RGB(90, 225, 255);
+		add("Part", V3(1.9, 1.3, 8.5), deep, CFn(), { Material: "Metal" });
+		add("Part", V3(1.2, 0.9, 2.6), cyan, CFn(0, 0.85, -2), { Material: "Neon", Transparency: 0.25 });
+		add("Part", V3(0.6, 0.6, 1.8), deep, CFn(0, 0, -5), { Material: "Metal" });
+		for (const s of [-1, 1]) {
+			add("Part", V3(5, 0.25, 3), deep, CFn(s * 3, 0, 0.6).mul(Ang(0, s * 0.25, 0)), { Material: "Metal" });
+			add("Part", V3(5, 0.28, 0.3), purple, CFn(s * 2.9, 0.05, -0.8).mul(Ang(0, s * 0.25, 0)), NEON);
+			add("Part", V3(0.9, 0.9, 0.9), pink, CFn(s * 5.4, 0, 1.6), { Material: "Neon", Shape: "Ball" });
+			add("Part", V3(0.3, 2.2, 1.6), deep, CFn(s * 1.2, 1.1, 3.8).mul(Ang(0, 0, -s * 0.35)), { Material: "Metal" });
+			add("Part", V3(0.12, 2.2, 0.3), pink, CFn(s * 1.2, 1.1, 3.1).mul(Ang(0, 0, -s * 0.35)), NEON);
+		}
+		// the star in the back
+		add("Part", V3(1.1, 1.1, 1.1), RGB(255, 245, 255), CFn(0, 0, 4.5), { Material: "Neon", Shape: "Ball", _tag: "core" });
+		// two rings of little lights, each with a moon riding on it
+		for (let i = 0; i < 18; i++) {
+			const a = (i / 18) * Math.PI * 2;
+			add("Part", V3(0.35, 0.35, 0.9), i % 3 ? purple : cyan, CFn(Math.cos(a) * 6.5, 0, Math.sin(a) * 6.5).mul(Ang(0, -a, 0)), tagged("ring1", NEON));
+		}
+		add("Part", V3(1.1, 1.1, 1.1), cyan, CFn(6.5, 0, 0), { Material: "Neon", Shape: "Ball", _tag: "ring1" });
+		for (let i = 0; i < 14; i++) {
+			const a = (i / 14) * Math.PI * 2;
+			add("Part", V3(0.3, 0.3, 0.7), pink, CFn(Math.cos(a) * 4.8, 0, Math.sin(a) * 4.8).mul(Ang(0, -a, 0)), tagged("ring2", NEON));
+		}
+		add("Part", V3(0.8, 0.8, 0.8), RGB(255, 200, 250), CFn(-4.8, 0, 0), { Material: "Neon", Shape: "Ball", _tag: "ring2" });
 	};
 	SKIN_BUILD.Razor = (add) => {
-		const black = RGB(20, 20, 24), steel = RGB(90, 95, 110), magenta = RGB(255, 30, 140), cyan = RGB(40, 230, 255);
+		const black = RGB(18, 18, 22), steel = RGB(95, 100, 118), magenta = RGB(255, 30, 140), cyan = RGB(40, 230, 255);
 		add("Part", V3(1.4, 1.2, 10), black, CFn(), { Material: "Metal" });
-		add("Part", V3(0.6, 0.6, 3), steel, CFn(0, 0, -6), { Material: "Metal" });
 		add("Part", V3(0.9, 0.5, 2.4), magenta, CFn(0, 0.7, -2.6), { Material: "Neon", Transparency: 0.15 });
-		// four blades in an X
+		add("Part", V3(0.25, 0.25, 9.6), cyan, CFn(0, -0.62, 0), NEON);
+		// the drill on the nose
+		for (let i = 0; i < 3; i++) add("Part", V3(1.2 - i * 0.35, 1.2 - i * 0.35, 0.8), i % 2 ? magenta : steel, CFn(0, 0, -5.3 - i * 0.7).mul(Ang(0, 0, i * 0.4)), tagged("drill", i % 2 ? NEON : { Material: "Metal" }));
+		// four blades in an X, the whole thing spins
 		for (const sx of [-1, 1]) {
 			for (const sy of [-1, 1]) {
 				const cf = CFn(sx * 2.8, sy * 1.1, 1.5).mul(Ang(0, 0, sx * sy * 0.42));
-				add("Part", V3(5.6, 0.2, 3.4), steel, cf, { Material: "Metal" });
-				add("Part", V3(5.6, 0.22, 0.25), magenta, cf.mul(CFn(0, 0, -1.7)), { Material: "Neon" });
-				add("Part", V3(0.8, 0.8, 2.6), black, CFn(sx * 5.6, sy * 2.2, 1.6), { Material: "Metal" });
-				add("Part", V3(0.6, 0.6, 0.3), cyan, CFn(sx * 5.6, sy * 2.2, 2.95), { Material: "Neon" });
+				add("Part", V3(5.6, 0.2, 3.4), steel, cf, tagged("x", { Material: "Metal" }));
+				add("Part", V3(5.6, 0.24, 0.25), magenta, cf.mul(CFn(0, 0, -1.7)), tagged("x", NEON));
+				add("Part", V3(5.6, 0.24, 0.2), cyan, cf.mul(CFn(0, 0, 1.7)), tagged("x", NEON));
+				add("Part", V3(0.8, 0.8, 2.6), black, CFn(sx * 5.6, sy * 2.2, 1.6), tagged("x", { Material: "Metal" }));
+				add("Part", V3(0.6, 0.6, 0.3), cyan, CFn(sx * 5.6, sy * 2.2, 2.95), tagged("pod", NEON));
 			}
 		}
-		add("Part", V3(1, 1, 0.4), cyan, CFn(0, 0, 5.1), { Material: "Neon" });
+		add("Part", V3(1.6, 1.6, 0.3), steel, CFn(0, 0, 1.5), tagged("x", { Material: "Metal" }));
+		add("Part", V3(1, 1, 0.4), cyan, CFn(0, 0, 5.1), NEON);
 	};
 	SKIN_BUILD.Royal = (add) => {
 		const white = RGB(245, 243, 238), gold = RGB(255, 200, 60), velvet = RGB(110, 30, 150), ruby = RGB(230, 30, 60);
+		const G = { Material: "Metal" };
 		add("Part", V3(2.2, 2, 8.5), white, CFn(), { Material: "SmoothPlastic" });
-		add("Part", V3(1.4, 1.4, 1.6), gold, CFn(0, 0, -4.6), { Material: "Metal" });
+		add("Part", V3(1.4, 1.4, 1.6), gold, CFn(0, 0, -4.6), G);
+		add("Part", V3(0.5, 0.5, 0.8), ruby, CFn(0, 0, -5.6), NEON);
 		add("Part", V3(1.3, 0.8, 2.2), RGB(170, 220, 255), CFn(0, 1.2, -1.8), { Transparency: 0.3 });
-		for (const side of [-1, 1]) {
-			add("Part", V3(6, 0.4, 3.4), velvet, CFn(side * 3.8, 0, 0));
-			add("Part", V3(6.1, 0.45, 0.35), gold, CFn(side * 3.8, 0, -1.7), { Material: "Metal" });
-			add("Part", V3(0.5, 0.9, 3.4), gold, CFn(side * 6.9, 0.2, 0), { Material: "Metal" });
-			add("Part", V3(0.5, 0.5, 0.5), ruby, CFn(side * 6.9, 0.8, -0.8), { Material: "Neon", Shape: "Ball" });
-			add("Part", V3(2.6, 0.3, 1.6), velvet, CFn(side * 1.8, 0, 4));
+		add("Part", V3(2.3, 0.25, 8.6), gold, CFn(0, -0.2, 0), G);
+		for (const s of [-1, 1]) {
+			add("Part", V3(6, 0.4, 3.4), velvet, CFn(s * 3.8, 0, 0));
+			add("Part", V3(6.1, 0.45, 0.35), gold, CFn(s * 3.8, 0, -1.7), G);
+			add("Part", V3(0.5, 0.9, 3.4), gold, CFn(s * 6.9, 0.2, 0), G);
+			add("Part", V3(0.55, 0.55, 0.55), ruby, CFn(s * 6.9, 0.85, -0.8), { Material: "Neon", Shape: "Ball" });
+			add("Part", V3(2.6, 0.3, 1.6), velvet, CFn(s * 1.8, 0, 4));
 		}
 		add("Part", V3(0.3, 2.4, 1.8), velvet, CFn(0, 1.5, 3.8));
-		add("Part", V3(0.35, 0.3, 1.9), gold, CFn(0, 2.7, 3.8), { Material: "Metal" });
-		// the crown on the roof
-		add("Part", V3(1.6, 0.4, 1.6), gold, CFn(0, 1.8, -0.4), { Material: "Metal" });
-		for (const [x, z] of [[-0.6, -1], [0.6, -1], [-0.6, 0.2], [0.6, 0.2], [0, -0.4]]) {
-			add("Part", V3(0.3, 0.7, 0.3), gold, CFn(x, 2.3, z + 0.2), { Material: "Metal" });
+		add("Part", V3(0.35, 0.3, 1.9), gold, CFn(0, 2.7, 3.8), G);
+		// a cape flowing off the back
+		for (let i = 0; i < 5; i++) add("Part", V3(2.4 - i * 0.15, 0.12, 1.3), i % 2 ? RGB(130, 40, 175) : velvet, CFn(0, 1.05 - i * 0.05, 1.2 + i * 1.25), tagged("cape" + i));
+		add("Part", V3(2.5, 0.14, 0.2), gold, CFn(0, 1.06, 0.55), G);
+		// the crown floats above you
+		add("Part", V3(1.9, 0.45, 1.9), gold, CFn(0, 3.1, -0.6), tagged("crown", G));
+		for (let i = 0; i < 6; i++) {
+			const a = (i / 6) * Math.PI * 2;
+			add("Part", V3(0.3, 0.8, 0.3), gold, CFn(Math.cos(a) * 0.8, 3.65, -0.6 + Math.sin(a) * 0.8), tagged("crown", G));
+			add("Part", V3(0.22, 0.22, 0.22), i % 2 ? ruby : RGB(80, 170, 255), CFn(Math.cos(a) * 0.8, 4.1, -0.6 + Math.sin(a) * 0.8), tagged("crown", { Material: "Neon", Shape: "Ball" }));
 		}
-		add("Part", V3(0.4, 0.4, 0.4), ruby, CFn(0, 2.2, -1.1), { Material: "Neon", Shape: "Ball" });
+		// three golden orbs circling the plane
+		for (let i = 0; i < 3; i++) {
+			const a = (i / 3) * Math.PI * 2;
+			add("Part", V3(0.7, 0.7, 0.7), gold, CFn(Math.cos(a) * 5, 0.6, Math.sin(a) * 5), tagged("orb", { Material: "Neon", Shape: "Ball" }));
+		}
 	};
+
+	// ---------------- moving parts. every frame the part's spot on the plane gets a new offset
+	const SKIN_ANIM = {
+		Phoenix: (t, m) => {
+			const flap = Math.sin(t * 5.5) * 0.38;
+			for (const s of [-1, 1]) {
+				const w = s < 0 ? "wingL" : "wingR";
+				const root = CFn(s * 0.9, 0.25, 0);
+				const cf = root.mul(Ang(0, 0, -s * flap)).mul(root.Inverse());
+				m.all(w, cf);
+				// the tips flex a bit later than the rest
+				const tip = CFn(s * 6.3, 0.6, 1).mul(Ang(0, 0, -s * Math.sin(t * 5.5 - 0.7) * 0.25)).mul(CFn(s * 6.3, 0.6, 1).Inverse());
+				m.all(w + "Tip", cf.mul(tip));
+			}
+			for (let i = 0; i < 5; i++) {
+				const p = CFn((i - 2) * 0.45, 0, 2.6);
+				m.all("tail" + i, p.mul(Ang(Math.sin(t * 3 + i) * 0.12, Math.sin(t * 2.2 + i * 0.8) * 0.15, 0)).mul(p.Inverse()));
+			}
+			const c = CFn(0, 0.9, -3);
+			m.all("crest", c.mul(Ang(Math.sin(t * 7) * 0.12, 0, 0)).mul(c.Inverse()));
+			m.glow(1.3 + Math.sin(t * 9) * 0.4 + Math.sin(t * 23) * 0.2);
+		},
+		Galaxy: (t, m) => {
+			m.all("ring1", Ang(0.35, 0, 0.15).mul(Ang(0, t * 0.9, 0)));
+			m.all("ring2", Ang(-0.5, 0, -0.9).mul(Ang(0, -t * 1.4, 0)));
+			const k = 1 + Math.sin(t * 3) * 0.12;
+			m.all("core", CFn(0, 0, 4.5).mul(Ang(t, t * 0.7, 0)).mul(CFn(0, 0, -4.5)));
+			m.glow(1.6 * k);
+		},
+		Razor: (t, m) => {
+			m.all("x", Ang(0, 0, t * 2.2));
+			m.all("pod", Ang(0, 0, t * 2.2));
+			m.all("drill", Ang(0, 0, -t * 9));
+			m.glow(1.5 + Math.sin(t * 14) * 0.4);
+		},
+		Royal: (t, m) => {
+			const bob = Math.sin(t * 2) * 0.35;
+			const cc = CFn(0, 0, -0.6);
+			m.all("crown", CFn(0, bob, 0).mul(cc).mul(Ang(0, t * 0.8, 0)).mul(cc.Inverse()));
+			m.all("orb", CFn(0, Math.sin(t * 1.5) * 0.4, 0).mul(Ang(0, t * 1.3, 0)));
+			for (let i = 0; i < 5; i++) {
+				// each piece hangs off the one in front, so the wave runs down the cape
+				let cf = CFn();
+				for (let j = 0; j <= i; j++) {
+					const hinge = CFn(0, 1.05 - j * 0.05, 0.55 + j * 1.25);
+					cf = cf.mul(hinge).mul(Ang(Math.sin(t * 4 - j * 0.9) * (0.1 + j * 0.04), 0, Math.sin(t * 2.5 - j) * 0.04)).mul(hinge.Inverse());
+				}
+				m.all("cape" + i, cf);
+			}
+			m.glow(1.3 + Math.sin(t * 3) * 0.3);
+		},
+	};
+	const animated = [];
+	RunService.RenderStepped.Connect(() => {
+		const t = clock();
+		for (let i = animated.length - 1; i >= 0; i--) {
+			const a = animated[i];
+			if (a.model._destroyed || !a.model.Parent) {
+				animated.splice(i, 1);
+				continue;
+			}
+			SKIN_ANIM[a.id](t + a.off, a.api);
+		}
+	});
+	function animate(id, model, main, parts) {
+		const byTag = {};
+		for (const p of parts) {
+			if (!p._tag || !p._weldedTo) continue;
+			(byTag[p._tag] = byTag[p._tag] || []).push({ p, w: p._weldedTo, base: p._weldedTo.rel });
+		}
+		const api = {
+			all(tag, cf) {
+				const list = byTag[tag];
+				if (!list) return;
+				for (const e of list) if (e.p._weldedTo === e.w && !e.w._broken) e.w.rel = cf.mul(e.base);
+			},
+			glow(b) {
+				if (model._glow) model._glow.Brightness = b;
+			},
+		};
+		animated.push({ id, model, api, off: Math.random() * 10 });
+	}
+
 
 	// every skin leaves something behind it
 	const FX = {
@@ -1505,35 +1640,85 @@ let buildPlane;
 			fx.flame(V3(0, 0.4, -5.6), RGB(255, 240, 150), RGB(255, 80, 20), 1.6, 60);
 			fx.emit(V3(0, 0, 6), { Texture: "sparkles", Color: new ColorSequence(RGB(255, 140, 40)), LightEmission: 1, Size: new NumberSequence(0.6, 0), Lifetime: new NumberRange(0.5, 0.9), Rate: 18, Speed: new NumberRange(3, 7), SpreadAngle: V2(40, 40), EmissionDirection: "Back" });
 		},
-		Phoenix: (fx) => {
+		Firebird: (fx) => {
 			fx.flame(V3(0, 0, 4), RGB(255, 240, 150), RGB(255, 60, 10), 2.2, 110);
 			for (const x of [-8.4, 8.4]) fx.flame(V3(x, 1.1, 2.8), RGB(255, 230, 120), RGB(255, 80, 20), 0.9, 40);
 			fx.trail(V3(0, 0, 4), { Lifetime: 0.6, Width: 2.2, Color: new ColorSequence(RGB(255, 200, 60), RGB(255, 40, 10)), Transparency: new NumberSequence(0.2, 1), LightEmission: 1 });
 			fx.emit(V3(0, 0, 3), { Texture: "sparkles", Color: new ColorSequence(RGB(255, 170, 40), RGB(255, 60, 20)), LightEmission: 1, Size: new NumberSequence(0.8, 0), Lifetime: new NumberRange(0.6, 1.2), Rate: 30, Speed: new NumberRange(3, 9), SpreadAngle: V2(50, 50), EmissionDirection: "Back" });
 		},
+		Phoenix: (fx) => {
+			// a whole bonfire behind you
+			fx.flame(V3(0, 0, 3.5), RGB(255, 240, 150), RGB(255, 50, 10), 2.2, 100);
+			fx.trail(V3(0, 0, 3), { Lifetime: 0.9, Width: 2.4, Color: new ColorSequence(RGB(255, 210, 70), RGB(255, 30, 5)), Transparency: new NumberSequence(0.05, 1), LightEmission: 1 });
+			fx.trail(V3(0, 0.8, 3), { Lifetime: 1.4, Width: 6, Color: new ColorSequence(RGB(255, 120, 20), RGB(120, 10, 0)), Transparency: new NumberSequence(0.6, 1), LightEmission: 1 });
+			for (const p of [fx.tagged("wingLTip")[0], fx.tagged("wingRTip")[0]].filter(Boolean)) {
+				fx.flameOn(p, V3(0, 0, 0.8), RGB(255, 230, 120), RGB(255, 60, 10), 1.6, 70);
+				fx.trailOn(p, V3(0, 0, 0.8), { Lifetime: 0.7, Width: 0.9, Color: new ColorSequence(RGB(255, 230, 90), RGB(255, 60, 10)), Transparency: new NumberSequence(0.1, 1), LightEmission: 1 });
+			}
+			for (const p of fx.tagged("wingL").slice(0, 2).concat(fx.tagged("wingR").slice(0, 2))) fx.emitOn(p, V3(0, 0, 1), { Texture: "fire", Color: new ColorSequence(RGB(255, 200, 60), RGB(255, 40, 0)), LightEmission: 1, Size: new NumberSequence(1.4, 0), Lifetime: new NumberRange(0.25, 0.5), Rate: 40, Speed: new NumberRange(2, 5), EmissionDirection: "Back", SpreadAngle: V2(40, 40) });
+			// embers floating up
+			fx.emit(V3(0, 0, 2), { Texture: "sparkles", Color: new ColorSequence(RGB(255, 220, 90), RGB(255, 60, 10)), LightEmission: 1, Size: new NumberSequence(0.7, 0), Lifetime: new NumberRange(0.8, 1.6), Rate: 60, Speed: new NumberRange(3, 10), SpreadAngle: V2(180, 180), Acceleration: V3(0, 8, 0), Drag: 1 });
+		},
 		Galaxy: (fx) => {
-			fx.trail(V3(0, 0, 4.4), { Lifetime: 1, Width: 1.6, Color: new ColorSequence(RGB(90, 220, 255), RGB(200, 60, 255)), Transparency: new NumberSequence(0.15, 1), LightEmission: 1 });
-			for (const x of [-5.6, 5.6]) fx.trail(V3(x, 0, 0.6), { Lifetime: 0.8, Width: 0.3, Color: new ColorSequence(RGB(255, 90, 220)), Transparency: new NumberSequence(0.2, 1), LightEmission: 1 });
-			fx.emit(V3(0, 0, 2), { Texture: "sparkles", Color: new ColorSequence(RGB(255, 255, 255), RGB(160, 120, 255)), LightEmission: 1, Size: new NumberSequence(0.5, 0), Lifetime: new NumberRange(1, 1.8), Rate: 40, Speed: new NumberRange(1, 4), SpreadAngle: V2(180, 180) });
+			fx.trail(V3(0, 0, 4.5), { Lifetime: 1.4, Width: 3, Color: new ColorSequence([ColorSequenceKeypoint.new(0, RGB(255, 255, 255)), ColorSequenceKeypoint.new(0.3, RGB(90, 220, 255)), ColorSequenceKeypoint.new(0.7, RGB(170, 70, 255)), ColorSequenceKeypoint.new(1, RGB(255, 80, 200))]), Transparency: new NumberSequence(0.05, 1), LightEmission: 1 });
+			fx.trail(V3(0, 0, 4.5), { Lifetime: 2, Width: 7, Color: new ColorSequence(RGB(120, 60, 255), RGB(255, 60, 180)), Transparency: new NumberSequence(0.75, 1), LightEmission: 1 });
+			for (const x of [-5.4, 5.4]) fx.trail(V3(x, 0, 1.6), { Lifetime: 0.9, Width: 0.4, Color: new ColorSequence(RGB(255, 90, 220)), Transparency: new NumberSequence(0.1, 1), LightEmission: 1 });
+			// the moons leave little spirals of stardust
+			for (const tag of ["ring1", "ring2"]) {
+				const moon = fx.tagged(tag).find((p) => p.Shape === "Ball" || p._shape === "Ball") || fx.tagged(tag)[0];
+				if (moon) fx.trailOn(moon, V3(), { Lifetime: 0.7, Width: 0.5, Color: new ColorSequence(RGB(255, 255, 255), RGB(160, 120, 255)), Transparency: new NumberSequence(0, 1), LightEmission: 1 });
+			}
+			fx.emit(V3(0, 0, 0), { Texture: "sparkles", Color: new ColorSequence(RGB(255, 255, 255), RGB(170, 140, 255)), LightEmission: 1, Size: new NumberSequence(0.55, 0), Lifetime: new NumberRange(1.2, 2.2), Rate: 70, Speed: new NumberRange(1, 6), SpreadAngle: V2(180, 180), Drag: 0.8 });
+			fx.emit(V3(0, 0, 4.5), { Texture: "sparkles", Color: new ColorSequence(RGB(90, 230, 255), RGB(255, 90, 220)), LightEmission: 1, Size: new NumberSequence(1, 0), Lifetime: new NumberRange(0.6, 1), Rate: 30, Speed: new NumberRange(4, 9), EmissionDirection: "Back", SpreadAngle: V2(30, 30) });
 		},
 		Razor: (fx) => {
-			for (const sx of [-1, 1]) for (const sy of [-1, 1]) fx.trail(V3(sx * 5.6, sy * 2.2, 2.9), { Lifetime: 0.45, Width: 0.5, Color: new ColorSequence(RGB(40, 230, 255), RGB(255, 30, 140)), Transparency: new NumberSequence(0.1, 1), LightEmission: 1 });
-			fx.flame(V3(0, 0, 5.3), RGB(200, 250, 255), RGB(40, 200, 255), 1.2, 80);
+			// the pods spin, so their trails turn into a spiral behind you
+			fx.tagged("pod").forEach((p, i) => {
+				fx.trailOn(p, V3(), { Lifetime: 0.6, Width: 0.55, Color: new ColorSequence(i % 2 ? RGB(40, 230, 255) : RGB(255, 30, 140), RGB(255, 255, 255)), Transparency: new NumberSequence(0, 1), LightEmission: 1 });
+				fx.emitOn(p, V3(), { Texture: "sparkles", Color: new ColorSequence(RGB(150, 240, 255), RGB(255, 60, 170)), LightEmission: 1, Size: new NumberSequence(0.5, 0), Lifetime: new NumberRange(0.15, 0.35), Rate: 22, Speed: new NumberRange(6, 14), SpreadAngle: V2(180, 180) });
+			});
+			fx.flame(V3(0, 0, 5.3), RGB(220, 250, 255), RGB(40, 170, 255), 1.8, 110);
+			fx.trail(V3(0, 0, 5.3), { Lifetime: 0.5, Width: 1.2, Color: new ColorSequence(RGB(120, 240, 255), RGB(255, 40, 150)), Transparency: new NumberSequence(0.1, 1), LightEmission: 1 });
 		},
 		Royal: (fx) => {
-			fx.trail(V3(0, 0, 4.3), { Lifetime: 0.9, Width: 1.4, Color: new ColorSequence(RGB(160, 60, 220), RGB(90, 20, 130)), Transparency: new NumberSequence(0.25, 1), LightEmission: 0.6 });
-			for (const x of [-6.9, 6.9]) fx.trail(V3(x, 0.2, 0), { Lifetime: 0.8, Width: 0.35, Color: new ColorSequence(RGB(255, 215, 90)), Transparency: new NumberSequence(0.15, 1), LightEmission: 1 });
-			fx.emit(V3(0, 1, 2), { Texture: "sparkles", Color: new ColorSequence(RGB(255, 230, 120)), LightEmission: 1, Size: new NumberSequence(0.7, 0), Lifetime: new NumberRange(0.6, 1.2), Rate: 24, Speed: new NumberRange(2, 5), SpreadAngle: V2(70, 70) });
+			fx.trail(V3(0, 0, 4.3), { Lifetime: 1.2, Width: 2.2, Color: new ColorSequence(RGB(170, 70, 230), RGB(80, 15, 120)), Transparency: new NumberSequence(0.2, 1), LightEmission: 0.8 });
+			for (const x of [-6.9, 6.9]) fx.trail(V3(x, 0.2, 0), { Lifetime: 1, Width: 0.45, Color: new ColorSequence(RGB(255, 225, 110)), Transparency: new NumberSequence(0.05, 1), LightEmission: 1 });
+			// the orbs draw golden circles around you
+			for (const p of fx.tagged("orb")) fx.trailOn(p, V3(), { Lifetime: 0.6, Width: 0.45, Color: new ColorSequence(RGB(255, 240, 150), RGB(255, 180, 40)), Transparency: new NumberSequence(0, 1), LightEmission: 1 });
+			const crown = fx.tagged("crown")[0];
+			if (crown) fx.emitOn(crown, V3(0, 0.4, 0), { Texture: "sparkles", Color: new ColorSequence(RGB(255, 245, 180), RGB(255, 190, 40)), LightEmission: 1, Size: new NumberSequence(0.6, 0), Lifetime: new NumberRange(0.5, 1), Rate: 20, Speed: new NumberRange(1, 3), SpreadAngle: V2(180, 180) });
+			fx.emit(V3(0, 0, 1), { Texture: "sparkles", Color: new ColorSequence(RGB(255, 230, 120)), LightEmission: 1, Size: new NumberSequence(0.7, 0), Lifetime: new NumberRange(0.8, 1.4), Rate: 40, Speed: new NumberRange(2, 6), SpreadAngle: V2(80, 80) });
 		},
 		Gold: (fx) => {
 			for (const x of [-6, 6]) fx.trail(V3(x, 0, 0), { Lifetime: 0.8, Width: 0.35, Color: new ColorSequence(RGB(255, 220, 90)), Transparency: new NumberSequence(0.2, 1), LightEmission: 1 });
 			fx.emit(V3(0, 0, 3), { Texture: "sparkles", Color: new ColorSequence(RGB(255, 230, 120)), LightEmission: 1, Size: new NumberSequence(0.6, 0), Lifetime: new NumberRange(0.5, 1), Rate: 16, Speed: new NumberRange(2, 5), SpreadAngle: V2(60, 60) });
 		},
 	};
-	function addFx(id, main) {
+	function addFx(id, main, parts) {
 		const f = FX[id];
 		if (!f || settings.low) return;
+		const onPart = (part, at, props) => {
+			const a = Instance.new("Attachment");
+			a.Position = at;
+			a.Parent = part;
+			const e = Instance.new("ParticleEmitter");
+			for (const k in props) e[k] = props[k];
+			e.Parent = a;
+			return e;
+		};
 		const fx = {
+			tagged: (tag) => (parts || []).filter((p) => p._tag === tag),
+			emitOn: onPart,
+			flameOn(part, at, c0, c1, size, rate) {
+				return onPart(part, at, { Texture: "fire", Color: new ColorSequence(c0, c1), LightEmission: 1, Size: new NumberSequence(size, 0), Lifetime: new NumberRange(0.12, 0.24), Rate: rate || 70, Speed: new NumberRange(8, 16), EmissionDirection: "Back", SpreadAngle: V2(8, 8) });
+			},
+			trailOn(part, at, props) {
+				const t = Instance.new("Trail");
+				t.Offset = at;
+				for (const k in props) t[k] = props[k];
+				t.Parent = part;
+				return t;
+			},
 			emit(at, props) {
 				const a = Instance.new("Attachment");
 				a.Position = at;
@@ -1594,17 +1779,20 @@ let buildPlane;
 			w.Parent = p;
 			p.Parent = model;
 			parts.push(p);
+			return p;
 		}
 		(SKIN_BUILD[id] || SKIN_BUILD.Default)(add);
-		if (!noFx) addFx(SKIN_BUILD[id] ? id : "Default", main);
-		const LIGHT = { Phoenix: RGB(255, 120, 30), Galaxy: RGB(160, 80, 255), Razor: RGB(255, 40, 150) };
+		if (!noFx) addFx(SKIN_BUILD[id] ? id : "Default", main, parts);
+		const LIGHT = { Firebird: RGB(255, 120, 30), Phoenix: RGB(255, 110, 20), Galaxy: RGB(160, 80, 255), Razor: RGB(255, 40, 150), Royal: RGB(255, 200, 80) };
 		if (LIGHT[id]) {
 			const glow = Instance.new("PointLight");
-			glow.Range = 18;
-			glow.Brightness = 1.6;
+			glow.Range = id === "Phoenix" ? 26 : id === "Firebird" ? 18 : 20;
+			glow.Brightness = id === "Firebird" ? 1.6 : 1.8;
 			glow.Color = LIGHT[id];
 			glow.Parent = main;
+			model._glow = glow;
 		}
+		if (SKIN_ANIM[id]) animate(id, model, main, parts);
 		if (id === "Stealth") {
 			const glow = Instance.new("PointLight");
 			glow.Range = 16;
@@ -2701,6 +2889,8 @@ closePanels = () => {
 };
 
 openPanel = (name) => {
+	// a locked panel (the forced sign up) stays the only thing on screen
+	for (const n in panels) if (n !== name && panels[n].locked && panels[n].frame.Visible) return;
 	closePanels();
 	const p = panels[name];
 	p.token++;
@@ -3310,10 +3500,11 @@ function deathView(vp, kind) {
 			Neon: ["straight out of the grid", "glowing cyan light trails"],
 			Dragon: ["breathes fire, obviously", "flames and embers"],
 			Gold: ["for people with too many gems", "golden trails and sparkles"],
-			Phoenix: ["rises from every crash. well, not really", "burning wings, embers, a trail of fire"],
-			Galaxy: ["a tiny planet with wings", "starfield sparkles and a nebula trail"],
-			Razor: ["four blades, zero chill", "cyan and magenta blade trails"],
-			Royal: ["only in the special pack", "golden sparkles, royal purple trail"],
+			Firebird: ["the phoenix's little cousin", "burning wings, embers, a trail of fire"],
+			Phoenix: ["a living fire bird, wings flapping and all", "flapping flame wings, a bonfire trail, embers everywhere"],
+			Galaxy: ["a tiny planet with wings and two spinning rings", "orbiting moons, stardust spirals, a nebula trail"],
+			Razor: ["four blades spinning like a drill", "spiral blade trails and sparks"],
+			Royal: ["only in the special pack. floating crown included", "a waving cape, orbiting gold orbs, golden sparkles"],
 		},
 		death: {
 			Default: ["a normal explosion", "fire, smoke, debris"],
@@ -3548,6 +3739,95 @@ function deathView(vp, kind) {
 		text(lr, "EVERY LEVEL UP GIVES COINS. EVERY 5TH LEVEL +15 GEMS, EVERY 10TH +2 KEYS.", U2(1, -130, 0, 40), UO(110, 50), 16, DIM, LEFT);
 	}
 
+	// list on the left, the selected one with its buy button on the right. picking one doesn't rebuild the list,
+	// so it doesn't jump back to the top
+	const shopScroll = {};
+	function browse(list, isSkin, viewKey) {
+		const owned = isSkin ? data.skins : data.deaths;
+		const equipped = isSkin ? data.skin : data.death;
+		const tab = shopTab;
+		const wrap = make("Frame", { Size: U2(1, 0, 0, 436), BackgroundTransparency: 1, LayoutOrder: nextOrder(), Parent: shopItems });
+		const left = make("ScrollingFrame", { Size: U2(0, 408, 1, 0), BackgroundTransparency: 1, ScrollBarThickness: 4, ScrollBarImageColor3: WHITE, AutomaticCanvasSize: "Y", CanvasSize: new UDim2(), Parent: wrap });
+		make("UIGridLayout", { CellSize: UO(128, 142), CellPadding: UO(6, 6), SortOrder: "LayoutOrder", Parent: left });
+		make("UIPadding", { PaddingTop: UDim.new(0, 2), PaddingLeft: UDim.new(0, 2), Parent: left });
+		left.el.addEventListener("scroll", () => (shopScroll[tab] = left.el.scrollTop), { passive: true });
+		const right = make("Frame", { Position: U2(0, 418, 0, 0), Size: U2(1, -418, 1, 0), BackgroundColor3: BLACK, BackgroundTransparency: 0.45, ClipsDescendants: true, Parent: wrap });
+		make("UICorner", { CornerRadius: UDim.new(0, 12), Parent: right });
+		const strokes = {};
+
+		function drawRight() {
+			for (const c of right.GetChildren()) if (!c.IsA("UICorner")) c.Destroy();
+			Game.spinning = Game.spinning.filter((x) => x.model.Parent && !x.model._destroyed);
+			const it = list.find((x) => x.id === Game[viewKey]) || list[0];
+			const [rn, rc] = rarity(it.price, isSkin);
+			const vp = planeView(right, isSkin ? it.id : null, U2(1, -16, 0, 180), UO(8, 8), { bg: RGB(20, 22, 32), bgT: 0.05, round: 10, wind: V3(-28, 0, -12) });
+			make("UIGradient", { Color: new ColorSequence(RGB(255, 255, 255), rc.Lerp(WHITE, 0.4)), Rotation: 90, Parent: vp });
+			if (!isSkin) deathView(vp, it.id);
+			const tag = make("Frame", { Position: UO(18, 18), Size: UO(0, 24), AutomaticSize: "X", BackgroundColor3: rc, Parent: right });
+			make("UICorner", { CornerRadius: UDim.new(0, 12), Parent: tag });
+			make("UIPadding", { PaddingLeft: UDim.new(0, 10), PaddingRight: UDim.new(0, 10), Parent: tag });
+			const tl = text(tag, rn, U2(0, 0, 1, 0), null, 15, BLACK);
+			tl.AutomaticSize = "X";
+			tl.TextWrapped = false;
+			text(right, niceName(it.id), U2(1, -28, 0, 38), UO(14, 194), 34, WHITE, LEFT);
+			const d = DESC[isSkin ? "skin" : "death"][it.id] || ["", ""];
+			const dl = text(right, d[0], U2(1, -28, 0, 40), UO(14, 232), 17, RGB(210, 210, 210), LEFT);
+			dl.TextWrapped = true;
+			const fx = make("Frame", { Position: UO(12, 276), Size: U2(1, -24, 0, 30), BackgroundColor3: BLACK, BackgroundTransparency: 0.5, Parent: right });
+			make("UICorner", { CornerRadius: UDim.new(0, 6), Parent: fx });
+			const fl = text(fx, (isSkin ? "EFFECT: " : "") + d[1].toUpperCase(), U2(1, -16, 1, 0), UO(8, 1), 14, rc.Lerp(WHITE, 0.3), LEFT);
+			fl.TextTruncate = "AtEnd";
+			const st = equipped === it.id ? ["EQUIPPED", GOOD] : owned[it.id] ? ["OWNED", WHITE] : ["NOT OWNED", DIM];
+			text(right, st[0], U2(1, -28, 0, 22), UO(14, 316), 17, st[1], LEFT);
+			actionButton(right, it, isSkin, owned, equipped, U2(1, -24, 0, 64), U2(0, 12, 1, -76));
+		}
+
+		list.forEach((it, idx) => {
+			const [, rc] = rarity(it.price, isSkin);
+			const c = button(left, "", new UDim2(), null, () => {
+				if (Game[viewKey] === it.id) return;
+				Game[viewKey] = it.id;
+				sfx("click");
+				for (const id in strokes) strokes[id].Transparency = id === it.id ? 0.05 : 1;
+				drawRight();
+			}, 0.45);
+			c.LayoutOrder = idx;
+			c.ClipsDescendants = true;
+			const glow = make("Frame", { Size: US(1, 0.7), BackgroundColor3: rc, BackgroundTransparency: 0.55, ZIndex: 0, Parent: c });
+			make("UIGradient", { Rotation: 90, Transparency: new NumberSequence(0, 1), Parent: glow });
+			if (isSkin) {
+				const v = planeView(c, it.id, UO(116, 80), UO(6, 6), { bgT: 1, noFx: true, fov: 30, cam: CFrame.lookAt(V3(0, 6, 26), V3(0, -0.3, 0)), spin: 0.6 });
+				v.el.style.pointerEvents = "none";
+			} else {
+				const ic = make("Frame", { AnchorPoint: V2(0.5, 0.5), Position: U2(0.5, 0, 0, 46), Size: UO(58, 58), BackgroundColor3: DEATH_COLOR[it.id] || WHITE, Parent: c });
+				make("UICorner", { CornerRadius: UDim.new(0.5, 0), Parent: ic });
+				make("UIGradient", { Color: new ColorSequence(WHITE, RGB(120, 120, 120)), Rotation: 45, Parent: ic });
+				const sk = Icons.make("skull", ic, 32);
+				sk.AnchorPoint = V2(0.5, 0.5);
+				sk.Position = US(0.5, 0.5);
+			}
+			const nm = text(c, niceName(it.id), U2(1, -8, 0, 22), UO(4, 88), 17, WHITE);
+			nm.TextTruncate = "AtEnd";
+			const st = Icons.text(c, U2(1, -8, 0, 20), UO(4, 112), 15, DIM);
+			if (equipped === it.id) {
+				st.Text = "EQUIPPED";
+				st.TextColor3 = GOOD;
+			} else if (owned[it.id]) st.Text = "OWNED";
+			else if (it.eur) {
+				st.Text = it.eur === "SPECIAL PACK" ? "SPECIAL PACK" : it.eur;
+				st.TextColor3 = RGB(255, 70, 170);
+			} else {
+				st.Text = fmt(it.price) + (isSkin ? " ◆" : " ✦");
+				st.TextColor3 = (isSkin ? data.gems : data.keys) >= it.price ? (isSkin ? GEM : KEY) : DIM;
+			}
+			strokes[it.id] = make("UIStroke", { Color: WHITE, Thickness: 2, Transparency: it.id === Game[viewKey] ? 0.05 : 1, ApplyStrokeMode: "Border", Parent: c });
+		});
+		drawRight();
+		// back to where you were in the list
+		const y = shopScroll[tab] || 0;
+		if (y) task.delay(0, () => (left.el.scrollTop = y));
+	}
+
 	rebuildShop = () => {
 		for (const name in tabButtons) {
 			const b = tabButtons[name];
@@ -3562,26 +3842,17 @@ function deathView(vp, kind) {
 		else if (shopTab === "GEMS") Game.gemShop(shopItems);
 		else if (shopTab === "SKINS") {
 			Game.skinView = Game.skinView || data.skin;
-			showcase(CONFIG.skins, true, data.skins, data.skin, Game.skinView);
-			cards(CONFIG.skins, true, data.skins, data.skin, Game.skinView, (id) => {
-				Game.skinView = id;
-				sfx("click");
-				rebuildShop();
-			});
+			browse(CONFIG.skins, true, "skinView");
 		} else {
 			Game.deathView = Game.deathView || data.death;
-			showcase(CONFIG.deaths, false, data.deaths, data.death, Game.deathView);
-			cards(CONFIG.deaths, false, data.deaths, data.death, Game.deathView, (id) => {
-				Game.deathView = id;
-				sfx("click");
-				rebuildShop();
-			});
+			browse(CONFIG.deaths, false, "deathView");
 		}
 	};
 
 	shopPanel.onOpen = () => {
 		Game.skinView = null;
 		Game.deathView = null;
+		for (const k in shopScroll) delete shopScroll[k];
 		rebuildShop();
 	};
 	Game.openShop = () => {
@@ -3906,6 +4177,7 @@ function myProfile() {
 		created: data.created,
 		updated: Date.now(),
 		seen: Online.SERVER_TIME,
+		active: Date.now() - (Game.lastInput || 0) < 10000 ? Online.SERVER_TIME : undefined,
 		ach: Object.keys(data.ach || {}).length,
 	};
 }
@@ -4112,6 +4384,7 @@ function xpBar(parent, size, pos, k, color) {
 				? "MAKE AN ACCOUNT TO GET ON THE LEADERBOARD, PLAY VERSUS AND KEEP YOUR PROGRESS ON EVERY DEVICE."
 				: "LOG IN AND YOUR PROGRESS FROM THAT ACCOUNT LOADS ON THIS DEVICE.";
 		noteL.Text = makeNew ? "3 TO 16 LETTERS, NUMBERS OR _. THERE'S NO PASSWORD RESET, DON'T FORGET IT." : "";
+		noteL.TextColor3 = DIM;
 		goBtn.Text = makeNew ? "CREATE ACCOUNT" : "LOG IN";
 		tabNew.SetAttribute("Base", makeNew ? 0.05 : 0.55);
 		tabNew.BackgroundTransparency = makeNew ? 0.05 : 0.55;
@@ -4152,6 +4425,12 @@ function xpBar(parent, size, pos, k, color) {
 			sfx("bad");
 			// firebase unreachable: don't lock people out of the game
 			if (e.message === "no connection") ap.offline = true;
+			// also right in the panel, on tablets the keyboard covers the bottom of the screen
+			busy = false;
+			refresh();
+			noteL.Text = String(e.message || "something went wrong").toUpperCase();
+			noteL.TextColor3 = BAD;
+			return;
 		}
 		busy = false;
 		refresh();
@@ -4165,7 +4444,8 @@ function xpBar(parent, size, pos, k, color) {
 		if (!Online.account()) makeNew = !data.name ? true : makeNew;
 		nameBox.Text = Online.account() || data.name || "";
 		refresh();
-		if (!Online.account()) task.delay(0.1, () => (nameBox.Text ? pwBox : nameBox).CaptureFocus());
+		// on touch screens the keyboard would pop up by itself and cover everything
+		if (!Online.account() && !Game.touch.on && !UIS.TouchEnabled) task.delay(0.1, () => (nameBox.Text ? pwBox : nameBox).CaptureFocus());
 	};
 	// kept the old name so everything that asked for a name now asks for an account
 	Game.askName = (then) => {
@@ -4234,8 +4514,8 @@ function xpBar(parent, size, pos, k, color) {
 		text(a, String(name).slice(0, 1).toUpperCase(), US(1, 1), UO(0, 2), Math.floor(size * 0.48), WHITE).TextStrokeTransparency = 0.6;
 		return a;
 	}
-	function onlineDot(parent, pos) {
-		const d = make("Frame", { AnchorPoint: V2(0.5, 0.5), Position: pos, Size: UO(14, 14), BackgroundColor3: GOOD, ZIndex: 4, Parent: parent });
+	function onlineDot(parent, pos, state) {
+		const d = make("Frame", { AnchorPoint: V2(0.5, 0.5), Position: pos, Size: UO(14, 14), BackgroundColor3: Game.PRESENCE_C[state || "online"], ZIndex: 4, Parent: parent });
 		make("UICorner", { CornerRadius: UDim.new(0.5, 0), Parent: d });
 		make("UIStroke", { Color: BLACK, Thickness: 2, Transparency: 0.1, Parent: d });
 	}
@@ -4262,7 +4542,8 @@ function xpBar(parent, size, pos, k, color) {
 			text(block, "#" + (i + 1), U2(1, 0, 0, 24), UO(0, H[i] - 32), 20, BLACK).TextTransparency = 0.45;
 			const top2 = H[i] + 8;
 			const av = avatar(col, e.name || "?", i === 0 ? 64 : 54, U2(0.5, 0, 1, -top2 - 60), MEDAL[i]);
-			if (isMe || Game.isOnline(e)) onlineDot(av, U2(1, -6, 1, -6));
+			const ps = isMe ? "online" : Game.presence(e);
+			if (ps !== "offline") onlineDot(av, U2(1, -6, 1, -6), ps);
 			const nm = text(col, String(e.name || "?").toUpperCase(), U2(1, 0, 0, 24), U2(0, 0, 1, -top2 - 24), 20, isMe ? GOOD : WHITE);
 			nm.TextTruncate = "AtEnd";
 			const sc = make("UIScale", { Scale: 0.6, Parent: col });
@@ -4276,7 +4557,8 @@ function xpBar(parent, size, pos, k, color) {
 		if (me) make("UIStroke", { Color: GOOD, Thickness: 2, Transparency: 0.3, ApplyStrokeMode: "Border", Parent: r });
 		text(r, String(rank), UO(52, 46), UO(4, 0), 20, DIM);
 		const av = avatar(r, e.name || "?", 30, UO(74, 23));
-		if (me || Game.isOnline(e)) onlineDot(av, U2(1, -3, 1, -3));
+		const ps = me ? "online" : Game.presence(e);
+		if (ps !== "offline") onlineDot(av, U2(1, -3, 1, -3), ps);
 		text(r, String(e.name || "?").toUpperCase(), U2(1, -320, 1, 0), UO(100, 0), 20, me ? GOOD : WHITE, LEFT);
 		text(r, "LVL " + (e.level || 1), UO(70, 46), U2(1, -250, 0, 0), 15, RGB(180, 165, 255), RIGHT);
 		text(r, fmt(e.best || 0), UO(160, 46), U2(1, -176, 0, 0), 22, WHITE, RIGHT);
@@ -4373,10 +4655,10 @@ function xpBar(parent, size, pos, k, color) {
 		text(h, String(p.name || "YOU").toUpperCase(), U2(1, -330, 0, 44), UO(308, 16), 40, me ? GOOD : WHITE, LEFT);
 		const r0 = rank || (!me && p.id ? Game.rankOf(p.id) : me ? Game.rankOf(Online.myId()) : null);
 		text(h, r0 ? "#" + r0 + " ON THE LEADERBOARD" : me ? "YOUR PROFILE" : "", U2(1, -330, 0, 22), UO(308, 60), 17, r0 && r0 <= 3 ? COIN : DIM, LEFT);
-		const on = me || Game.isOnline(p);
-		const dot = make("Frame", { Position: UO(310, 84), Size: UO(10, 10), BackgroundColor3: on ? GOOD : RGB(120, 120, 130), Parent: h });
+		const ps = me ? "online" : Game.presence(p);
+		const dot = make("Frame", { Position: UO(310, 84), Size: UO(10, 10), BackgroundColor3: Game.PRESENCE_C[ps], Parent: h });
 		make("UICorner", { CornerRadius: UDim.new(0.5, 0), Parent: dot });
-		text(h, on ? "ONLINE" : "LAST ONLINE " + Game.lastOnline(p), U2(1, -350, 0, 18), UO(326, 80), 15, on ? GOOD : DIM, LEFT);
+		text(h, ps === "online" ? "ONLINE" : ps === "afk" ? "AFK" : "LAST ONLINE " + Game.lastOnline(p), U2(1, -350, 0, 18), UO(326, 80), 15, Game.PRESENCE_C[ps === "offline" ? "offline" : ps].Lerp(WHITE, ps === "offline" ? 0.3 : 0), LEFT);
 		const need = xpNeed(lvl);
 		text(h, "LEVEL " + lvl, UO(200, 24), UO(232, 100), 22, RGB(200, 185, 255), LEFT);
 		text(h, fmt(p.xp || 0) + " / " + fmt(need) + " XP", U2(1, -440, 0, 24), UO(430, 100), 18, DIM, RIGHT);
@@ -8268,7 +8550,16 @@ if (DEV) window.__dev = { crash: () => task.spawn(crash, []), data: () => data, 
 (() => {
 	const ONLINE_FOR = 150000;
 	const seenOf = (p) => (p && typeof p.seen === "number" ? p.seen : 0);
-	Game.isOnline = (p) => Online.serverNow() - seenOf(p) < ONLINE_FOR;
+	// online = actually did something on the site in the last 10 seconds. page open but idle = afk
+	const ACTIVE_FOR = 10000;
+	Game.presence = (p) => {
+		const now = Online.serverNow();
+		if (p && typeof p.active === "number" && now - p.active < ACTIVE_FOR) return "online";
+		if (now - seenOf(p) < ONLINE_FOR) return "afk";
+		return "offline";
+	};
+	Game.isOnline = (p) => Game.presence(p) === "online";
+	Game.PRESENCE_C = { online: GOOD, afk: RGB(255, 190, 60), offline: RGB(120, 120, 130) };
 	Game.lastOnline = (p) => {
 		const t = seenOf(p) || (p && p.updated) || 0;
 		if (!t) return "A WHILE AGO";
@@ -8293,6 +8584,23 @@ if (DEV) window.__dev = { crash: () => task.spawn(crash, []), data: () => data, 
 	Online.syncClock().catch(() => {});
 	task.delay(3, beat);
 	setInterval(beat, 60000);
+
+	// every input counts, the database hears about it at most every 3 seconds
+	let lastInput = 0, lastSent = 0;
+	const touched = () => (lastInput = Game.lastInput = Date.now());
+	for (const ev of ["pointerdown", "keydown", "wheel", "touchstart"]) addEventListener(ev, touched, { passive: true, capture: true });
+	let lx = 0, ly = 0;
+	addEventListener("pointermove", (e) => {
+		if (Math.abs(e.clientX - lx) + Math.abs(e.clientY - ly) > 4) touched();
+		lx = e.clientX;
+		ly = e.clientY;
+	}, { passive: true });
+	setInterval(() => {
+		if (!Online.account() || !Online.enabled()) return;
+		if (lastInput <= lastSent || Date.now() - lastSent < 3000) return;
+		lastSent = Date.now();
+		Online.put(`players/${Online.myId()}/active`, Online.SERVER_TIME).catch(() => {});
+	}, 500);
 
 	// ---------------- global messages: slides in at the top for everyone who's on the site
 	const bar = make("Frame", {
@@ -8390,7 +8698,7 @@ if (DEV) window.__dev = { crash: () => task.spawn(crash, []), data: () => data, 
 // ------------------------------------------------------------------ old version warning
 // every build has its own number, the page checks now and then whether a newer one is online
 (() => {
-	const BUILD = "1790764490";
+	const BUILD = "1790765465";
 	if (BUILD.startsWith("__")) return;
 	const bar = make("TextButton", {
 		AnchorPoint: V2(0.5, 0),

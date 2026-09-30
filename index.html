@@ -13,7 +13,7 @@
 <meta name="theme-color" content="#0b0d14">
 <style>
 @font-face { font-family: "Highway"; src: url("fonts/Overpass.ttf") format("truetype"); font-weight: 100 900; font-display: block; }
-html, body { margin: 0; height: 100%; overflow: hidden; background: #000; touch-action: none; -webkit-user-select: none; user-select: none; -webkit-touch-callout: none; overscroll-behavior: none; }
+html, body { margin: 0; height: 100%; overflow: hidden; position: fixed; width: 100%; background: #000; touch-action: none; -webkit-user-select: none; user-select: none; -webkit-touch-callout: none; overscroll-behavior: none; }
 #view { position: fixed; inset: 0; }
 #view canvas { display: block; width: 100%; height: 100%; }
 #gui { position: fixed; inset: 0; overflow: hidden; font-family: "Highway", sans-serif; font-weight: 600; pointer-events: none; -webkit-tap-highlight-color: transparent; }
@@ -50,9 +50,12 @@ input.gui::placeholder { color: rgb(150,150,150); opacity: 1; }
 (() => {
 	const touch = matchMedia("(pointer: coarse)").matches;
 	if (!touch) return;
-	const ios = /iPhone|iPad|iPod/.test(navigator.userAgent);
+	// ipads say they're macs these days
+	const ios = /iPhone|iPad|iPod/.test(navigator.userAgent) || (/Macintosh/.test(navigator.userAgent) && navigator.maxTouchPoints > 1);
 	if (ios && !navigator.standalone) document.getElementById("iosHint").textContent = "TIP: SHARE, THEN ADD TO HOME SCREEN FOR FULLSCREEN";
-	const go = () => {
+	const go = (e) => {
+		// fullscreen on ios is half broken and fights with the keyboard, and tapping a text field shouldn't do it anywhere
+		if (ios || (e && e.target && e.target.tagName === "INPUT")) return;
 		const el = document.documentElement;
 		if (document.fullscreenElement || !el.requestFullscreen) return;
 		el.requestFullscreen({ navigationUI: "hide" }).then(() => {
@@ -66,7 +69,7 @@ input.gui::placeholder { color: rgb(150,150,150); opacity: 1; }
 <script type="module">
 await document.fonts.load('600 20px "Highway"').catch(() => {});
 try {
-	await import("./js/game.js?v=1790764490");
+	await import("./js/game.js?v=1790765465");
 } catch (e) {
 	console.error(e);
 	document.getElementById("boot").textContent = "SOMETHING BROKE: " + (e && e.message ? e.message : e);

@@ -48,6 +48,7 @@ export const CONFIG = {
 		{ id: "Neon", price: 350 },
 		{ id: "Rocket", price: 400 },
 		{ id: "Dragon", price: 450 },
+		{ id: "Firebird", price: 600 },
 		{ id: "Gold", price: 800 },
 		// real money only, the price is what the button says
 		{ id: "Phoenix", price: 1000, eur: "1,99 €", pack: "phoenix" },
