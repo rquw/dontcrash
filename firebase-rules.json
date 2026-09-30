@@ -50,7 +50,7 @@
         ".read": "auth != null && auth.uid === $uid",
         "$gid": {
           "claimed": {
-            ".write": "auth != null && auth.uid === $uid && newData.val() === true && root.child('grants/' + $uid + '/' + $gid + '/gems').exists()"
+            ".write": "auth != null && auth.uid === $uid && newData.val() === true && root.child('grants/' + $uid + '/' + $gid + '/pack').exists()"
           }
         }
       }

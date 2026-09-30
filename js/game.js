@@ -3,9 +3,9 @@ import {
 	camera, Lighting, Instance, workspace, markQueryRoot, Enum, OverlapParams, TweenService, TweenInfo, Debris, UIS, playSfx, loopSound, loadSounds, setSfxVolume,
 	NumberSequence, NumberSequenceKeypoint, NumberRange, ColorSequence, ColorSequenceKeypoint, guiRootInst, setUiScale, setLowGraphics, physicsGround,
 	mergeFloor, start, perf,
-} from "./engine.js?v=1790758723";
-import * as Server from "./server.js?v=1790758723";
-import * as Online from "./online.js?v=1790758723";
+} from "./engine.js?v=1790759340";
+import * as Server from "./server.js?v=1790759340";
+import * as Online from "./online.js?v=1790759340";
 
 const V3 = (x, y, z) => new Vector3(x, y, z);
 const RGB = Color3.fromRGB;
@@ -1380,6 +1380,75 @@ let buildPlane;
 		add("Part", V3(12.2, 0.15, 0.3), shine, CFn(0, 0.3, -1.9), { Material: "Neon" });
 		add("Part", V3(1.2, 0.8, 2), RGB(255, 250, 220), CFn(0, 1.1, -2), { Material: "Neon", Transparency: 0.2 });
 	};
+	// ---------------- the ones you can only get with real money
+	SKIN_BUILD.Phoenix = (add) => {
+		const red = RGB(200, 40, 20), orange = RGB(255, 120, 20), yellow = RGB(255, 210, 60);
+		add("Part", V3(1.6, 1.6, 7), red, CFn());
+		add("Part", V3(1.2, 1.2, 2), orange, CFn(0, 0.3, -4.2), { Material: "Neon" });
+		add("Part", V3(0.5, 0.35, 1.4), yellow, CFn(0, 0.2, -5.6), { Material: "Neon" });
+		for (const side of [-1, 1]) {
+			// three layers of feathers per wing, swept back, burning at the tips
+			add("Part", V3(5, 0.25, 3), red, CFn(side * 3, 0.2, -0.2).mul(Ang(0, side * 0.35, side * 0.12)));
+			add("Part", V3(4.5, 0.2, 2.2), orange, CFn(side * 6.2, 0.7, 1.2).mul(Ang(0, side * 0.6, side * 0.2)), { Material: "Neon" });
+			add("Part", V3(3, 0.15, 1.4), yellow, CFn(side * 8.4, 1.1, 2.8).mul(Ang(0, side * 0.85, side * 0.25)), { Material: "Neon" });
+			add("Part", V3(0.25, 0.2, 4), orange, CFn(side * 0.7, 0, 5.6).mul(Ang(0, side * 0.25, 0)), { Material: "Neon" });
+		}
+		add("Part", V3(0.25, 0.2, 5), yellow, CFn(0, 0, 6), { Material: "Neon" });
+		add("Part", V3(0.25, 1.4, 1.6), orange, CFn(0, 1.1, -3.4).mul(Ang(-0.5, 0, 0)), { Material: "Neon" });
+	};
+	SKIN_BUILD.Galaxy = (add) => {
+		const deep = RGB(25, 10, 60), purple = RGB(150, 60, 255), pink = RGB(255, 90, 220), cyan = RGB(90, 220, 255);
+		add("Part", V3(2, 1.6, 8.5), deep, CFn());
+		add("Part", V3(1.3, 1, 2.4), cyan, CFn(0, 0.9, -2), { Material: "Neon", Transparency: 0.3 });
+		add("Part", V3(11, 0.3, 3.2), deep, CFn(0, 0, 0.6));
+		for (const side of [-1, 1]) {
+			add("Part", V3(10.5, 0.1, 0.35), purple, CFn(side * 0.1, 0.2, -0.9).mul(Ang(0, side * 0.04, 0)), { Material: "Neon" });
+			add("Part", V3(0.8, 0.8, 0.8), pink, CFn(side * 5.6, 0, 0.6), { Material: "Neon", Shape: "Ball" });
+			add("Part", V3(0.3, 2.2, 1.6), deep, CFn(side * 1.3, 1.1, 3.8).mul(Ang(0, 0, -side * 0.35)));
+			add("Part", V3(0.12, 2.2, 0.3), pink, CFn(side * 1.3, 1.1, 3.1).mul(Ang(0, 0, -side * 0.35)), { Material: "Neon" });
+		}
+		// a ring around the whole thing like a little planet
+		add("Part", V3(0.2, 9, 9), purple, CFn(0, 0, 0.6).mul(Ang(0, 0, Math.PI / 2)), { Shape: "Cylinder", Material: "Neon", Transparency: 0.75 });
+		add("Part", V3(1.4, 1.4, 0.6), cyan, CFn(0, 0, 4.4), { Material: "Neon" });
+	};
+	SKIN_BUILD.Razor = (add) => {
+		const black = RGB(20, 20, 24), steel = RGB(90, 95, 110), magenta = RGB(255, 30, 140), cyan = RGB(40, 230, 255);
+		add("Part", V3(1.4, 1.2, 10), black, CFn(), { Material: "Metal" });
+		add("Part", V3(0.6, 0.6, 3), steel, CFn(0, 0, -6), { Material: "Metal" });
+		add("Part", V3(0.9, 0.5, 2.4), magenta, CFn(0, 0.7, -2.6), { Material: "Neon", Transparency: 0.15 });
+		// four blades in an X
+		for (const sx of [-1, 1]) {
+			for (const sy of [-1, 1]) {
+				const cf = CFn(sx * 2.8, sy * 1.1, 1.5).mul(Ang(0, 0, sx * sy * 0.42));
+				add("Part", V3(5.6, 0.2, 3.4), steel, cf, { Material: "Metal" });
+				add("Part", V3(5.6, 0.22, 0.25), magenta, cf.mul(CFn(0, 0, -1.7)), { Material: "Neon" });
+				add("Part", V3(0.8, 0.8, 2.6), black, CFn(sx * 5.6, sy * 2.2, 1.6), { Material: "Metal" });
+				add("Part", V3(0.6, 0.6, 0.3), cyan, CFn(sx * 5.6, sy * 2.2, 2.95), { Material: "Neon" });
+			}
+		}
+		add("Part", V3(1, 1, 0.4), cyan, CFn(0, 0, 5.1), { Material: "Neon" });
+	};
+	SKIN_BUILD.Royal = (add) => {
+		const white = RGB(245, 243, 238), gold = RGB(255, 200, 60), velvet = RGB(110, 30, 150), ruby = RGB(230, 30, 60);
+		add("Part", V3(2.2, 2, 8.5), white, CFn(), { Material: "SmoothPlastic" });
+		add("Part", V3(1.4, 1.4, 1.6), gold, CFn(0, 0, -4.6), { Material: "Metal" });
+		add("Part", V3(1.3, 0.8, 2.2), RGB(170, 220, 255), CFn(0, 1.2, -1.8), { Transparency: 0.3 });
+		for (const side of [-1, 1]) {
+			add("Part", V3(6, 0.4, 3.4), velvet, CFn(side * 3.8, 0, 0));
+			add("Part", V3(6.1, 0.45, 0.35), gold, CFn(side * 3.8, 0, -1.7), { Material: "Metal" });
+			add("Part", V3(0.5, 0.9, 3.4), gold, CFn(side * 6.9, 0.2, 0), { Material: "Metal" });
+			add("Part", V3(0.5, 0.5, 0.5), ruby, CFn(side * 6.9, 0.8, -0.8), { Material: "Neon", Shape: "Ball" });
+			add("Part", V3(2.6, 0.3, 1.6), velvet, CFn(side * 1.8, 0, 4));
+		}
+		add("Part", V3(0.3, 2.4, 1.8), velvet, CFn(0, 1.5, 3.8));
+		add("Part", V3(0.35, 0.3, 1.9), gold, CFn(0, 2.7, 3.8), { Material: "Metal" });
+		// the crown on the roof
+		add("Part", V3(1.6, 0.4, 1.6), gold, CFn(0, 1.8, -0.4), { Material: "Metal" });
+		for (const [x, z] of [[-0.6, -1], [0.6, -1], [-0.6, 0.2], [0.6, 0.2], [0, -0.4]]) {
+			add("Part", V3(0.3, 0.7, 0.3), gold, CFn(x, 2.3, z + 0.2), { Material: "Metal" });
+		}
+		add("Part", V3(0.4, 0.4, 0.4), ruby, CFn(0, 2.2, -1.1), { Material: "Neon", Shape: "Ball" });
+	};
 
 	// every skin leaves something behind it
 	const FX = {
@@ -1435,6 +1504,26 @@ let buildPlane;
 		Dragon: (fx) => {
 			fx.flame(V3(0, 0.4, -5.6), RGB(255, 240, 150), RGB(255, 80, 20), 1.6, 60);
 			fx.emit(V3(0, 0, 6), { Texture: "sparkles", Color: new ColorSequence(RGB(255, 140, 40)), LightEmission: 1, Size: new NumberSequence(0.6, 0), Lifetime: new NumberRange(0.5, 0.9), Rate: 18, Speed: new NumberRange(3, 7), SpreadAngle: V2(40, 40), EmissionDirection: "Back" });
+		},
+		Phoenix: (fx) => {
+			fx.flame(V3(0, 0, 4), RGB(255, 240, 150), RGB(255, 60, 10), 2.2, 110);
+			for (const x of [-8.4, 8.4]) fx.flame(V3(x, 1.1, 2.8), RGB(255, 230, 120), RGB(255, 80, 20), 0.9, 40);
+			fx.trail(V3(0, 0, 4), { Lifetime: 0.6, Width: 2.2, Color: new ColorSequence(RGB(255, 200, 60), RGB(255, 40, 10)), Transparency: new NumberSequence(0.2, 1), LightEmission: 1 });
+			fx.emit(V3(0, 0, 3), { Texture: "sparkles", Color: new ColorSequence(RGB(255, 170, 40), RGB(255, 60, 20)), LightEmission: 1, Size: new NumberSequence(0.8, 0), Lifetime: new NumberRange(0.6, 1.2), Rate: 30, Speed: new NumberRange(3, 9), SpreadAngle: V2(50, 50), EmissionDirection: "Back" });
+		},
+		Galaxy: (fx) => {
+			fx.trail(V3(0, 0, 4.4), { Lifetime: 1, Width: 1.6, Color: new ColorSequence(RGB(90, 220, 255), RGB(200, 60, 255)), Transparency: new NumberSequence(0.15, 1), LightEmission: 1 });
+			for (const x of [-5.6, 5.6]) fx.trail(V3(x, 0, 0.6), { Lifetime: 0.8, Width: 0.3, Color: new ColorSequence(RGB(255, 90, 220)), Transparency: new NumberSequence(0.2, 1), LightEmission: 1 });
+			fx.emit(V3(0, 0, 2), { Texture: "sparkles", Color: new ColorSequence(RGB(255, 255, 255), RGB(160, 120, 255)), LightEmission: 1, Size: new NumberSequence(0.5, 0), Lifetime: new NumberRange(1, 1.8), Rate: 40, Speed: new NumberRange(1, 4), SpreadAngle: V2(180, 180) });
+		},
+		Razor: (fx) => {
+			for (const sx of [-1, 1]) for (const sy of [-1, 1]) fx.trail(V3(sx * 5.6, sy * 2.2, 2.9), { Lifetime: 0.45, Width: 0.5, Color: new ColorSequence(RGB(40, 230, 255), RGB(255, 30, 140)), Transparency: new NumberSequence(0.1, 1), LightEmission: 1 });
+			fx.flame(V3(0, 0, 5.3), RGB(200, 250, 255), RGB(40, 200, 255), 1.2, 80);
+		},
+		Royal: (fx) => {
+			fx.trail(V3(0, 0, 4.3), { Lifetime: 0.9, Width: 1.4, Color: new ColorSequence(RGB(160, 60, 220), RGB(90, 20, 130)), Transparency: new NumberSequence(0.25, 1), LightEmission: 0.6 });
+			for (const x of [-6.9, 6.9]) fx.trail(V3(x, 0.2, 0), { Lifetime: 0.8, Width: 0.35, Color: new ColorSequence(RGB(255, 215, 90)), Transparency: new NumberSequence(0.15, 1), LightEmission: 1 });
+			fx.emit(V3(0, 1, 2), { Texture: "sparkles", Color: new ColorSequence(RGB(255, 230, 120)), LightEmission: 1, Size: new NumberSequence(0.7, 0), Lifetime: new NumberRange(0.6, 1.2), Rate: 24, Speed: new NumberRange(2, 5), SpreadAngle: V2(70, 70) });
 		},
 		Gold: (fx) => {
 			for (const x of [-6, 6]) fx.trail(V3(x, 0, 0), { Lifetime: 0.8, Width: 0.35, Color: new ColorSequence(RGB(255, 220, 90)), Transparency: new NumberSequence(0.2, 1), LightEmission: 1 });
@@ -1508,6 +1597,14 @@ let buildPlane;
 		}
 		(SKIN_BUILD[id] || SKIN_BUILD.Default)(add);
 		if (!noFx) addFx(SKIN_BUILD[id] ? id : "Default", main);
+		const LIGHT = { Phoenix: RGB(255, 120, 30), Galaxy: RGB(160, 80, 255), Razor: RGB(255, 40, 150) };
+		if (LIGHT[id]) {
+			const glow = Instance.new("PointLight");
+			glow.Range = 18;
+			glow.Brightness = 1.6;
+			glow.Color = LIGHT[id];
+			glow.Parent = main;
+		}
 		if (id === "Stealth") {
 			const glow = Instance.new("PointLight");
 			glow.Range = 16;
@@ -3213,6 +3310,10 @@ function deathView(vp, kind) {
 			Neon: ["straight out of the grid", "glowing cyan light trails"],
 			Dragon: ["breathes fire, obviously", "flames and embers"],
 			Gold: ["for people with too many gems", "golden trails and sparkles"],
+			Phoenix: ["rises from every crash. well, not really", "burning wings, embers, a trail of fire"],
+			Galaxy: ["a tiny planet with wings", "starfield sparkles and a nebula trail"],
+			Razor: ["four blades, zero chill", "cyan and magenta blade trails"],
+			Royal: ["only in the special pack", "golden sparkles, royal purple trail"],
 		},
 		death: {
 			Default: ["a normal explosion", "fire, smoke, debris"],
@@ -3240,6 +3341,7 @@ function deathView(vp, kind) {
 	// the rarer, the more it glows
 	function rarity(price, isSkin) {
 		const p = isSkin ? price : price * 25;
+		if (isSkin && p >= 1000) return ["EXCLUSIVE", RGB(255, 70, 170)];
 		if (p >= 350) return ["LEGENDARY", RGB(255, 190, 60)];
 		if (p >= 200) return ["EPIC", RGB(200, 110, 255)];
 		if (p >= 100) return ["RARE", RGB(90, 180, 255)];
@@ -3252,9 +3354,17 @@ function deathView(vp, kind) {
 		let label, c, base = 0.1;
 		if (equipped === item.id) [label, c] = ["EQUIPPED", GOOD];
 		else if (owned[item.id]) [label, c] = ["EQUIP", WHITE];
+		else if (item.eur) [label, c] = [item.eur === "SPECIAL PACK" ? "IN THE SPECIAL PACK" : item.eur + "  BUY", RGB(255, 70, 170)];
 		else [label, c] = [fmt(item.price) + (isSkin ? " ◆" : " ✦") + "  BUY", money >= item.price ? (isSkin ? GEM : KEY) : DIM];
 		const b = button(parent, "", size, pos, async () => {
 			if (equipped === item.id) return;
+			if (item.eur && !owned[item.id]) {
+				if (item.pack === "special") {
+					shopTab = "GEMS";
+					rebuildShop();
+				} else Game.buyPack(item.pack);
+				return;
+			}
 			if (!owned[item.id] && Game.topUp(isSkin ? "gems" : "keys", item.price)) return;
 			const [ok, msg] = request(isSkin ? "skin" : "death", item.id);
 			result(ok, msg);
@@ -3266,7 +3376,7 @@ function deathView(vp, kind) {
 		b.TextSize = 24;
 		const l = Icons.text(b, US(1, 1), null, 24, c);
 		l.Text = label;
-		if (equipped !== item.id && !owned[item.id] && money >= item.price) {
+		if (equipped !== item.id && !owned[item.id] && !item.eur && money >= item.price) {
 			// pulse so you know you can afford it
 			const glow = make("UIStroke", { Color: c, Thickness: 2, Transparency: 0.2, ApplyStrokeMode: "Border", Parent: b });
 			const conn = RunService.RenderStepped.Connect(() => {
@@ -3335,7 +3445,10 @@ function deathView(vp, kind) {
 				st.Text = "EQUIPPED";
 				st.TextColor3 = GOOD;
 			} else if (owned[it.id]) st.Text = "OWNED";
-			else {
+			else if (it.eur) {
+				st.Text = it.eur === "SPECIAL PACK" ? "SPECIAL PACK" : it.eur;
+				st.TextColor3 = RGB(255, 70, 170);
+			} else {
 				st.Text = fmt(it.price) + (isSkin ? " ◆" : " ✦");
 				st.TextColor3 = (isSkin ? data.gems : data.keys) >= it.price ? (isSkin ? GEM : KEY) : DIM;
 			}
@@ -8277,7 +8390,7 @@ if (DEV) window.__dev = { crash: () => task.spawn(crash, []), data: () => data, 
 // ------------------------------------------------------------------ old version warning
 // every build has its own number, the page checks now and then whether a newer one is online
 (() => {
-	const BUILD = "1790758723";
+	const BUILD = "1790759340";
 	if (BUILD.startsWith("__")) return;
 	const bar = make("TextButton", {
 		AnchorPoint: V2(0.5, 0),
@@ -8482,67 +8595,129 @@ if (DEV) window.__dev = { crash: () => task.spawn(crash, []), data: () => data, 
 	ap.onOpen = draw;
 })();
 
-// ------------------------------------------------------------------ gems for real money
+// ------------------------------------------------------------------ real money
 // you pay on a stripe page, stripe tells the worker, the worker drops a grant into firebase and we pick it up here.
-// the links come from the stripe dashboard (payment links). empty link = the pack says SOON
+// links come from the stripe dashboard (payment links). empty link = the button says SOON.
+// what you get is decided by the worker, this list is just what the shop shows
 
-const GEM_PACKS = [
-	{ id: "small", gems: 500, price: "2,99 €", link: "" },
-	{ id: "medium", gems: 1000, price: "4,99 €", link: "", tag: "POPULAR" },
-	{ id: "big", gems: 2500, price: "9,99 €", link: "", tag: "BEST VALUE" },
-];
+const PACKS = {
+	special: { price: "9,99 €", gems: 1000, coins: 50000, revives: 10, keys: 15, skin: "Royal", link: "https://buy.stripe.com/test_dRm4gy83RdDZaGO7jA7Re00" },
+	gems500: { price: "2,99 €", gems: 500, link: "https://buy.stripe.com/test_14A5kC2JxfM74iq47o7Re01" },
+	gems1000: { price: "4,99 €", gems: 1000, tag: "POPULAR", link: "https://buy.stripe.com/test_14A8wO83RczV2ai7jA7Re02" },
+	gems2500: { price: "9,99 €", gems: 2500, tag: "BEST VALUE", link: "https://buy.stripe.com/test_fZueVcfwj8jF4iq8nE7Re03" },
+	phoenix: { price: "1,99 €", skin: "Phoenix", link: "https://buy.stripe.com/test_cNi6oGck7arN5mu9rI7Re04" },
+	galaxy: { price: "1,99 €", skin: "Galaxy", link: "https://buy.stripe.com/test_dRm3cu2Jx43pcOW6fw7Re05" },
+	razor: { price: "1,99 €", skin: "Razor", link: "https://buy.stripe.com/test_8x2aEWdobczV8yGgUa7Re06" },
+};
+const PINK = RGB(255, 70, 170);
+// test links (fake card 4242...) only work with ?dev, so nobody gets free stuff while we're testing
+for (const id in PACKS) if (PACKS[id].link.includes("/test_") && !DEV) PACKS[id].link = "";
 
 (() => {
-	function buy(p) {
-		if (!p.link) {
+	Game.buyPack = (id) => {
+		const p = PACKS[id];
+		if (!p || !p.link) {
 			notify("coming soon", DIM);
 			sfx("bad");
 			return;
 		}
 		if (!Online.account()) {
-			notify("make an account first, the gems go to it", BAD);
+			notify("make an account first, it all goes to your account", BAD);
 			sfx("bad");
 			Game.openAccount();
 			return;
 		}
-		window.open(p.link + (p.link.includes("?") ? "&" : "?") + "client_reference_id=" + encodeURIComponent(Online.myId()), "_blank");
-		notify("finish paying in the new tab, the gems show up here by themselves", GEM);
+		const ref = Online.myId() + "__" + id;
+		window.open(p.link + (p.link.includes("?") ? "&" : "?") + "client_reference_id=" + encodeURIComponent(ref), "_blank");
+		notify("finish paying in the new tab, it shows up here by itself", GEM);
 		sfx("click");
+	};
+
+	function priceButton(parent, id, pos, size) {
+		const p = PACKS[id];
+		const b = button(parent, p.link ? p.price : "SOON", size || UO(180, 50), pos, () => Game.buyPack(id), 0.1);
+		b.TextSize = 26;
+		b.TextColor3 = p.link ? GOOD : DIM;
+		return b;
 	}
 
 	Game.gemShop = (parent) => {
-		const top = row(parent, 96, 0.45);
-		make("UICorner", { CornerRadius: UDim.new(0, 10), Parent: top });
-		const gi = Icons.make("gem", top, 56);
-		gi.AnchorPoint = V2(0, 0.5);
-		gi.Position = U2(0, 30, 0.5, 0);
-		text(top, "GEMS  " + fmt(data.gems || 0), UO(400, 32), UO(110, 16), 28, GEM, LEFT);
-		text(top, "FOR SKINS AND REVIVES. YOU CAN STILL GET ALL OF THEM FOR FREE BY PLAYING.", U2(1, -130, 0, 40), UO(110, 50), 16, DIM, LEFT);
-		for (const p of GEM_PACKS) {
+		// ---------------- the special pack, big and loud
+		const sp = PACKS.special;
+		const box = row(parent, 250, 0.2);
+		make("UICorner", { CornerRadius: UDim.new(0, 12), Parent: box });
+		make("UIStroke", { Color: COIN, Thickness: 2, Transparency: 0.2, ApplyStrokeMode: "Border", Parent: box });
+		make("UIGradient", { Color: new ColorSequence(RGB(255, 225, 150), RGB(200, 130, 255)), Rotation: 20, Parent: box });
+		const vp = planeView(box, "Royal", UO(250, 210), UO(14, 20), { bg: RGB(30, 20, 45), bgT: 0.1, round: 10, wind: V3(-28, 0, -12) });
+		vp.el.style.pointerEvents = "none";
+		text(box, "SPECIAL PACK", UO(420, 40), UO(284, 16), 38, COIN, LEFT);
+		const owns = data.skins && data.skins.Royal;
+		text(box, owns ? "YOU ALREADY HAVE THE ROYAL SKIN, THE REST STILL COUNTS" : "INCLUDES THE ROYAL SKIN, ONLY IN HERE", UO(420, 20), UO(284, 56), 15, owns ? DIM : PINK, LEFT);
+		const lines = [
+			[fmt(sp.gems) + " GEMS", GEM, "gem"],
+			[fmt(sp.coins) + " COINS", COIN, "coin"],
+			[sp.revives + " REVIVES", RGB(255, 100, 130), "heart"],
+			[sp.keys + " KEYS", KEY, "key"],
+			["ROYAL SKIN", PINK, "user"],
+		];
+		lines.forEach(([t, c, ic], i) => {
+			const x = 284 + (i % 2) * 210, y = 86 + Math.floor(i / 2) * 34;
+			const icon = Icons.make(ic, box, 24);
+			icon.Position = UO(x, y + 3);
+			text(box, t, UO(180, 30), UO(x + 32, y), 22, c, LEFT);
+		});
+		priceButton(box, "special", U2(1, -214, 1, -66), UO(200, 54));
+
+		// ---------------- gems
+		for (const id of ["gems500", "gems1000", "gems2500"]) {
+			const p = PACKS[id];
 			const r = row(parent, 76);
-			const ic = Icons.make("gem", r, p.id === "big" ? 44 : p.id === "medium" ? 38 : 32);
+			const ic = Icons.make("gem", r, id === "gems2500" ? 44 : id === "gems1000" ? 38 : 32);
 			ic.AnchorPoint = V2(0.5, 0.5);
 			ic.Position = U2(0, 44, 0.5, 0);
 			text(r, fmt(p.gems) + " GEMS", U2(0.5, 0, 0, 34), UO(84, 10), 30, WHITE, LEFT);
-			if (p.tag) text(r, p.tag, U2(0.5, 0, 0, 20), UO(84, 44), 16, p.id === "big" ? COIN : GOOD, LEFT);
-			const b = button(r, p.link ? p.price : "SOON", UO(180, 50), U2(1, -194, 0.5, -25), () => buy(p), 0.1);
-			b.TextSize = 26;
-			b.TextColor3 = p.link ? GOOD : DIM;
+			if (p.tag) text(r, p.tag, U2(0.5, 0, 0, 20), UO(84, 44), 16, id === "gems2500" ? COIN : GOOD, LEFT);
+			priceButton(r, id, U2(1, -194, 0.5, -25));
 		}
+
+		// ---------------- the exclusive skins
+		text(row(parent, 34, 1), "EXCLUSIVE SKINS", US(1, 1), UO(4, 4), 18, DIM, LEFT);
+		const grid = make("Frame", { Size: U2(1, 0, 0, 0), AutomaticSize: "Y", BackgroundTransparency: 1, LayoutOrder: nextOrder(), Parent: parent });
+		make("UIGridLayout", { CellSize: UO(234, 230), CellPadding: UO(8, 8), SortOrder: "LayoutOrder", Parent: grid });
+		["phoenix", "galaxy", "razor"].forEach((id, i) => {
+			const p = PACKS[id];
+			const c = make("Frame", { BackgroundColor3: BLACK, BackgroundTransparency: 0.45, LayoutOrder: i, Parent: grid });
+			make("UICorner", { CornerRadius: UDim.new(0, 10), Parent: c });
+			make("UIStroke", { Color: PINK, Thickness: 2, Transparency: 0.45, ApplyStrokeMode: "Border", Parent: c });
+			const v = planeView(c, p.skin, UO(214, 130), UO(10, 8), { bgT: 1, fov: 30, cam: CFrame.lookAt(V3(0, 6, 26), V3(0, -0.3, 0)), spin: 0.6 });
+			v.el.style.pointerEvents = "none";
+			text(c, niceName(p.skin), U2(1, -10, 0, 28), UO(5, 140), 26, WHITE);
+			if (data.skins && data.skins[p.skin]) {
+				const l = text(c, "OWNED", U2(1, -10, 0, 40), UO(5, 178), 22, GOOD);
+				l.TextColor3 = GOOD;
+			} else priceButton(c, id, UO(17, 176), UO(200, 44));
+		});
+
 		const fine = row(parent, 44, 1);
-		const t = text(fine, "PAYMENTS BY STRIPE: CARD, BANKOMAT, APPLE PAY, GOOGLE PAY. GEMS ARE DELIVERED RIGHT AWAY, SO THERE'S NO RIGHT OF WITHDRAWAL ONCE THEY'RE IN.", U2(1, -20, 1, 0), UO(10, 0), 13, DIM, LEFT);
+		const t = text(fine, "PAYMENTS BY STRIPE: CARD, BANKOMAT, APPLE PAY, GOOGLE PAY. EVERYTHING IS DELIVERED RIGHT AWAY, SO THERE'S NO RIGHT OF WITHDRAWAL ONCE IT'S IN. YOU CAN STILL GET GEMS FOR FREE BY PLAYING.", U2(1, -20, 1, 0), UO(10, 0), 13, DIM, LEFT);
 		t.TextWrapped = true;
 	};
 
 	// ---------------- picking up what you paid for
-	function thanks(gems) {
-		const wash = make("Frame", { Size: US(1, 1), BackgroundColor3: GEM, BackgroundTransparency: 0.5, ZIndex: 30, Parent: gui });
+	function thanks(g) {
+		const wash = make("Frame", { Size: US(1, 1), BackgroundColor3: g.skin ? PINK : GEM, BackgroundTransparency: 0.5, ZIndex: 30, Parent: gui });
 		wash.el.style.pointerEvents = "none";
 		tw(wash, 1.2, { BackgroundTransparency: 1 });
 		Debris.AddItem(wash, 1.3);
-		banner("+" + fmt(gems) + " GEMS", GEM, 3);
+		const bits = [];
+		if (g.skin) bits.push(niceName(g.skin) + " SKIN");
+		if (g.gems) bits.push("+" + fmt(g.gems) + " GEMS");
+		if (g.coins) bits.push("+" + fmt(g.coins) + " COINS");
+		banner(bits.slice(0, 2).join("  "), g.skin ? PINK : GEM, 3.5);
 		notify("thanks for supporting the game!", GOOD);
 		sfx("levelup");
+		if (g.skin && mode === "menu") buildPlane(g.skin);
+		Game.pushProfile();
 		if (panels.shop && panels.shop.frame.Visible) rebuildShop();
 	}
 
@@ -8550,7 +8725,7 @@ const GEM_PACKS = [
 	async function claim(uid, id, g) {
 		if (busy.has(id)) return;
 		busy.add(id);
-		const [ok] = request("paid", { id, gems: g.gems });
+		const [ok] = request("paid", { id, gems: g.gems, coins: g.coins, keys: g.keys, revives: g.revives, skin: g.skin });
 		try {
 			await Online.put(`grants/${uid}/${id}/claimed`, true);
 		} catch (e) {
@@ -8558,7 +8733,7 @@ const GEM_PACKS = [
 		}
 		if (ok) {
 			Game.cloudSave(true);
-			thanks(g.gems);
+			thanks(g);
 		}
 	}
 
@@ -8574,8 +8749,9 @@ const GEM_PACKS = [
 		stop = Online.listen(`grants/${uid}`, (all) => {
 			if (!all || typeof all !== "object" || who !== uid) return;
 			for (const [id, g] of Object.entries(all)) {
-				if (g && !g.claimed && g.gems > 0 && !(data.paid && data.paid[id])) claim(uid, id, g);
-				else if (g && !g.claimed && data.paid && data.paid[id]) Online.put(`grants/${uid}/${id}/claimed`, true).catch(() => {});
+				if (!g || g.claimed) continue;
+				if (data.paid && data.paid[id]) Online.put(`grants/${uid}/${id}/claimed`, true).catch(() => {});
+				else claim(uid, id, g);
 			}
 		});
 	}
@@ -8584,7 +8760,7 @@ const GEM_PACKS = [
 
 	// back from the stripe page
 	if (/[?&]paid\b/.test(location.search)) {
-		task.delay(2.5, () => notify("payment done, your gems are on the way", GOOD));
+		task.delay(2.5, () => notify("payment done, it shows up in a few seconds", GOOD));
 		try {
 			history.replaceState(null, "", location.pathname);
 		} catch (e) {}

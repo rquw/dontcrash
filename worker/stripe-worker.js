@@ -5,8 +5,16 @@
 //   FIREBASE_SECRET        database secret from firebase (project settings > service accounts > database secrets)
 //   FIREBASE_DB            https://dontcrash-7a1db-default-rtdb.europe-west1.firebasedatabase.app
 
-// price in cents -> gems. has to match the payment links and GEM_PACKS in the game
-const PACKS = { 299: 500, 499: 1000, 999: 2500 };
+// what every pack costs (in cents) and gives. has to match the payment links and PACKS in the game
+const PACKS = {
+	special: { amt: 999, gems: 1000, coins: 50000, revives: 10, keys: 15, skin: "Royal" },
+	gems500: { amt: 299, gems: 500 },
+	gems1000: { amt: 499, gems: 1000 },
+	gems2500: { amt: 999, gems: 2500 },
+	phoenix: { amt: 199, skin: "Phoenix" },
+	galaxy: { amt: 199, skin: "Galaxy" },
+	razor: { amt: 199, skin: "Razor" },
+};
 
 export default {
 	async fetch(req, env) {
@@ -20,9 +28,10 @@ export default {
 
 		const s = ev.data.object;
 		if (s.payment_status !== "paid") return new Response("not paid yet");
-		const uid = s.client_reference_id;
-		const gems = PACKS[s.amount_total];
-		if (!uid || !/^[A-Za-z0-9_-]{6,128}$/.test(uid) || !gems) return new Response("no player or unknown pack");
+		// the game sends "<player>__<pack>", the price has to match the pack so nobody gets the big one for 1,99
+		const [uid, packId] = String(s.client_reference_id || "").split("__");
+		const pack = PACKS[packId];
+		if (!uid || !/^[A-Za-z0-9-]{6,128}$/.test(uid) || !pack || pack.amt !== s.amount_total) return new Response("no player or wrong pack");
 
 		const url = `${env.FIREBASE_DB.replace(/\/+$/, "")}/grants/${uid}/${s.id}.json?auth=${env.FIREBASE_SECRET}`;
 		// stripe sometimes sends the same event twice, one payment only counts once
@@ -30,7 +39,7 @@ export default {
 		if (!had) {
 			const r = await fetch(url, {
 				method: "PUT",
-				body: JSON.stringify({ gems, eur: s.amount_total / 100, at: { ".sv": "timestamp" } }),
+				body: JSON.stringify({ ...pack, amt: undefined, pack: packId, eur: s.amount_total / 100, at: { ".sv": "timestamp" } }),
 			});
 			if (!r.ok) return new Response("database failed", { status: 500 });
 		}

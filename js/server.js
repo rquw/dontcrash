@@ -49,6 +49,11 @@ export const CONFIG = {
 		{ id: "Rocket", price: 400 },
 		{ id: "Dragon", price: 450 },
 		{ id: "Gold", price: 800 },
+		// real money only, the price is what the button says
+		{ id: "Phoenix", price: 1000, eur: "1,99 €", pack: "phoenix" },
+		{ id: "Galaxy", price: 1000, eur: "1,99 €", pack: "galaxy" },
+		{ id: "Razor", price: 1000, eur: "1,99 €", pack: "razor" },
+		{ id: "Royal", price: 1000, eur: "SPECIAL PACK", pack: "special" },
 	],
 	deaths: [
 		{ id: "Default", price: 0 },
@@ -320,6 +325,7 @@ function cosmetic(list, ownedKey, equipKey, currency, id) {
 				d[equipKey] = id;
 				return [true, id + " equipped"];
 			}
+			if (item.eur) return [false, "this one's only in the gem shop"];
 			if (d[currency] < item.price) return [false, "not enough " + currency];
 			d[currency] -= item.price;
 			d[ownedKey][id] = true;
@@ -393,12 +399,20 @@ handlers.revive_gems = (price) => {
 };
 // gems bought with real money. the payment itself is checked by the worker, this just makes sure one payment counts once
 handlers.paid = (g) => {
-	if (!g || typeof g.id !== "string" || !(g.gems > 0) || g.gems > 100000) return [false, "bad payment"];
+	if (!g || typeof g.id !== "string") return [false, "bad payment"];
+	const n = (v, max) => Math.max(0, Math.min(max, Math.floor(Number(v) || 0)));
 	s.data.paid = s.data.paid || {};
 	if (s.data.paid[g.id]) return [false, "already got those"];
 	s.data.paid[g.id] = now();
-	s.data.gems += Math.floor(g.gems);
-	return [true, "+" + g.gems + " gems"];
+	s.data.gems += n(g.gems, 100000);
+	s.data.coins += n(g.coins, 1000000);
+	s.data.keys += n(g.keys, 1000);
+	s.data.revives = (s.data.revives || 0) + n(g.revives, 1000);
+	if (typeof g.skin === "string" && CONFIG.skins.some((x) => x.id === g.skin)) {
+		s.data.skins[g.skin] = true;
+		s.data.skin = g.skin;
+	}
+	return [true, "thanks!"];
 };
 handlers.buy_revive = (n) => {
 	const PACKS = { 1: 200, 5: 500 };
