@@ -3,9 +3,9 @@ import {
 	camera, Lighting, Instance, workspace, markQueryRoot, Enum, OverlapParams, TweenService, TweenInfo, Debris, UIS, playSfx, loopSound, loadSounds, setSfxVolume,
 	NumberSequence, NumberSequenceKeypoint, NumberRange, ColorSequence, ColorSequenceKeypoint, guiRootInst, setUiScale, setLowGraphics, physicsGround,
 	mergeFloor, start, perf,
-} from "./engine.js?v=1790759340";
-import * as Server from "./server.js?v=1790759340";
-import * as Online from "./online.js?v=1790759340";
+} from "./engine.js?v=1790762221";
+import * as Server from "./server.js?v=1790762221";
+import * as Online from "./online.js?v=1790762221";
 
 const V3 = (x, y, z) => new Vector3(x, y, z);
 const RGB = Color3.fromRGB;
@@ -8390,7 +8390,7 @@ if (DEV) window.__dev = { crash: () => task.spawn(crash, []), data: () => data, 
 // ------------------------------------------------------------------ old version warning
 // every build has its own number, the page checks now and then whether a newer one is online
 (() => {
-	const BUILD = "1790759340";
+	const BUILD = "1790762221";
 	if (BUILD.startsWith("__")) return;
 	const bar = make("TextButton", {
 		AnchorPoint: V2(0.5, 0),
@@ -8628,9 +8628,11 @@ for (const id in PACKS) if (PACKS[id].link.includes("/test_") && !DEV) PACKS[id]
 			return;
 		}
 		const ref = Online.myId() + "__" + id;
-		window.open(p.link + (p.link.includes("?") ? "&" : "?") + "client_reference_id=" + encodeURIComponent(ref), "_blank");
-		notify("finish paying in the new tab, it shows up here by itself", GEM);
+		// same tab, stripe sends you back here when you're done
+		notify("taking you to the payment page", GEM);
 		sfx("click");
+		Game.cloudSave(true);
+		setTimeout(() => (location.href = p.link + (p.link.includes("?") ? "&" : "?") + "client_reference_id=" + encodeURIComponent(ref)), 400);
 	};
 
 	function priceButton(parent, id, pos, size) {
@@ -8699,8 +8701,11 @@ for (const id in PACKS) if (PACKS[id].link.includes("/test_") && !DEV) PACKS[id]
 		});
 
 		const fine = row(parent, 44, 1);
-		const t = text(fine, "PAYMENTS BY STRIPE: CARD, BANKOMAT, APPLE PAY, GOOGLE PAY. EVERYTHING IS DELIVERED RIGHT AWAY, SO THERE'S NO RIGHT OF WITHDRAWAL ONCE IT'S IN. YOU CAN STILL GET GEMS FOR FREE BY PLAYING.", U2(1, -20, 1, 0), UO(10, 0), 13, DIM, LEFT);
+		const t = text(fine, "PAYMENTS BY STRIPE: CARD, BANKOMAT, APPLE PAY, GOOGLE PAY. EVERYTHING IS DELIVERED RIGHT AWAY, SO THERE'S NO RIGHT OF WITHDRAWAL ONCE IT'S IN. YOU CAN STILL GET GEMS FOR FREE BY PLAYING.", U2(1, -150, 1, 0), UO(10, 0), 13, DIM, LEFT);
 		t.TextWrapped = true;
+		const imp = button(fine, "IMPRESSUM", UO(126, 34), U2(1, -132, 0.5, -17), () => window.open("impressum.html", "_blank"), 0.4);
+		imp.TextSize = 16;
+		imp.TextColor3 = DIM;
 	};
 
 	// ---------------- picking up what you paid for
@@ -8757,6 +8762,11 @@ for (const id in PACKS) if (PACKS[id].link.includes("/test_") && !DEV) PACKS[id]
 	}
 	task.delay(2, watch);
 	setInterval(watch, 3000);
+
+	// small legal link in the corner of the menu
+	const il = button(menu, "IMPRESSUM", UO(110, 28), U2(0, 16, 1, -40), () => window.open("impressum.html", "_blank"), 0.7);
+	il.TextSize = 14;
+	il.TextColor3 = DIM;
 
 	// back from the stripe page
 	if (/[?&]paid\b/.test(location.search)) {
