@@ -3,9 +3,9 @@ import {
 	camera, Lighting, Instance, workspace, markQueryRoot, Enum, OverlapParams, TweenService, TweenInfo, Debris, UIS, playSfx, loopSound, loadSounds, setSfxVolume,
 	NumberSequence, NumberSequenceKeypoint, NumberRange, ColorSequence, ColorSequenceKeypoint, guiRootInst, setUiScale, setLowGraphics, physicsGround,
 	mergeFloor, start, perf,
-} from "./engine.js?v=1790762221";
-import * as Server from "./server.js?v=1790762221";
-import * as Online from "./online.js?v=1790762221";
+} from "./engine.js?v=1790763292";
+import * as Server from "./server.js?v=1790763292";
+import * as Online from "./online.js?v=1790763292";
 
 const V3 = (x, y, z) => new Vector3(x, y, z);
 const RGB = Color3.fromRGB;
@@ -8390,7 +8390,7 @@ if (DEV) window.__dev = { crash: () => task.spawn(crash, []), data: () => data, 
 // ------------------------------------------------------------------ old version warning
 // every build has its own number, the page checks now and then whether a newer one is online
 (() => {
-	const BUILD = "1790762221";
+	const BUILD = "1790763292";
 	if (BUILD.startsWith("__")) return;
 	const bar = make("TextButton", {
 		AnchorPoint: V2(0.5, 0),
@@ -8601,13 +8601,13 @@ if (DEV) window.__dev = { crash: () => task.spawn(crash, []), data: () => data, 
 // what you get is decided by the worker, this list is just what the shop shows
 
 const PACKS = {
-	special: { price: "9,99 €", gems: 1000, coins: 50000, revives: 10, keys: 15, skin: "Royal", link: "https://buy.stripe.com/test_dRm4gy83RdDZaGO7jA7Re00" },
-	gems500: { price: "2,99 €", gems: 500, link: "https://buy.stripe.com/test_14A5kC2JxfM74iq47o7Re01" },
-	gems1000: { price: "4,99 €", gems: 1000, tag: "POPULAR", link: "https://buy.stripe.com/test_14A8wO83RczV2ai7jA7Re02" },
-	gems2500: { price: "9,99 €", gems: 2500, tag: "BEST VALUE", link: "https://buy.stripe.com/test_fZueVcfwj8jF4iq8nE7Re03" },
-	phoenix: { price: "1,99 €", skin: "Phoenix", link: "https://buy.stripe.com/test_cNi6oGck7arN5mu9rI7Re04" },
-	galaxy: { price: "1,99 €", skin: "Galaxy", link: "https://buy.stripe.com/test_dRm3cu2Jx43pcOW6fw7Re05" },
-	razor: { price: "1,99 €", skin: "Razor", link: "https://buy.stripe.com/test_8x2aEWdobczV8yGgUa7Re06" },
+	special: { price: "9,99 €", gems: 1000, coins: 50000, revives: 10, keys: 15, skin: "Royal", link: "https://buy.stripe.com/dRmbJ02It3cb20g1nF1sQ04" },
+	gems500: { price: "2,99 €", gems: 500, link: "https://buy.stripe.com/14AeVcerb7srcEUc2j1sQ03" },
+	gems1000: { price: "4,99 €", gems: 1000, tag: "POPULAR", link: "https://buy.stripe.com/14A8wO5UF287gVa1nF1sQ02" },
+	gems2500: { price: "9,99 €", gems: 2500, tag: "BEST VALUE", link: "https://buy.stripe.com/aFacN45UFeUTbAQ6HZ1sQ05" },
+	phoenix: { price: "1,99 €", skin: "Phoenix", link: "https://buy.stripe.com/cNifZgbeZ8wv8oE8Q71sQ01" },
+	galaxy: { price: "1,99 €", skin: "Galaxy", link: "https://buy.stripe.com/fZu7sK82N7srbAQ7M31sQ00" },
+	razor: { price: "1,99 €", skin: "Razor", link: "https://buy.stripe.com/cNi7sKaaV4gf6gwd6n1sQ06" },
 };
 const PINK = RGB(255, 70, 170);
 // test links (fake card 4242...) only work with ?dev, so nobody gets free stuff while we're testing
