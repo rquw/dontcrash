@@ -3,9 +3,9 @@ import {
 	camera, Lighting, Instance, workspace, markQueryRoot, Enum, OverlapParams, TweenService, TweenInfo, Debris, UIS, playSfx, loopSound, loadSounds, setSfxVolume,
 	NumberSequence, NumberSequenceKeypoint, NumberRange, ColorSequence, ColorSequenceKeypoint, guiRootInst, setUiScale, setLowGraphics, physicsGround,
 	mergeFloor, start, perf,
-} from "./engine.js?v=1790693791";
-import * as Server from "./server.js?v=1790693791";
-import * as Online from "./online.js?v=1790693791";
+} from "./engine.js?v=1790696329";
+import * as Server from "./server.js?v=1790696329";
+import * as Online from "./online.js?v=1790696329";
 
 const V3 = (x, y, z) => new Vector3(x, y, z);
 const RGB = Color3.fromRGB;
@@ -827,6 +827,26 @@ let trackChunks, updateMovers, regenerate, canyonPath, canyonHalfGap, updatePads
 			build(q.cx, q.cz);
 		}
 	}
+
+	// throws away everything built from this row on, so a stage that starts now isn't stuck behind view distance worth of empty chunks
+	Game.cutAhead = (row) => {
+		for (const [k, c] of chunks) {
+			if (Number(k.split(":")[1]) >= row) {
+				c.folder.Destroy();
+				c.pick.Destroy();
+				chunks.delete(k);
+			}
+		}
+		for (const [k, q] of queued) if (q.cz >= row) queued.delete(k);
+		maxRow = Math.min(maxRow, row - 1);
+		lastKey = null;
+	};
+	// where the next stage can start: a few chunks in front of you
+	Game.nextStart = () => {
+		const row = Math.floor(-pos.Z / CHUNK) + 3;
+		Game.cutAhead(row);
+		return row * CHUNK;
+	};
 
 	trackChunks = (x, z) => {
 		const cine = !!Game.flow.cine;
@@ -5630,7 +5650,7 @@ let startBoss, updateBoss, resetSky;
 		c.swapT = c.t;
 		swap(c);
 		pos = pos.add(c.off);
-		beyondStart = (maxRow + 1) * CHUNK + 300;
+		beyondStart = Game.nextStart();
 		shake = Math.max(shake, 0.3);
 		sfx("swap");
 	}
@@ -6175,7 +6195,7 @@ Game.shiftStages = (at) => {
 
 Game.endIntro = () => {
 	if (Game.introEnd !== Infinity) return;
-	Game.introEnd = (maxRow + 1) * CHUNK;
+	Game.introEnd = Game.nextStart();
 	Game.shiftStages(Game.introEnd);
 };
 
@@ -7190,7 +7210,7 @@ applySettings();
 toMenu();
 start();
 document.getElementById("boot").remove();
-if (DEV) window.__dev = { crash: () => task.spawn(crash, []), data: () => data, stats: () => stats, vs: () => Game.versusToggle(), heart: () => Game.heartFx(), pad: (k) => Game.makePad(k, pos.X, pos.Z - 45, pickups), reg: async (n, p) => { await Online.register(n, p); request("set_name", n); return Online.account(); }, win: () => Game._vsWin(), vsd: () => Game._vsDebug(), dbg: () => [mode, dead, !!stats, !!planeMain, planeMain && !!planeMain.Parent, Game.raceState.mid], race: () => [Game.race, Game.raceState.inQueue, Game.queueText(), JSON.stringify(Game.raceState.final)], shot: () => Game.flow.startApproach(), state: () => [mode, curStage, Game.flow.cine && Game.flow.cine.kind, Math.round(-pos.Z)] };
+if (DEV) window.__dev = { crash: () => task.spawn(crash, []), data: () => data, stats: () => stats, vs: () => Game.versusToggle(), heart: () => Game.heartFx(), pad: (k) => Game.makePad(k, pos.X, pos.Z - 45, pickups), reg: async (n, p) => { await Online.register(n, p); request("set_name", n); return Online.account(); }, win: () => Game._vsWin(), vsd: () => Game._vsDebug(), dbg: () => [mode, dead, !!stats, !!planeMain, planeMain && !!planeMain.Parent, Game.raceState.mid], race: () => [Game.race, Game.raceState.inQueue, Game.queueText(), JSON.stringify(Game.raceState.final)], shot: () => Game.flow.startApproach(), run: (id) => startRun(id || "towers"), skip: () => Game.skip(), ahead: () => { const r = Math.floor(-pos.Z / CHUNK); return [r, beyondStart, stageFor(-pos.Z)[0], stageFor((r + 5) * CHUNK + 1)[0], stageFor((r + 40) * CHUNK + 1)[0]]; }, state: () => [mode, curStage, Game.flow.cine && Game.flow.cine.kind, Math.round(-pos.Z)] };
 
 // ------------------------------------------------------------------ versus
 // same idea as roblox: queue up, everyone starts on the same map, farthest wins.
@@ -8264,7 +8284,7 @@ if (DEV) window.__dev = { crash: () => task.spawn(crash, []), data: () => data, 
 // ------------------------------------------------------------------ old version warning
 // every build has its own number, the page checks now and then whether a newer one is online
 (() => {
-	const BUILD = "1790693791";
+	const BUILD = "1790696329";
 	if (BUILD.startsWith("__")) return;
 	const bar = make("TextButton", {
 		AnchorPoint: V2(0.5, 0),
