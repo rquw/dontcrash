@@ -3,9 +3,9 @@ import {
 	camera, Lighting, Instance, workspace, markQueryRoot, Enum, OverlapParams, TweenService, TweenInfo, Debris, UIS, playSfx, loopSound, loadSounds, setSfxVolume,
 	NumberSequence, NumberSequenceKeypoint, NumberRange, ColorSequence, ColorSequenceKeypoint, guiRootInst, setUiScale, setLowGraphics, physicsGround,
 	mergeFloor, start, perf,
-} from "./engine.js?v=1790765465";
-import * as Server from "./server.js?v=1790765465";
-import * as Online from "./online.js?v=1790765465";
+} from "./engine.js?v=1790766723";
+import * as Server from "./server.js?v=1790766723";
+import * as Online from "./online.js?v=1790766723";
 
 const V3 = (x, y, z) => new Vector3(x, y, z);
 const RGB = Color3.fromRGB;
@@ -1396,6 +1396,43 @@ let buildPlane;
 		add("Part", V3(0.25, 0.2, 5), yellow, CFn(0, 0, 6), { Material: "Neon" });
 		add("Part", V3(0.25, 1.4, 1.6), orange, CFn(0, 1.1, -3.4).mul(Ang(-0.5, 0, 0)), { Material: "Neon" });
 	};
+	// a trident, points first
+	SKIN_BUILD.Trident = (add) => {
+		const shaft = RGB(20, 55, 62), steel = RGB(70, 95, 150), blade = RGB(95, 130, 215), dark = RGB(30, 40, 60), gem = RGB(200, 245, 255);
+		const M = { Material: "Metal" };
+		const T = (extra) => Object.assign({ _tag: "tri" }, extra);
+		add("Part", V3(10.5, 0.6, 0.6), shaft, CFn(0, 0, 2.6).mul(Ang(0, Math.PI / 2, 0)), T({ Shape: "Cylinder" }));
+		add("Part", V3(1.3, 0.95, 0.95), steel, CFn(0, 0, 8).mul(Ang(0, Math.PI / 2, 0)), T({ Shape: "Cylinder", Material: "Metal" }));
+		add("Part", V3(0.3, 1.05, 1.05), gem, CFn(0, 0, 7.6).mul(Ang(0, Math.PI / 2, 0)), T({ Shape: "Cylinder", Material: "Neon" }));
+		add("Part", V3(1, 1, 1.6), steel, CFn(0, 0, -2.8), T(M));
+		add("Part", V3(1.25, 1.25, 0.5), dark, CFn(0, 0, -3.7), T(M));
+		// the little hooks under the head
+		for (const s of [-1, 1]) {
+			add("Part", V3(0.28, 0.28, 1.2), steel, CFn(s * 0.9, 0, -3.9).mul(Ang(0, s * 0.7, 0)), T(M));
+			add("Part", V3(0.24, 0.24, 1.3), blade, CFn(s * 1.35, 0, -4.9).mul(Ang(0, -s * 0.1, 0)), T(M));
+		}
+		// crossbar with the gem in the middle
+		add("Part", V3(4.8, 0.4, 0.7), dark, CFn(0, 0, -5.2), T(M));
+		for (const s of [-1, 1]) add("Part", V3(0.9, 0.42, 0.5), steel, CFn(s * 2.6, 0, -5.35).mul(Ang(0, s * 0.35, 0)), T(M));
+		add("Part", V3(0.9, 0.9, 2), gem, CFn(0, 0, -5.4).mul(Ang(0, 0, Math.PI / 4)), { Material: "Neon", _tag: "gem" });
+		// three prongs, flat blades that taper to a point
+		const prong = (x, z0, len) => {
+			const segs = [[0.75, 0.3, 0.45], [0.55, 0.26, 0.33], [0.3, 0.2, 0.22]];
+			let z = z0;
+			for (const [w, h, f] of segs) {
+				const l = len * f;
+				add("Part", V3(w, h, l), blade, CFn(x, 0, z - l / 2), T(M));
+				z -= l;
+			}
+			add("Part", V3(0.12, 0.22, len * 0.9), gem, CFn(x, 0.13, z0 - len * 0.45), T({ Material: "Neon", Transparency: 0.2 }));
+			return z;
+		};
+		prong(0, -6.2, 6);
+		for (const s of [-1, 1]) {
+			prong(s * 2.5, -5.6, 4.4);
+			add("Part", V3(0.5, 0.26, 1.2), blade, CFn(s * 2.5, 0, -4.9), T(M));
+		}
+	};
 	// ---------------- the ones you can only get with real money. these move: wings flap, rings spin, capes wave
 	// parts with a _tag get animated by SKIN_ANIM below
 	const NEON = { Material: "Neon" };
@@ -1504,6 +1541,11 @@ let buildPlane;
 
 	// ---------------- moving parts. every frame the part's spot on the plane gets a new offset
 	const SKIN_ANIM = {
+		Trident: (t, m) => {
+			m.all("tri", Ang(0, 0, Math.sin(t * 1.3) * 0.25));
+			m.all("gem", Ang(0, 0, Math.sin(t * 1.3) * 0.25).mul(CFn(0, 0, -5.4)).mul(Ang(0, 0, t * 2)).mul(CFn(0, 0, 5.4)));
+			m.glow(1.4 + Math.sin(t * 4) * 0.4);
+		},
 		Phoenix: (t, m) => {
 			const flap = Math.sin(t * 5.5) * 0.38;
 			for (const s of [-1, 1]) {
@@ -1646,6 +1688,14 @@ let buildPlane;
 			fx.trail(V3(0, 0, 4), { Lifetime: 0.6, Width: 2.2, Color: new ColorSequence(RGB(255, 200, 60), RGB(255, 40, 10)), Transparency: new NumberSequence(0.2, 1), LightEmission: 1 });
 			fx.emit(V3(0, 0, 3), { Texture: "sparkles", Color: new ColorSequence(RGB(255, 170, 40), RGB(255, 60, 20)), LightEmission: 1, Size: new NumberSequence(0.8, 0), Lifetime: new NumberRange(0.6, 1.2), Rate: 30, Speed: new NumberRange(3, 9), SpreadAngle: V2(50, 50), EmissionDirection: "Back" });
 		},
+		Trident: (fx) => {
+			// sea spray and a streak of light off every point
+			fx.trail(V3(0, 0, 8), { Lifetime: 0.8, Width: 1.1, Color: new ColorSequence(RGB(120, 230, 255), RGB(30, 90, 200)), Transparency: new NumberSequence(0.2, 1), LightEmission: 1 });
+			for (const x of [-2.5, 2.5]) fx.trail(V3(x, 0, -9.5), { Lifetime: 0.5, Width: 0.3, Color: new ColorSequence(RGB(220, 250, 255)), Transparency: new NumberSequence(0.1, 1), LightEmission: 1 });
+			const g = fx.tagged("gem")[0];
+			if (g) fx.emitOn(g, V3(), { Texture: "sparkles", Color: new ColorSequence(RGB(220, 250, 255), RGB(60, 170, 255)), LightEmission: 1, Size: new NumberSequence(0.7, 0), Lifetime: new NumberRange(0.5, 1), Rate: 30, Speed: new NumberRange(2, 6), SpreadAngle: V2(180, 180) });
+			fx.emit(V3(0, 0, 3), { Texture: "smoke", Color: new ColorSequence(RGB(200, 240, 255), RGB(90, 170, 230)), Size: new NumberSequence(0.8, 0.1), Transparency: new NumberSequence(0.3, 1), Lifetime: new NumberRange(0.5, 0.9), Rate: 25, Speed: new NumberRange(3, 7), EmissionDirection: "Back", SpreadAngle: V2(35, 35), Acceleration: V3(0, -14, 0) });
+		},
 		Phoenix: (fx) => {
 			// a whole bonfire behind you
 			fx.flame(V3(0, 0, 3.5), RGB(255, 240, 150), RGB(255, 50, 10), 2.2, 100);
@@ -1783,7 +1833,7 @@ let buildPlane;
 		}
 		(SKIN_BUILD[id] || SKIN_BUILD.Default)(add);
 		if (!noFx) addFx(SKIN_BUILD[id] ? id : "Default", main, parts);
-		const LIGHT = { Firebird: RGB(255, 120, 30), Phoenix: RGB(255, 110, 20), Galaxy: RGB(160, 80, 255), Razor: RGB(255, 40, 150), Royal: RGB(255, 200, 80) };
+		const LIGHT = { Trident: RGB(90, 200, 255), Firebird: RGB(255, 120, 30), Phoenix: RGB(255, 110, 20), Galaxy: RGB(160, 80, 255), Razor: RGB(255, 40, 150), Royal: RGB(255, 200, 80) };
 		if (LIGHT[id]) {
 			const glow = Instance.new("PointLight");
 			glow.Range = id === "Phoenix" ? 26 : id === "Firebird" ? 18 : 20;
@@ -3500,6 +3550,7 @@ function deathView(vp, kind) {
 			Neon: ["straight out of the grid", "glowing cyan light trails"],
 			Dragon: ["breathes fire, obviously", "flames and embers"],
 			Gold: ["for people with too many gems", "golden trails and sparkles"],
+			Trident: ["the sea king's weapon, points first", "sea spray and streaks of light"],
 			Firebird: ["the phoenix's little cousin", "burning wings, embers, a trail of fire"],
 			Phoenix: ["a living fire bird, wings flapping and all", "flapping flame wings, a bonfire trail, embers everywhere"],
 			Galaxy: ["a tiny planet with wings and two spinning rings", "orbiting moons, stardust spirals, a nebula trail"],
@@ -4108,7 +4159,10 @@ let showResults;
 		if (cur && !cur.waiting) cur.done = true;
 	});
 
+	Game.MAX_REVIVES = 3;
 	Game.offerRevive = async (my) => {
+		// three per run, then it's over for real
+		if ((stats.revives || 0) >= Game.MAX_REVIVES) return false;
 		const owned = data.revives || 0;
 		const idx = Math.max(0, ORDER.indexOf(curStage));
 		const here = (Game.loop || 0) + ":" + idx;
@@ -4122,7 +4176,8 @@ let showResults;
 		use.Visible = owned > 0;
 		use.Text = "USE A REVIVE  (" + owned + " LEFT)";
 		box.Size = UO(500, owned > 0 ? 340 : 260);
-		subL.Text = "KEEP GOING RIGHT WHERE YOU CRASHED";
+		const left = Game.MAX_REVIVES - (stats.revives || 0);
+		subL.Text = "KEEP GOING WHERE YOU CRASHED  (" + left + " LEFT THIS RUN)";
 		box.Visible = true;
 		box.GroupTransparency = 1;
 		box.Position = US(0.5, 0.56);
@@ -6829,7 +6884,8 @@ Game.revive = (quiet) => {
 	Game.voidT = 0;
 	buff.immortal = 4;
 	ghost = true;
-	stats.revives++;
+	// tutorial crashes don't count towards the limit
+	if (!quiet) stats.revives++;
 	Game.fireAfter = runTime + 3;
 	topBox.BackgroundTransparency = T.hud;
 	bossBar.Visible = boss != null || Game.boss2.active;
@@ -8698,7 +8754,7 @@ if (DEV) window.__dev = { crash: () => task.spawn(crash, []), data: () => data, 
 // ------------------------------------------------------------------ old version warning
 // every build has its own number, the page checks now and then whether a newer one is online
 (() => {
-	const BUILD = "1790765465";
+	const BUILD = "1790766723";
 	if (BUILD.startsWith("__")) return;
 	const bar = make("TextButton", {
 		AnchorPoint: V2(0.5, 0),
