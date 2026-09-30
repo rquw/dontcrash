@@ -35,7 +35,10 @@ export default {
 
 		const url = `${env.FIREBASE_DB.replace(/\/+$/, "")}/grants/${uid}/${s.id}.json?auth=${env.FIREBASE_SECRET}`;
 		// stripe sometimes sends the same event twice, one payment only counts once
-		const had = await (await fetch(url)).json();
+		const read = await fetch(url);
+		// a wrong secret shouldn't silently eat a payment: fail, and stripe tries again later
+		if (!read.ok) return new Response("database read failed", { status: 500 });
+		const had = await read.json();
 		if (!had) {
 			const r = await fetch(url, {
 				method: "PUT",
