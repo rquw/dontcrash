@@ -44,6 +44,16 @@
     "broadcast": {
       ".read": true,
       ".write": "auth != null && auth.uid === 'Jj2BGaR4ZBSqqQxmWtX8Vym95Ji1'"
+    },
+    "grants": {
+      "$uid": {
+        ".read": "auth != null && auth.uid === $uid",
+        "$gid": {
+          "claimed": {
+            ".write": "auth != null && auth.uid === $uid && newData.val() === true && root.child('grants/' + $uid + '/' + $gid + '/gems').exists()"
+          }
+        }
+      }
     }
   }
 }

@@ -154,6 +154,7 @@ const DEFAULT = {
 	lastDaily: 0, lastHourly: 0,
 	codes: {},
 	bought: [],
+	paid: {},
 	ach: {},
 	boost: 1, boostUntil: 0,
 	starts: {},
@@ -389,6 +390,15 @@ handlers.revive_gems = (price) => {
 	s.data.gems -= price;
 	s.data.stats.revives = (s.data.stats.revives || 0) + 1;
 	return [true];
+};
+// gems bought with real money. the payment itself is checked by the worker, this just makes sure one payment counts once
+handlers.paid = (g) => {
+	if (!g || typeof g.id !== "string" || !(g.gems > 0) || g.gems > 100000) return [false, "bad payment"];
+	s.data.paid = s.data.paid || {};
+	if (s.data.paid[g.id]) return [false, "already got those"];
+	s.data.paid[g.id] = now();
+	s.data.gems += Math.floor(g.gems);
+	return [true, "+" + g.gems + " gems"];
 };
 handlers.buy_revive = (n) => {
 	const PACKS = { 1: 200, 5: 500 };

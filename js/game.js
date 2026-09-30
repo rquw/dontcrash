@@ -3,9 +3,9 @@ import {
 	camera, Lighting, Instance, workspace, markQueryRoot, Enum, OverlapParams, TweenService, TweenInfo, Debris, UIS, playSfx, loopSound, loadSounds, setSfxVolume,
 	NumberSequence, NumberSequenceKeypoint, NumberRange, ColorSequence, ColorSequenceKeypoint, guiRootInst, setUiScale, setLowGraphics, physicsGround,
 	mergeFloor, start, perf,
-} from "./engine.js?v=1790756129";
-import * as Server from "./server.js?v=1790756129";
-import * as Online from "./online.js?v=1790756129";
+} from "./engine.js?v=1790758723";
+import * as Server from "./server.js?v=1790758723";
+import * as Online from "./online.js?v=1790758723";
 
 const V3 = (x, y, z) => new Vector3(x, y, z);
 const RGB = Color3.fromRGB;
@@ -3177,8 +3177,8 @@ function deathView(vp, kind) {
 	{
 		const tabs = make("Frame", { Size: U2(1, -10, 0, 48), BackgroundTransparency: 1, LayoutOrder: -1, Parent: shopPanel.body });
 		make("UIListLayout", { FillDirection: "row", Padding: UDim.new(0, 6), Parent: tabs });
-		[["SKINS", "gem"], ["DEATH EFFECTS", "skull"], ["UPGRADES", "coin"]].forEach(([name, icon], idx) => {
-			const b = button(tabs, name, U2(1 / 3, -4, 1, 0), null, () => {
+		[["SKINS", "user"], ["DEATH EFFECTS", "skull"], ["UPGRADES", "coin"], ["GEMS", "gem"]].forEach(([name, icon], idx) => {
+			const b = button(tabs, name, U2(name === "DEATH EFFECTS" ? 0.31 : 0.23, -5, 1, 0), null, () => {
 				if (shopTab === name) return;
 				shopTab = name;
 				rebuildShop();
@@ -3446,6 +3446,7 @@ function deathView(vp, kind) {
 		for (const c of shopItems.GetChildren()) if (!c.IsA("UIListLayout")) c.Destroy();
 		Game.spinning = Game.spinning.filter((s) => s.model.Parent && !s.model._destroyed);
 		if (shopTab === "UPGRADES") upgrades();
+		else if (shopTab === "GEMS") Game.gemShop(shopItems);
 		else if (shopTab === "SKINS") {
 			Game.skinView = Game.skinView || data.skin;
 			showcase(CONFIG.skins, true, data.skins, data.skin, Game.skinView);
@@ -7202,7 +7203,7 @@ applySettings();
 toMenu();
 start();
 document.getElementById("boot").remove();
-if (DEV) window.__dev = { crash: () => task.spawn(crash, []), data: () => data, stats: () => stats, vs: () => Game.versusToggle(), heart: () => Game.heartFx(), pad: (k) => Game.makePad(k, pos.X, pos.Z - 45, pickups), reg: async (n, p) => { await Online.register(n, p); request("set_name", n); return Online.account(); }, win: () => Game._vsWin(), vsd: () => Game._vsDebug(), dbg: () => [mode, dead, !!stats, !!planeMain, planeMain && !!planeMain.Parent, Game.raceState.mid], race: () => [Game.race, Game.raceState.inQueue, Game.queueText(), JSON.stringify(Game.raceState.final)], shot: () => Game.flow.startApproach(), run: (id) => startRun(id || "towers"), skip: () => Game.skip(), ahead: () => { const r = Math.floor(-pos.Z / CHUNK); return [r, beyondStart, stageFor(-pos.Z)[0], stageFor((r + 5) * CHUNK + 1)[0], stageFor((r + 40) * CHUNK + 1)[0]]; }, state: () => [mode, curStage, Game.flow.cine && Game.flow.cine.kind, Math.round(-pos.Z)] };
+if (DEV) window.__dev = { crash: () => task.spawn(crash, []), data: () => data, stats: () => stats, vs: () => Game.versusToggle(), heart: () => Game.heartFx(), pad: (k) => Game.makePad(k, pos.X, pos.Z - 45, pickups), reg: async (n, p) => { await Online.register(n, p); request("set_name", n); return Online.account(); }, win: () => Game._vsWin(), vsd: () => Game._vsDebug(), dbg: () => [mode, dead, !!stats, !!planeMain, planeMain && !!planeMain.Parent, Game.raceState.mid], race: () => [Game.race, Game.raceState.inQueue, Game.queueText(), JSON.stringify(Game.raceState.final)], shot: () => Game.flow.startApproach(), uid: () => Online.myId(), gems: () => { Game.openShop(); shopTab = "GEMS"; rebuildShop(); }, run: (id) => startRun(id || "towers"), skip: () => Game.skip(), ahead: () => { const r = Math.floor(-pos.Z / CHUNK); return [r, beyondStart, stageFor(-pos.Z)[0], stageFor((r + 5) * CHUNK + 1)[0], stageFor((r + 40) * CHUNK + 1)[0]]; }, state: () => [mode, curStage, Game.flow.cine && Game.flow.cine.kind, Math.round(-pos.Z)] };
 
 // ------------------------------------------------------------------ versus
 // same idea as roblox: queue up, everyone starts on the same map, farthest wins.
@@ -8276,7 +8277,7 @@ if (DEV) window.__dev = { crash: () => task.spawn(crash, []), data: () => data, 
 // ------------------------------------------------------------------ old version warning
 // every build has its own number, the page checks now and then whether a newer one is online
 (() => {
-	const BUILD = "1790756129";
+	const BUILD = "1790758723";
 	if (BUILD.startsWith("__")) return;
 	const bar = make("TextButton", {
 		AnchorPoint: V2(0.5, 0),
@@ -8479,4 +8480,113 @@ if (DEV) window.__dev = { crash: () => task.spawn(crash, []), data: () => data, 
 		});
 	}
 	ap.onOpen = draw;
+})();
+
+// ------------------------------------------------------------------ gems for real money
+// you pay on a stripe page, stripe tells the worker, the worker drops a grant into firebase and we pick it up here.
+// the links come from the stripe dashboard (payment links). empty link = the pack says SOON
+
+const GEM_PACKS = [
+	{ id: "small", gems: 500, price: "2,99 €", link: "" },
+	{ id: "medium", gems: 1000, price: "4,99 €", link: "", tag: "POPULAR" },
+	{ id: "big", gems: 2500, price: "9,99 €", link: "", tag: "BEST VALUE" },
+];
+
+(() => {
+	function buy(p) {
+		if (!p.link) {
+			notify("coming soon", DIM);
+			sfx("bad");
+			return;
+		}
+		if (!Online.account()) {
+			notify("make an account first, the gems go to it", BAD);
+			sfx("bad");
+			Game.openAccount();
+			return;
+		}
+		window.open(p.link + (p.link.includes("?") ? "&" : "?") + "client_reference_id=" + encodeURIComponent(Online.myId()), "_blank");
+		notify("finish paying in the new tab, the gems show up here by themselves", GEM);
+		sfx("click");
+	}
+
+	Game.gemShop = (parent) => {
+		const top = row(parent, 96, 0.45);
+		make("UICorner", { CornerRadius: UDim.new(0, 10), Parent: top });
+		const gi = Icons.make("gem", top, 56);
+		gi.AnchorPoint = V2(0, 0.5);
+		gi.Position = U2(0, 30, 0.5, 0);
+		text(top, "GEMS  " + fmt(data.gems || 0), UO(400, 32), UO(110, 16), 28, GEM, LEFT);
+		text(top, "FOR SKINS AND REVIVES. YOU CAN STILL GET ALL OF THEM FOR FREE BY PLAYING.", U2(1, -130, 0, 40), UO(110, 50), 16, DIM, LEFT);
+		for (const p of GEM_PACKS) {
+			const r = row(parent, 76);
+			const ic = Icons.make("gem", r, p.id === "big" ? 44 : p.id === "medium" ? 38 : 32);
+			ic.AnchorPoint = V2(0.5, 0.5);
+			ic.Position = U2(0, 44, 0.5, 0);
+			text(r, fmt(p.gems) + " GEMS", U2(0.5, 0, 0, 34), UO(84, 10), 30, WHITE, LEFT);
+			if (p.tag) text(r, p.tag, U2(0.5, 0, 0, 20), UO(84, 44), 16, p.id === "big" ? COIN : GOOD, LEFT);
+			const b = button(r, p.link ? p.price : "SOON", UO(180, 50), U2(1, -194, 0.5, -25), () => buy(p), 0.1);
+			b.TextSize = 26;
+			b.TextColor3 = p.link ? GOOD : DIM;
+		}
+		const fine = row(parent, 44, 1);
+		const t = text(fine, "PAYMENTS BY STRIPE: CARD, BANKOMAT, APPLE PAY, GOOGLE PAY. GEMS ARE DELIVERED RIGHT AWAY, SO THERE'S NO RIGHT OF WITHDRAWAL ONCE THEY'RE IN.", U2(1, -20, 1, 0), UO(10, 0), 13, DIM, LEFT);
+		t.TextWrapped = true;
+	};
+
+	// ---------------- picking up what you paid for
+	function thanks(gems) {
+		const wash = make("Frame", { Size: US(1, 1), BackgroundColor3: GEM, BackgroundTransparency: 0.5, ZIndex: 30, Parent: gui });
+		wash.el.style.pointerEvents = "none";
+		tw(wash, 1.2, { BackgroundTransparency: 1 });
+		Debris.AddItem(wash, 1.3);
+		banner("+" + fmt(gems) + " GEMS", GEM, 3);
+		notify("thanks for supporting the game!", GOOD);
+		sfx("levelup");
+		if (panels.shop && panels.shop.frame.Visible) rebuildShop();
+	}
+
+	const busy = new Set();
+	async function claim(uid, id, g) {
+		if (busy.has(id)) return;
+		busy.add(id);
+		const [ok] = request("paid", { id, gems: g.gems });
+		try {
+			await Online.put(`grants/${uid}/${id}/claimed`, true);
+		} catch (e) {
+			// the save remembers it anyway
+		}
+		if (ok) {
+			Game.cloudSave(true);
+			thanks(g.gems);
+		}
+	}
+
+	let stop = null, who = null;
+	function watch() {
+		if (!Online.enabled()) return;
+		const uid = Online.account() ? Online.myId() : null;
+		if (uid === who) return;
+		if (stop) stop();
+		stop = null;
+		who = uid;
+		if (!uid) return;
+		stop = Online.listen(`grants/${uid}`, (all) => {
+			if (!all || typeof all !== "object" || who !== uid) return;
+			for (const [id, g] of Object.entries(all)) {
+				if (g && !g.claimed && g.gems > 0 && !(data.paid && data.paid[id])) claim(uid, id, g);
+				else if (g && !g.claimed && data.paid && data.paid[id]) Online.put(`grants/${uid}/${id}/claimed`, true).catch(() => {});
+			}
+		});
+	}
+	task.delay(2, watch);
+	setInterval(watch, 3000);
+
+	// back from the stripe page
+	if (/[?&]paid\b/.test(location.search)) {
+		task.delay(2.5, () => notify("payment done, your gems are on the way", GOOD));
+		try {
+			history.replaceState(null, "", location.pathname);
+		} catch (e) {}
+	}
 })();
