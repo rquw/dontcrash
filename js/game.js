@@ -3,9 +3,9 @@ import {
 	camera, Lighting, Instance, workspace, markQueryRoot, Enum, OverlapParams, TweenService, TweenInfo, Debris, UIS, playSfx, loopSound, loadSounds, setSfxVolume,
 	NumberSequence, NumberSequenceKeypoint, NumberRange, ColorSequence, ColorSequenceKeypoint, guiRootInst, setUiScale, setLowGraphics, physicsGround,
 	mergeFloor, start, perf,
-} from "./engine.js?v=1790932123";
-import * as Server from "./server.js?v=1790932123";
-import * as Online from "./online.js?v=1790932123";
+} from "./engine.js?v=1790937836";
+import * as Server from "./server.js?v=1790937836";
+import * as Online from "./online.js?v=1790937836";
 
 const V3 = (x, y, z) => new Vector3(x, y, z);
 const RGB = Color3.fromRGB;
@@ -1517,9 +1517,9 @@ let buildPlane;
 		// body and head
 		add("Part", V3(1.7, 1.5, 5.2), crimson, CFn(0, 0, 0.2));
 		add("Part", V3(1.1, 0.5, 4.6), orange, CFn(0, -0.55, 0.2), NEON);
-		add("Part", V3(1.3, 1.2, 1.7), red, CFn(0, 0.45, -3), NEON);
-		add("Part", V3(0.45, 0.4, 1.2), yellow, CFn(0, 0.3, -4.3).mul(Ang(-0.25, 0, 0)), NEON);
-		for (const s of [-1, 1]) add("Part", V3(0.25, 0.25, 0.25), white, CFn(s * 0.5, 0.75, -3.5), NEON);
+		add("Part", V3(1.3, 1.2, 1.7), red, CFn(0, 0.45, -3), tagged("head", NEON));
+		add("Part", V3(0.45, 0.4, 1.2), yellow, CFn(0, 0.3, -4.3).mul(Ang(-0.25, 0, 0)), tagged("head", NEON));
+		for (const s of [-1, 1]) add("Part", V3(0.25, 0.25, 0.25), white, CFn(s * 0.5, 0.75, -3.5), tagged("head", NEON));
 		// crest
 		for (let i = 0; i < 3; i++) add("Part", V3(0.15, 1.3 - i * 0.25, 0.4), i ? orange : yellow, CFn(0, 1.4 - i * 0.1, -2.9 + i * 0.45).mul(Ang(0.5 + i * 0.2, 0, 0)), tagged("crest", NEON));
 		// wings, three layers each, burning brighter to the tips
@@ -1614,56 +1614,75 @@ let buildPlane;
 		}
 	};
 
-	// ---------------- moving parts. every frame the part's spot on the plane gets a new offset
+	// ---------------- moving parts. every frame the part's spot on the plane gets a new offset.
+	// m.s is how hard you're steering right now, -1 left to 1 right, so things can lean into the turn
 	const SKIN_ANIM = {
 		Trident: (t, m) => {
-			m.all("tri", Ang(0, 0, Math.sin(t * 1.3) * 0.25));
-			m.all("gem", Ang(0, 0, Math.sin(t * 1.3) * 0.25).mul(CFn(0, 0, -5.4)).mul(Ang(0, 0, t * 2)).mul(CFn(0, 0, 5.4)));
+			const lean = Ang(0, -m.s * 0.14, 0);
+			m.all("tri", lean.mul(Ang(0, 0, Math.sin(t * 1.3) * 0.25 - m.s * 0.2)));
+			m.all("gem", lean.mul(Ang(0, 0, Math.sin(t * 1.3) * 0.25)).mul(CFn(0, 0, -5.4)).mul(Ang(0, 0, t * 2)).mul(CFn(0, 0, 5.4)));
 			m.glow(1.4 + Math.sin(t * 4) * 0.4);
 		},
 		Phoenix: (t, m) => {
-			const flap = Math.sin(t * 5.5) * 0.38;
+			// in a turn it stops flapping so hard and glides, like a real bird
+			const flap = Math.sin(t * 5.5) * 0.38 * (1 - Math.abs(m.s) * 0.6);
 			for (const s of [-1, 1]) {
 				const w = s < 0 ? "wingL" : "wingR";
 				const root = CFn(s * 0.9, 0.25, 0);
-				const cf = root.mul(Ang(0, 0, -s * flap)).mul(root.Inverse());
+				// the wing on the inside of the turn drops and sweeps back, the outer one lifts and reaches
+				const inside = s * m.s;
+				const cf = root.mul(Ang(0, s * inside * 0.16, -s * flap - m.s * 0.14)).mul(root.Inverse());
 				m.all(w, cf);
-				// the tips flex a bit later than the rest
-				const tip = CFn(s * 6.3, 0.6, 1).mul(Ang(0, 0, -s * Math.sin(t * 5.5 - 0.7) * 0.25)).mul(CFn(s * 6.3, 0.6, 1).Inverse());
+				// the tips flex a bit later than the rest, and twist against each other like ailerons
+				const tp = CFn(s * 6.3, 0.6, 1);
+				const tip = tp.mul(Ang(s * m.s * 0.4, 0, -s * Math.sin(t * 5.5 - 0.7) * 0.25 - m.s * 0.12)).mul(tp.Inverse());
 				m.all(w + "Tip", cf.mul(tip));
 			}
+			// the tail feathers swing out behind and fan open
+			const tr = CFn(0, 0, 2.6);
+			const swing = tr.mul(Ang(0, -m.s * 0.3, m.s * 0.2)).mul(tr.Inverse());
 			for (let i = 0; i < 5; i++) {
 				const p = CFn((i - 2) * 0.45, 0, 2.6);
-				m.all("tail" + i, p.mul(Ang(Math.sin(t * 3 + i) * 0.12, Math.sin(t * 2.2 + i * 0.8) * 0.15, 0)).mul(p.Inverse()));
+				m.all("tail" + i, swing.mul(p).mul(Ang(Math.sin(t * 3 + i) * 0.12, Math.sin(t * 2.2 + i * 0.8) * 0.15 - (i - 2) * Math.abs(m.s) * 0.07, 0)).mul(p.Inverse()));
 			}
+			// it looks where it's going
+			const neck = CFn(0, 0.2, -2.1);
+			const look = neck.mul(Ang(0, -m.s * 0.35, -m.s * 0.15)).mul(neck.Inverse());
+			m.all("head", look);
 			const c = CFn(0, 0.9, -3);
-			m.all("crest", c.mul(Ang(Math.sin(t * 7) * 0.12, 0, 0)).mul(c.Inverse()));
+			m.all("crest", look.mul(c).mul(Ang(Math.sin(t * 7) * 0.12, 0, m.s * 0.25)).mul(c.Inverse()));
 			m.glow(1.3 + Math.sin(t * 9) * 0.4 + Math.sin(t * 23) * 0.2);
 		},
 		Galaxy: (t, m) => {
-			m.all("ring1", Ang(0.35, 0, 0.15).mul(Ang(0, t * 0.9, 0)));
-			m.all("ring2", Ang(-0.5, 0, -0.9).mul(Ang(0, -t * 1.4, 0)));
+			// the rings are gyros: they tip over into the turn, each its own way
+			m.all("ring1", Ang(0.35, 0, 0.15 - m.s * 0.45).mul(Ang(0, t * 0.9, 0)));
+			m.all("ring2", Ang(-0.5, 0, -0.9 + m.s * 0.6).mul(Ang(0, -t * 1.4, 0)));
 			const k = 1 + Math.sin(t * 3) * 0.12;
-			m.all("core", CFn(0, 0, 4.5).mul(Ang(t, t * 0.7, 0)).mul(CFn(0, 0, -4.5)));
+			m.all("core", CFn(-m.s * 0.5, 0, 4.5).mul(Ang(t, t * 0.7, 0)).mul(CFn(0, 0, -4.5)));
 			m.glow(1.6 * k);
 		},
 		Razor: (t, m) => {
-			m.all("x", Ang(0, 0, t * 2.2));
-			m.all("pod", Ang(0, 0, t * 2.2));
-			m.all("drill", Ang(0, 0, -t * 9));
+			// the rotor swivels towards the turn, the drill points the way
+			const hub = CFn(0, 0, 1.5);
+			const swivel = hub.mul(Ang(0, -m.s * 0.22, 0)).mul(hub.Inverse());
+			m.all("x", swivel.mul(Ang(0, 0, t * 2.2 + m.spin)));
+			m.all("pod", swivel.mul(Ang(0, 0, t * 2.2 + m.spin)));
+			const nose = CFn(0, 0, -5);
+			m.all("drill", nose.mul(Ang(0, -m.s * 0.3, 0)).mul(nose.Inverse()).mul(Ang(0, 0, -t * 9)));
 			m.glow(1.5 + Math.sin(t * 14) * 0.4);
 		},
 		Royal: (t, m) => {
 			const bob = Math.sin(t * 2) * 0.35;
 			const cc = CFn(0, 0, -0.6);
-			m.all("crown", CFn(0, bob, 0).mul(cc).mul(Ang(0, t * 0.8, 0)).mul(cc.Inverse()));
-			m.all("orb", CFn(0, Math.sin(t * 1.5) * 0.4, 0).mul(Ang(0, t * 1.3, 0)));
+			// the crown is a bit late: it slides to the outside of the turn and tips
+			m.all("crown", CFn(-m.s * 0.7, bob, 0).mul(CFn(0, 3.1, -0.6)).mul(Ang(0, 0, m.s * 0.3)).mul(CFn(0, -3.1, 0.6)).mul(cc).mul(Ang(0, t * 0.8, 0)).mul(cc.Inverse()));
+			m.all("orb", CFn(0, Math.sin(t * 1.5) * 0.4, 0).mul(Ang(0, 0, m.s * 0.35)).mul(Ang(0, t * 1.3, 0)));
 			for (let i = 0; i < 5; i++) {
-				// each piece hangs off the one in front, so the wave runs down the cape
+				// each piece hangs off the one in front, so the wave runs down the cape. in a turn it blows out sideways
 				let cf = CFn();
 				for (let j = 0; j <= i; j++) {
 					const hinge = CFn(0, 1.05 - j * 0.05, 0.55 + j * 1.25);
-					cf = cf.mul(hinge).mul(Ang(Math.sin(t * 4 - j * 0.9) * (0.1 + j * 0.04), 0, Math.sin(t * 2.5 - j) * 0.04)).mul(hinge.Inverse());
+					cf = cf.mul(hinge).mul(Ang(Math.sin(t * 4 - j * 0.9) * (0.1 + j * 0.04), -m.s * 0.11, Math.sin(t * 2.5 - j) * 0.04 + m.s * 0.06)).mul(hinge.Inverse());
 				}
 				m.all("cape" + i, cf);
 			}
@@ -1671,14 +1690,19 @@ let buildPlane;
 		},
 	};
 	const animated = [];
-	RunService.RenderStepped.Connect(() => {
+	RunService.RenderStepped.Connect((dt) => {
 		const t = clock();
+		dt = Math.min(dt || 0.016, 0.05);
 		for (let i = animated.length - 1; i >= 0; i--) {
 			const a = animated[i];
 			if (a.model._destroyed || !a.model.Parent) {
 				animated.splice(i, 1);
 				continue;
 			}
+			// only the plane you're flying leans, the ones in the shop sit still. a bit soft so nothing snaps
+			const want = Game.steerFake != null ? Game.steerFake : a.main === planeMain && mode === "run" ? Game.steerNow || 0 : 0;
+			a.api.s += (want - a.api.s) * Math.min(1, dt * 9);
+			a.api.spin += Math.abs(a.api.s) * dt * 5;
 			SKIN_ANIM[a.id](t + a.off, a.api);
 		}
 	});
@@ -1689,6 +1713,8 @@ let buildPlane;
 			(byTag[p._tag] = byTag[p._tag] || []).push({ p, w: p._weldedTo, base: p._weldedTo.rel });
 		}
 		const api = {
+			s: 0,
+			spin: 0,
 			all(tag, cf) {
 				const list = byTag[tag];
 				if (!list) return;
@@ -1698,7 +1724,7 @@ let buildPlane;
 				if (model._glow) model._glow.Brightness = b;
 			},
 		};
-		animated.push({ id, model, api, off: Math.random() * 10 });
+		animated.push({ id, model, main, api, off: Math.random() * 10 });
 	}
 
 
@@ -4572,6 +4598,10 @@ function xpBar(parent, size, pos, k, color) {
 		ap.locked = false;
 		ap.xBtn.Visible = true;
 	}
+	if (/[?&]dev\b/.test(location.search)) Game.devNoAccount = () => {
+		unlock();
+		ap.frame.Visible = false;
+	};
 	function refresh() {
 		const acc = Online.account();
 		ap.xBtn.Visible = !ap.locked;
@@ -7654,6 +7684,7 @@ function step(dt) {
 	Game.guns.update(dt, Game.flow.tier >= 2 && !typing && (Game.down("shoot") || Game.touch.shoot));
 	updateWalls(true);
 
+	Game.steerNow = clamp(vx / strafe, -1, 1);
 	planeMain.CFrame = CFrame.fromPos(pos).mul(Ang(fuel <= 0 ? -0.15 : 0, 0, -clamp(vx / strafe, -1, 1) * 0.6 + spin));
 	if (nitroK > 0.1) shake = Math.max(shake, 0.1 * nitroK);
 	setVignette(Math.max(nitroK, devK) * 0.8);
@@ -8114,7 +8145,7 @@ applySettings();
 toMenu();
 start();
 document.getElementById("boot").remove();
-if (DEV) window.__dev = { note: (m) => notify(m, GOOD), del: () => Online.deleteAccount(), lb: () => openPanel("leaderboard"), hello: () => Game.cloudLoad(true), crash: () => task.spawn(crash, []), data: () => data, stats: () => stats, vs: () => Game.versusToggle(), heart: () => Game.heartFx(), pad: (k) => Game.makePad(k, pos.X, pos.Z - 45, pickups), reg: async (n, p) => { await Online.register(n, p); request("set_name", n); return Online.account(); }, win: () => Game._vsWin(), vsd: () => Game._vsDebug(), dbg: () => [mode, dead, !!stats, !!planeMain, planeMain && !!planeMain.Parent, Game.raceState.mid], race: () => [Game.race, Game.raceState.inQueue, Game.queueText(), JSON.stringify(Game.raceState.final)], shot: () => Game.flow.startApproach(), uid: () => Online.myId(), achp: () => openPanel("achievements"), achgo: (id) => Game.ach(id), bp: (s) => Game.openBackpack(s), pf: () => [1, 2, 3].map(Game.planeFor), req: (a, b) => request(a, b), gift: () => openPanel("gift"), push: () => Game.pushProfile(), gems: () => { Game.openShop(); shopTab = "GEMS"; rebuildShop(); }, run: (id) => startRun(id || "towers"), skip: () => Game.skip(), ahead: () => { const r = Math.floor(-pos.Z / CHUNK); return [r, beyondStart, stageFor(-pos.Z)[0], stageFor((r + 5) * CHUNK + 1)[0], stageFor((r + 40) * CHUNK + 1)[0]]; }, state: () => [mode, curStage, Game.flow.cine && Game.flow.cine.kind, Math.round(-pos.Z)] };
+if (DEV) window.__dev = { steer: (v) => { Game.steerFake = v; }, note: (m) => notify(m, GOOD), del: () => Online.deleteAccount(), lb: () => openPanel("leaderboard"), hello: () => Game.cloudLoad(true), crash: () => task.spawn(crash, []), data: () => data, stats: () => stats, vs: () => Game.versusToggle(), heart: () => Game.heartFx(), pad: (k) => Game.makePad(k, pos.X, pos.Z - 45, pickups), reg: async (n, p) => { await Online.register(n, p); request("set_name", n); return Online.account(); }, win: () => Game._vsWin(), vsd: () => Game._vsDebug(), dbg: () => [mode, dead, !!stats, !!planeMain, planeMain && !!planeMain.Parent, Game.raceState.mid], race: () => [Game.race, Game.raceState.inQueue, Game.queueText(), JSON.stringify(Game.raceState.final)], shot: () => Game.flow.startApproach(), uid: () => Online.myId(), achp: () => openPanel("achievements"), achgo: (id) => Game.ach(id), bp: (s) => Game.openBackpack(s), pf: () => [1, 2, 3].map(Game.planeFor), req: (a, b) => request(a, b), gift: () => openPanel("gift"), push: () => Game.pushProfile(), gems: () => { Game.openShop(); shopTab = "GEMS"; rebuildShop(); }, run: (id) => startRun(id || "towers"), skip: () => Game.skip(), ahead: () => { const r = Math.floor(-pos.Z / CHUNK); return [r, beyondStart, stageFor(-pos.Z)[0], stageFor((r + 5) * CHUNK + 1)[0], stageFor((r + 40) * CHUNK + 1)[0]]; }, state: () => [mode, curStage, Game.flow.cine && Game.flow.cine.kind, Math.round(-pos.Z)] };
 
 // ------------------------------------------------------------------ versus
 // same idea as roblox: queue up, everyone starts on the same map, farthest wins.
@@ -9214,7 +9245,7 @@ if (DEV) window.__dev = { note: (m) => notify(m, GOOD), del: () => Online.delete
 // ------------------------------------------------------------------ old version warning
 // every build has its own number, the page checks now and then whether a newer one is online
 (() => {
-	const BUILD = "1790932123";
+	const BUILD = "1790937836";
 	if (BUILD.startsWith("__")) return;
 	const bar = make("TextButton", {
 		AnchorPoint: V2(0.5, 0),
