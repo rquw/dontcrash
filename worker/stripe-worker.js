@@ -257,6 +257,12 @@ function setState(data, sess, name) {
 	fill(d, DEFAULT);
 	if (!d.created) d.created = Date.now();
 	if (name) d.name = name;
+	// saves from before the daily and monthly boards only knew the week, carry that over
+	if (d.week && d.week.id && !(d.lb && d.lb.week)) {
+		d.lb = d.lb || {};
+		d.lb.week = { id: d.week.id, best: d.week.best || 0 };
+	}
+	delete d.week;
 	sess = sess || {};
 	s.data = d;
 	s.joined = sess.joined || now();
@@ -1043,7 +1049,7 @@ async function settle(env) {
 			const p = players[uid];
 			if (!p || typeof p.name !== "string") continue;
 			// someone who hasn't played since still has it as their current one
-			const best = p[k + "k"] === pid ? p[k + "b"] : p[k + "pk"] === pid ? p[k + "pb"] : 0;
+			const best = p[k + "k"] === pid ? p[k + "b"] || (k === "w" ? p.wbest : 0) : p[k + "pk"] === pid ? p[k + "pb"] : 0;
 			if (best > 0) board.push({ uid, best });
 		}
 		board.sort((a, b) => b.best - a.best);

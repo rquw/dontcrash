@@ -257,6 +257,12 @@ export function setState(data, sess, name) {
 	fill(d, DEFAULT);
 	if (!d.created) d.created = Date.now();
 	if (name) d.name = name;
+	// saves from before the daily and monthly boards only knew the week, carry that over
+	if (d.week && d.week.id && !(d.lb && d.lb.week)) {
+		d.lb = d.lb || {};
+		d.lb.week = { id: d.week.id, best: d.week.best || 0 };
+	}
+	delete d.week;
 	sess = sess || {};
 	s.data = d;
 	s.joined = sess.joined || now();

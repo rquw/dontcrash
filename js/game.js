@@ -3,9 +3,9 @@ import {
 	camera, Lighting, Instance, workspace, markQueryRoot, Enum, OverlapParams, TweenService, TweenInfo, Debris, UIS, playSfx, loopSound, loadSounds, setSfxVolume,
 	NumberSequence, NumberSequenceKeypoint, NumberRange, ColorSequence, ColorSequenceKeypoint, guiRootInst, setUiScale, setLowGraphics, physicsGround,
 	mergeFloor, start, perf,
-} from "./engine.js?v=1790931114";
-import * as Server from "./server.js?v=1790931114";
-import * as Online from "./online.js?v=1790931114";
+} from "./engine.js?v=1790931890";
+import * as Server from "./server.js?v=1790931890";
+import * as Online from "./online.js?v=1790931890";
 
 const V3 = (x, y, z) => new Vector3(x, y, z);
 const RGB = Color3.fromRGB;
@@ -4774,7 +4774,7 @@ function xpBar(parent, size, pos, k, color) {
 		{ id: "month", label: "THIS MONTH", k: "m" },
 		{ id: "all", label: "ALL TIME" },
 	];
-	let board = "day";
+	let board = "all";
 	const rewardText = (r) => {
 		const bits = [];
 		if (r.gems) bits.push(r.gems + " ◆");
@@ -4831,7 +4831,9 @@ function xpBar(parent, size, pos, k, color) {
 		if (bd.k) {
 			// only runs from this period count, sorted by the best one
 			const cur = Server.periodId(bd.id);
-			shown = list.filter((e) => e[bd.k + "k"] === cur && e[bd.k + "b"] > 0).map((e) => ({ ...e, allBest: e.best, best: e[bd.k + "b"] })).sort((a, b) => b.best - a.best);
+			// wbest is what the week was called before the update
+			const of = (e) => e[bd.k + "b"] || (bd.k === "w" ? e.wbest : 0) || 0;
+			shown = list.filter((e) => e[bd.k + "k"] === cur && of(e) > 0).map((e) => ({ ...e, allBest: e.best, best: of(e) })).sort((a, b) => b.best - a.best);
 			status.Text = shown.length === 0 ? "NOBODY FLEW YET. BE THE FIRST." : shown.length + (shown.length === 1 ? " PLAYER" : " PLAYERS") + "   ENDS IN " + endsIn(bd.id);
 			// what there is to win
 			const rw = (CONFIG.lbRewards || {})[bd.id];
@@ -9203,7 +9205,7 @@ if (DEV) window.__dev = { del: () => Online.deleteAccount(), lb: () => openPanel
 // ------------------------------------------------------------------ old version warning
 // every build has its own number, the page checks now and then whether a newer one is online
 (() => {
-	const BUILD = "1790931114";
+	const BUILD = "1790931890";
 	if (BUILD.startsWith("__")) return;
 	const bar = make("TextButton", {
 		AnchorPoint: V2(0.5, 0),
