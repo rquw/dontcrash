@@ -3,9 +3,9 @@ import {
 	camera, Lighting, Instance, workspace, markQueryRoot, Enum, OverlapParams, TweenService, TweenInfo, Debris, UIS, playSfx, loopSound, loadSounds, setSfxVolume,
 	NumberSequence, NumberSequenceKeypoint, NumberRange, ColorSequence, ColorSequenceKeypoint, guiRootInst, setUiScale, setLowGraphics, physicsGround,
 	mergeFloor, start, perf,
-} from "./engine.js?v=1790923065";
-import * as Server from "./server.js?v=1790923065";
-import * as Online from "./online.js?v=1790923065";
+} from "./engine.js?v=1790927397";
+import * as Server from "./server.js?v=1790927397";
+import * as Online from "./online.js?v=1790927397";
 
 const V3 = (x, y, z) => new Vector3(x, y, z);
 const RGB = Color3.fromRGB;
@@ -3310,6 +3310,13 @@ const rewardRefs = { play: [] };
 		});
 		button(r, "REDEEM", UO(170, 44), U2(1, -184, 0.5, -22), redeem, 0.1);
 	}
+	// daily missions: the rows get rebuilt whenever something about them changes
+	{
+		const r = row(rewardsPanel.body, 34, 1);
+		rewardRefs.missionHead = text(r, "DAILY MISSIONS", US(1, 1), UO(4, 4), 18, DIM, LEFT);
+		rewardRefs.missions = make("Frame", { Size: U2(1, 0, 0, 268), BackgroundTransparency: 1, LayoutOrder: nextOrder(), Parent: rewardsPanel.body });
+		make("UIListLayout", { Padding: UDim.new(0, 6), SortOrder: "LayoutOrder", Parent: rewardRefs.missions });
+	}
 	header(rewardsPanel.body, "CHESTS");
 	// two big chest cards side by side
 	{
@@ -3361,9 +3368,61 @@ function setState(b, state, label) {
 	b.TextColor3 = state === "ready" ? GOOD : DIM;
 }
 
+let missionSig = "";
+function drawMissions() {
+	const m = data.missions;
+	if (!m || !Array.isArray(m.list)) return 0;
+	// a new day: the server deals new ones
+	const t = new Date();
+	const day = t.getFullYear() + "-" + String(t.getMonth() + 1).padStart(2, "0") + "-" + String(t.getDate()).padStart(2, "0");
+	if (m.day !== day) {
+		request("get");
+		return 0;
+	}
+	const left = 86400 - (t.getHours() * 3600 + t.getMinutes() * 60 + t.getSeconds());
+	rewardRefs.missionHead.Text = "DAILY MISSIONS   NEW ONES IN " + fmtTime(left);
+	const allClaimed = m.list.every((x) => x.claimed);
+	const ready = m.list.filter((x) => x.prog >= x.goal && !x.claimed).length + (allClaimed && !m.bonus ? 1 : 0);
+	const sig = JSON.stringify(m);
+	if (sig === missionSig) return ready;
+	missionSig = sig;
+	const box = rewardRefs.missions;
+	for (const c of box.GetChildren()) if (!c.IsA("UIListLayout")) c.Destroy();
+	m.list.forEach((x, i) => {
+		const done = x.prog >= x.goal;
+		const r = row(box, 66, done && !x.claimed ? 0.25 : 0.5);
+		make("UICorner", { CornerRadius: UDim.new(0, 8), Parent: r });
+		if (done && !x.claimed) make("UIStroke", { Color: GOOD, Thickness: 2, Transparency: 0.3, ApplyStrokeMode: "Border", Parent: r });
+		text(r, x.text, U2(1, -330, 0, 28), UO(14, 6), 21, x.claimed ? DIM : WHITE, LEFT).TextTruncate = "AtEnd";
+		const bg = make("Frame", { Position: UO(14, 42), Size: U2(1, -330, 0, 8), BackgroundColor3: WHITE, BackgroundTransparency: 0.85, Parent: r });
+		make("UICorner", { CornerRadius: UDim.new(0, 4), Parent: bg });
+		const bar = make("Frame", { Size: US(clamp(x.prog / x.goal, 0, 1), 1), BackgroundColor3: done ? GOOD : GEM, Parent: bg });
+		make("UICorner", { CornerRadius: UDim.new(0, 4), Parent: bar });
+		text(r, fmt(Math.min(x.prog, x.goal)) + " / " + fmt(x.goal), UO(130, 20), U2(1, -310, 0, 36), 14, DIM, LEFT);
+		const b = button(r, "", UO(160, 44), U2(1, -172, 0.5, -22), () => {
+			if (done && !x.claimed) result(request("mission_claim", i));
+			else sfx("bad");
+		}, 0.3);
+		const l = Icons.text(b, US(1, 1), null, 20, x.claimed ? DIM : done ? GOOD : GEM);
+		l.Text = x.claimed ? "CLAIMED" : done ? "CLAIM  +" + x.gems + " ◆" : "+" + x.gems + " ◆";
+	});
+	// all three: a bit extra on top
+	const br = row(box, 52, allClaimed && !m.bonus ? 0.25 : 0.6);
+	make("UICorner", { CornerRadius: UDim.new(0, 8), Parent: br });
+	const rw = m.bonusReward || { gems: 30, keys: 1 };
+	text(br, "FINISH ALL 3", U2(1, -200, 1, 0), UO(14, 0), 19, m.bonus ? DIM : COIN, LEFT);
+	const bb = button(br, "", UO(160, 38), U2(1, -172, 0.5, -19), () => {
+		if (allClaimed && !m.bonus) result(request("mission_bonus"));
+		else sfx("bad");
+	}, 0.3);
+	const bl = Icons.text(bb, US(1, 1), null, 18, m.bonus ? DIM : allClaimed ? GOOD : COIN);
+	bl.Text = m.bonus ? "CLAIMED" : (allClaimed ? "CLAIM  " : "") + "+" + rw.gems + " ◆  +" + rw.keys + " ✦";
+	return ready;
+}
+
 function updateRewards() {
 	const now = serverNow();
-	let ready = 0;
+	let ready = drawMissions();
 	let left = 86400 - (now - data.lastDaily);
 	if (left <= 0) {
 		ready++;
@@ -3420,15 +3479,16 @@ function planeView(parent, id, size, pos, opts) {
 }
 
 // the death effect playing on a loop in a window: plane pops, effect, plane comes back
-function deathView(vp, kind) {
+// delay: seconds before the first pop, so a whole grid of them doesn't go off at the same moment
+function deathView(vp, kind, delay, fov) {
 	const cam = vp.CurrentCamera;
-	cam.FieldOfView = 40;
+	cam.FieldOfView = fov || 40;
 	cam.CFrame = CFrame.lookAt(V3(0, 20, 72), V3(0, 4, 0));
 	const [plane, , parts] = Game.makePlane(data.skin, vp, true);
 	plane.PivotTo(CFn(0, 0, 0).mul(Ang(0, rad(35), 0)));
 	const fxFolder = Instance.new("Folder");
 	fxFolder.Parent = vp;
-	let t = 0;
+	let t = -(delay || 0);
 	let bits = [];
 	const boom = () => {
 		const at = V3(0, 0, 0);
@@ -3875,12 +3935,10 @@ function deathView(vp, kind) {
 				const v = planeView(c, it.id, UO(116, 80), UO(6, 6), { bgT: 1, noFx: true, fov: 30, cam: CFrame.lookAt(V3(0, 6, 26), V3(0, -0.3, 0)), spin: 0.6 });
 				v.el.style.pointerEvents = "none";
 			} else {
-				const ic = make("Frame", { AnchorPoint: V2(0.5, 0.5), Position: U2(0.5, 0, 0, 46), Size: UO(58, 58), BackgroundColor3: DEATH_COLOR[it.id] || WHITE, Parent: c });
-				make("UICorner", { CornerRadius: UDim.new(0.5, 0), Parent: ic });
-				make("UIGradient", { Color: new ColorSequence(WHITE, RGB(120, 120, 120)), Rotation: 45, Parent: ic });
-				const sk = Icons.make("skull", ic, 32);
-				sk.AnchorPoint = V2(0.5, 0.5);
-				sk.Position = US(0.5, 0.5);
+				// the effect itself, playing on a loop
+				const v = planeView(c, null, UO(116, 80), UO(6, 6), { bgT: 1 });
+				v.el.style.pointerEvents = "none";
+				deathView(v, it.id, (idx % 6) * 0.55, 24);
 			}
 			const nm = text(c, niceName(it.id), U2(1, -8, 0, 22), UO(4, 88), 17, WHITE);
 			nm.TextTruncate = "AtEnd";
@@ -4062,6 +4120,12 @@ let showResults;
 		results.Position = US(0.5, 0.6);
 		tw(results, 0.5, { GroupTransparency: 0, Position: US(0.5, 0.53) });
 		if (Game.shopNudge) Game.shopNudge();
+		if (award && award.missionsDone && award.missionsDone.length) {
+			task.delay(1.5, () => {
+				notify("MISSION DONE: " + award.missionsDone.join(",  ") + ". CLAIM IT IN FREE REWARDS", GOOD);
+				sfx("levelup");
+			});
+		}
 
 		const record = award && info.prevBest != null && award.dist > info.prevBest && award.dist > 0;
 		title.Text = record ? "NEW RECORD" : info.stopped ? "STOPPED" : "CRASHED";
@@ -4257,6 +4321,8 @@ function myProfile() {
 		stats: data.stats,
 		created: data.created,
 		updated: Date.now(),
+		wk: data.week && data.week.id === Server.weekId() ? data.week.id : "",
+		wbest: data.week && data.week.id === Server.weekId() ? data.week.best || 0 : 0,
 		seen: Online.SERVER_TIME,
 		active: Date.now() - (Game.lastInput || 0) < 10000 ? Online.SERVER_TIME : undefined,
 		ach: Object.keys(data.ach || {}).length,
@@ -4649,10 +4715,23 @@ function xpBar(parent, size, pos, k, color) {
 		return r;
 	}
 
+	// all time or just this week, the weekly one starts from zero every monday
+	let weekly = false;
 	async function load() {
 		token++;
 		const my = token;
 		for (const c of lb.body.GetChildren()) if (!c.IsA("UIListLayout")) c.Destroy();
+		const tabs = make("Frame", { Size: U2(1, -10, 0, 44), BackgroundTransparency: 1, LayoutOrder: nextOrder(), Parent: lb.body });
+		for (const [label, w, x] of [["ALL TIME", false, 0], ["THIS WEEK", true, 0.5]]) {
+			const sel = weekly === w;
+			const b = button(tabs, label, U2(0.5, -4, 1, 0), U2(x, x ? 4 : 0, 0, 0), () => {
+				if (weekly === w) return;
+				weekly = w;
+				load();
+			}, sel ? 0.05 : 0.55);
+			b.TextSize = 20;
+			b.TextColor3 = sel ? WHITE : DIM;
+		}
 		const head = row(lb.body, 34, 1);
 		const status = text(head, Online.enabled() ? "LOADING..." : "", U2(1, -130, 1, 0), UO(6, 0), 16, DIM, LEFT);
 		const rb = button(head, "REFRESH", UO(110, 30), U2(1, -116, 0.5, -15), () => load(), 0.4);
@@ -4664,7 +4743,7 @@ function xpBar(parent, size, pos, k, color) {
 		}
 		try {
 			await Game.pushProfile();
-			list = await Online.top(100);
+			list = await Online.top(300);
 		} catch (e) {
 			if (my !== token) return;
 			status.Text = "COULDN'T LOAD, CHECK YOUR INTERNET";
@@ -4672,23 +4751,36 @@ function xpBar(parent, size, pos, k, color) {
 			return;
 		}
 		if (my !== token) return;
-		const online = list.filter((e) => Game.isOnline(e)).length;
-		status.Text = list.length === 0 ? "NOBODY'S ON IT YET. GO FLY." : "BEST DISTANCE   " + list.length + " PLAYERS   " + online + " ONLINE";
+		const all = list;
+		if (weekly) {
+			// only runs from this week count, sorted by the best one
+			const wk = Server.weekId();
+			list = all.filter((e) => e.wk === wk && e.wbest > 0).map((e) => ({ ...e, best: e.wbest })).sort((a, b) => b.best - a.best);
+			const t = new Date();
+			const days = (8 - (t.getDay() || 7)) % 7 || 7;
+			const hrs = Math.max(0, days * 24 - t.getHours() - 1);
+			status.Text = list.length === 0 ? "NOBODY FLEW THIS WEEK YET. BE THE FIRST." : "BEST RUN THIS WEEK   " + list.length + " PLAYERS   RESETS IN " + (hrs >= 24 ? Math.floor(hrs / 24) + "D " + (hrs % 24) + "H" : hrs + "H");
+		} else {
+			const online = list.filter((e) => Game.isOnline(e)).length;
+			status.Text = list.length === 0 ? "NOBODY'S ON IT YET. GO FLY." : "BEST DISTANCE   " + list.length + " PLAYERS   " + online + " ONLINE";
+		}
+		const shown = list;
+		list = all;
 		const me = Online.myId();
-		podium(list.slice(0, 3), me);
-		if (list.length > 3) {
+		podium(shown.slice(0, 3), me);
+		if (shown.length > 3) {
 			const cols = row(lb.body, 22, 1);
 			text(cols, "#", UO(52, 22), UO(4, 0), 13, DIM);
 			text(cols, "PLAYER", UO(200, 22), UO(100, 0), 13, DIM, LEFT);
 			text(cols, "BEST", UO(160, 22), U2(1, -176, 0, 0), 13, DIM, RIGHT);
 		}
-		let found = list.slice(0, 3).some((e) => e.id === me);
-		list.slice(3).forEach((e, i) => {
+		let found = shown.slice(0, 3).some((e) => e.id === me);
+		shown.slice(3).forEach((e, i) => {
 			const isMe = e.id === me;
 			if (isMe) found = true;
 			entryRow(e, i + 4, isMe);
 		});
-		if (Online.account() && !found) {
+		if (Online.account() && !found && !weekly) {
 			const gap = row(lb.body, 16, 1);
 			text(gap, "...", US(1, 1), null, 16, DIM);
 			entryRow(myProfile(), list.length + 1, true);
@@ -4881,13 +4973,12 @@ Game.showXp = (award, my, alive) => {
 		return true;
 	}
 
-	function skull(parent, id, size, y) {
-		const ic = make("Frame", { AnchorPoint: V2(0.5, 0), Position: U2(0.5, 0, 0, y), Size: UO(size, size), BackgroundColor3: (Game.DEATH_COLOR || {})[id] || WHITE, Parent: parent });
-		make("UICorner", { CornerRadius: UDim.new(0.5, 0), Parent: ic });
-		make("UIGradient", { Color: new ColorSequence(WHITE, RGB(120, 120, 120)), Rotation: 45, Parent: ic });
-		const sk = Icons.make("skull", ic, Math.floor(size * 0.56));
-		sk.AnchorPoint = V2(0.5, 0.5);
-		sk.Position = US(0.5, 0.5);
+	// a little window that plays the crash effect on a loop
+	let fxN = 0;
+	function crashFx(parent, id, h, y) {
+		const v = planeView(parent, null, U2(1, -12, 0, h), UO(6, y), { bgT: 1 });
+		v.el.style.pointerEvents = "none";
+		deathView(v, id, (fxN++ % 6) * 0.55, 24);
 	}
 
 	function draw() {
@@ -4933,7 +5024,7 @@ Game.showXp = (award, my, alive) => {
 			if (s.n <= 3) {
 				const v = planeView(c, cur || STD[s.n], U2(1, -12, 0, 96), UO(6, 40), { bgT: 1, noFx: true, fov: 30, cam: CFrame.lookAt(V3(0, 6, 26), V3(0, -0.3, 0)), spin: 0.6 });
 				v.el.style.pointerEvents = "none";
-			} else skull(c, cur, 72, 52);
+			} else crashFx(c, cur, 96, 40);
 			const nm = text(c, s.n === 4 ? niceName(cur) : nameOf(s.n, cur), U2(1, -8, 0, 24), UO(4, 142), 19, cur || s.n === 4 ? WHITE : DIM);
 			nm.TextTruncate = "AtEnd";
 			text(c, s.sub, U2(1, -8, 0, 18), UO(4, 170), 12, DIM);
@@ -4995,7 +5086,7 @@ Game.showXp = (award, my, alive) => {
 			c.LayoutOrder = i;
 			c.ClipsDescendants = true;
 			if (on) make("UIStroke", { Color: GOOD, Thickness: 2, Transparency: 0.1, ApplyStrokeMode: "Border", Parent: c });
-			if (slot === 4) skull(c, id, 56, 12);
+			if (slot === 4) crashFx(c, id, 76, 4);
 			else {
 				const v = planeView(c, id || STD[slot], UO(126, 76), UO(6, 4), { bgT: 1, noFx: true, fov: 30, cam: CFrame.lookAt(V3(0, 6, 26), V3(0, -0.3, 0)), spin: 0.6 });
 				v.el.style.pointerEvents = "none";
@@ -7923,7 +8014,7 @@ applySettings();
 toMenu();
 start();
 document.getElementById("boot").remove();
-if (DEV) window.__dev = { crash: () => task.spawn(crash, []), data: () => data, stats: () => stats, vs: () => Game.versusToggle(), heart: () => Game.heartFx(), pad: (k) => Game.makePad(k, pos.X, pos.Z - 45, pickups), reg: async (n, p) => { await Online.register(n, p); request("set_name", n); return Online.account(); }, win: () => Game._vsWin(), vsd: () => Game._vsDebug(), dbg: () => [mode, dead, !!stats, !!planeMain, planeMain && !!planeMain.Parent, Game.raceState.mid], race: () => [Game.race, Game.raceState.inQueue, Game.queueText(), JSON.stringify(Game.raceState.final)], shot: () => Game.flow.startApproach(), uid: () => Online.myId(), bp: (s) => Game.openBackpack(s), pf: () => [1, 2, 3].map(Game.planeFor), req: (a, b) => request(a, b), gift: () => openPanel("gift"), push: () => Game.pushProfile(), gems: () => { Game.openShop(); shopTab = "GEMS"; rebuildShop(); }, run: (id) => startRun(id || "towers"), skip: () => Game.skip(), ahead: () => { const r = Math.floor(-pos.Z / CHUNK); return [r, beyondStart, stageFor(-pos.Z)[0], stageFor((r + 5) * CHUNK + 1)[0], stageFor((r + 40) * CHUNK + 1)[0]]; }, state: () => [mode, curStage, Game.flow.cine && Game.flow.cine.kind, Math.round(-pos.Z)] };
+if (DEV) window.__dev = { crash: () => task.spawn(crash, []), data: () => data, stats: () => stats, vs: () => Game.versusToggle(), heart: () => Game.heartFx(), pad: (k) => Game.makePad(k, pos.X, pos.Z - 45, pickups), reg: async (n, p) => { await Online.register(n, p); request("set_name", n); return Online.account(); }, win: () => Game._vsWin(), vsd: () => Game._vsDebug(), dbg: () => [mode, dead, !!stats, !!planeMain, planeMain && !!planeMain.Parent, Game.raceState.mid], race: () => [Game.race, Game.raceState.inQueue, Game.queueText(), JSON.stringify(Game.raceState.final)], shot: () => Game.flow.startApproach(), uid: () => Online.myId(), achp: () => openPanel("achievements"), achgo: (id) => Game.ach(id), bp: (s) => Game.openBackpack(s), pf: () => [1, 2, 3].map(Game.planeFor), req: (a, b) => request(a, b), gift: () => openPanel("gift"), push: () => Game.pushProfile(), gems: () => { Game.openShop(); shopTab = "GEMS"; rebuildShop(); }, run: (id) => startRun(id || "towers"), skip: () => Game.skip(), ahead: () => { const r = Math.floor(-pos.Z / CHUNK); return [r, beyondStart, stageFor(-pos.Z)[0], stageFor((r + 5) * CHUNK + 1)[0], stageFor((r + 40) * CHUNK + 1)[0]]; }, state: () => [mode, curStage, Game.flow.cine && Game.flow.cine.kind, Math.round(-pos.Z)] };
 
 // ------------------------------------------------------------------ versus
 // same idea as roblox: queue up, everyone starts on the same map, farthest wins.
@@ -9023,7 +9114,7 @@ if (DEV) window.__dev = { crash: () => task.spawn(crash, []), data: () => data, 
 // ------------------------------------------------------------------ old version warning
 // every build has its own number, the page checks now and then whether a newer one is online
 (() => {
-	const BUILD = "1790923065";
+	const BUILD = "1790927397";
 	if (BUILD.startsWith("__")) return;
 	const bar = make("TextButton", {
 		AnchorPoint: V2(0.5, 0),
@@ -9100,6 +9191,16 @@ if (DEV) window.__dev = { crash: () => task.spawn(crash, []), data: () => data, 
 	for (const a of LIST) BY_ID[a.id] = a;
 	Game.ACH_TOTAL = LIST.length;
 	const has = (id) => !!(data.ach && data.ach[id]);
+	// "+25 ◆  +2 ✦"
+	const rewardOf = (id) => {
+		const r = (CONFIG.achRewards || {})[id];
+		if (!r) return "";
+		const bits = [];
+		if (r.gems) bits.push("+" + r.gems + " ◆");
+		if (r.keys) bits.push("+" + r.keys + " ✦");
+		if (r.coins) bits.push("+" + fmt(r.coins) + " ●");
+		return bits.join("  ");
+	};
 
 	// ---------------- the toast that slides in from the right
 	const toast = make("Frame", {
@@ -9119,7 +9220,8 @@ if (DEV) window.__dev = { crash: () => task.spawn(crash, []), data: () => data, 
 	make("UIGradient", { Color: new ColorSequence(WHITE, RGB(140, 140, 140)), Rotation: 90, Parent: tIcon });
 	const tStar = text(tIcon, "★", US(1, 1), UO(0, 1), 30, BLACK);
 	tStar.ZIndex = 57;
-	const tHead = text(toast, "ACHIEVEMENT UNLOCKED", U2(1, -90, 0, 18), UO(78, 12), 14, COIN, LEFT);
+	const tHead = Icons.text(toast, U2(1, -90, 0, 18), UO(78, 12), 14, COIN, LEFT);
+	tHead.Text = "ACHIEVEMENT UNLOCKED";
 	const tName = text(toast, "", U2(1, -90, 0, 30), UO(78, 30), 26, WHITE, LEFT);
 	const tDesc = text(toast, "", U2(1, -90, 0, 16), UO(78, 60), 13, DIM, LEFT);
 	for (const l of [tHead, tName, tDesc]) l.ZIndex = 56;
@@ -9131,6 +9233,7 @@ if (DEV) window.__dev = { crash: () => task.spawn(crash, []), data: () => data, 
 		const a = queue.shift();
 		tName.Text = a.name;
 		tDesc.Text = a.desc.toUpperCase();
+		tHead.Text = "ACHIEVEMENT UNLOCKED   " + rewardOf(a.id);
 		tIcon.BackgroundColor3 = a.color;
 		tStroke.Color = a.color;
 		toast.Visible = true;
@@ -9208,7 +9311,7 @@ if (DEV) window.__dev = { crash: () => task.spawn(crash, []), data: () => data, 
 		const [, fill] = xpBar(head, U2(0.5, -20, 0, 12), U2(0.5, 0, 0.5, -6), got / LIST.length, COIN);
 		fill.BackgroundColor3 = COIN;
 		const grid = make("Frame", { Size: U2(1, -10, 0, 0), AutomaticSize: "Y", BackgroundTransparency: 1, LayoutOrder: nextOrder(), Parent: ap.body });
-		make("UIGridLayout", { CellSize: UO(318, 78), CellPadding: UO(8, 8), SortOrder: "LayoutOrder", Parent: grid });
+		make("UIGridLayout", { CellSize: UO(318, 94), CellPadding: UO(8, 8), SortOrder: "LayoutOrder", Parent: grid });
 		// unlocked first, newest on top
 		const sorted = [...LIST].sort((a, b) => (data.ach[b.id] || 0) - (data.ach[a.id] || 0));
 		sorted.forEach((a, i) => {
@@ -9220,12 +9323,25 @@ if (DEV) window.__dev = { crash: () => task.spawn(crash, []), data: () => data, 
 			make("UICorner", { CornerRadius: UDim.new(0.5, 0), Parent: ic });
 			if (on) make("UIGradient", { Color: new ColorSequence(WHITE, RGB(140, 140, 140)), Rotation: 90, Parent: ic });
 			text(ic, on ? "★" : "?", US(1, 1), UO(0, 1), 26, on ? BLACK : DIM);
-			text(c, a.name, U2(1, -76, 0, 26), UO(68, 10), 20, on ? WHITE : DIM, LEFT);
-			const d = text(c, a.desc.toUpperCase(), U2(1, -76, 0, 34), UO(68, 36), 13, on ? RGB(200, 200, 200) : RGB(110, 110, 120), LEFT);
+			text(c, a.name, U2(1, -76, 0, 26), UO(68, 8), 19, on ? WHITE : DIM, LEFT).TextTruncate = "AtEnd";
+			// what it pays, greyed out once you've got it
+			const rl = Icons.text(c, U2(1, -76, 0, 16), UO(68, 70), 13, on ? DIM : GEM, LEFT);
+			rl.Text = on ? "GOT " + rewardOf(a.id) : rewardOf(a.id);
+			const d = text(c, a.desc.toUpperCase(), U2(1, -76, 0, 28), UO(68, 30), 12, on ? RGB(200, 200, 200) : RGB(110, 110, 120), LEFT);
 			d.TextWrapped = true;
 		});
 	}
 	ap.onOpen = draw;
+
+	// achievements from before they paid anything: hand the rewards over once
+	task.delay(6, () => {
+		const [ok, msg] = request("ach_retro");
+		if (ok) {
+			notify("rewards for your " + msg, GEM);
+			sfx("levelup");
+			Game.cloudSave(true);
+		}
+	});
 })();
 
 // ------------------------------------------------------------------ real money

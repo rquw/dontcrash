@@ -164,6 +164,10 @@ const DEFAULT = {
 	codes: {},
 	bought: [],
 	shopHint: false,
+	missions: null,
+	// best run of the current week, for the weekly leaderboard
+	week: { id: "", best: 0 },
+	achPaid: {},
 	paid: {},
 	ach: {},
 	boost: 1, boostUntil: 0,
@@ -259,8 +263,88 @@ function snapshot(withConfig) {
 	return { data: d, session: now() - s.joined, claimed: { ...s.claimed }, now: now(), config: withConfig ? CONFIG : null, saving };
 }
 
+// ---------------- daily missions: three a day, the same ones for everybody, new ones at midnight
+const MISSION_POOL = [
+	{ id: "dist", text: "FLY {n} STUDS", goals: [15000, 25000, 40000], gems: 15 },
+	{ id: "one", text: "FLY {n} STUDS IN ONE RUN", goals: [6000, 10000, 15000], gems: 20, max: true },
+	{ id: "glass", text: "SMASH {n} GLASS TOWERS", goals: [20, 40, 60], gems: 15 },
+	{ id: "kills", text: "DESTROY {n} THINGS", goals: [25, 50, 80], gems: 15 },
+	{ id: "close", text: "GET {n} CLOSE! CALLS", goals: [10, 20, 30], gems: 15 },
+	{ id: "runs", text: "PLAY {n} RUNS", goals: [3, 5, 8], gems: 10 },
+	{ id: "maps", text: "CLEAR {n} MAPS", goals: [3, 6, 10], gems: 15 },
+	{ id: "boss", text: "BEAT {n} BOSSES", goals: [1, 2], gems: 25 },
+	{ id: "coins", text: "EARN {n} COINS", goals: [3000, 6000, 10000], gems: 15 },
+	{ id: "pickups", text: "PICK UP {n} GEMS OR KEYS", goals: [5, 10], gems: 15 },
+];
+const MISSION_BONUS = { gems: 30, keys: 1 };
+// the monday this week started on
+export const weekId = () => {
+	const t = new Date();
+	t.setHours(0, 0, 0, 0);
+	t.setDate(t.getDate() - ((t.getDay() + 6) % 7));
+	return t.getFullYear() + "-" + String(t.getMonth() + 1).padStart(2, "0") + "-" + String(t.getDate()).padStart(2, "0");
+};
+const today = () => {
+	const t = new Date();
+	return t.getFullYear() + "-" + String(t.getMonth() + 1).padStart(2, "0") + "-" + String(t.getDate()).padStart(2, "0");
+};
+function ensureMissions(d) {
+	const day = today();
+	if (d.missions && d.missions.day === day && Array.isArray(d.missions.list)) return d.missions;
+	// the date decides which three, so the whole class has the same ones
+	let h = 0;
+	for (const c of day) h = (h * 31 + c.charCodeAt(0)) >>> 0;
+	const rnd = () => {
+		h = (h * 1664525 + 1013904223) >>> 0;
+		return h / 4294967296;
+	};
+	const pool = MISSION_POOL.slice();
+	const list = [];
+	for (let i = 0; i < 3; i++) {
+		const m = pool.splice(Math.floor(rnd() * pool.length), 1)[0];
+		const gi = Math.floor(rnd() * m.goals.length);
+		const goal = m.goals[gi];
+		list.push({ id: m.id, text: m.text.replace("{n}", goal.toLocaleString("en-US")).replace("1 BOSSES", "A BOSS"), goal, gems: Math.round(m.gems * (1 + gi * 0.5)), prog: 0, claimed: false });
+	}
+	d.missions = { day, list, bonus: false, bonusReward: MISSION_BONUS };
+	return d.missions;
+}
+function missionProgress(d, got) {
+	const m = ensureMissions(d);
+	const done = [];
+	for (const x of m.list) {
+		const def = MISSION_POOL.find((p) => p.id === x.id);
+		if (!def || x.prog >= x.goal) continue;
+		const v = got[x.id] || 0;
+		x.prog = Math.min(x.goal, def.max ? Math.max(x.prog, v) : x.prog + v);
+		if (x.prog >= x.goal) done.push(x.text);
+	}
+	return done;
+}
+
 const handlers = {};
-handlers.get = () => [true, null, true];
+handlers.get = () => {
+	ensureMissions(s.data);
+	return [true, null, true];
+};
+handlers.mission_claim = (i) => {
+	const m = ensureMissions(s.data);
+	const x = m.list[Number(i)];
+	if (!x) return [false, "unknown mission"];
+	if (x.claimed) return [false, "already claimed"];
+	if (x.prog < x.goal) return [false, "not done yet"];
+	x.claimed = true;
+	grant(s.data, { gems: x.gems });
+	return [true, "mission done: +" + x.gems + " gems"];
+};
+handlers.mission_bonus = () => {
+	const m = ensureMissions(s.data);
+	if (m.bonus) return [false, "already claimed"];
+	if (!m.list.every((x) => x.claimed)) return [false, "finish all three first"];
+	m.bonus = true;
+	grant(s.data, MISSION_BONUS);
+	return [true, "all missions done: " + describe(MISSION_BONUS)];
+};
 handlers.claim_daily = () => {
 	const d = s.data;
 	if (now() - d.lastDaily < 86400) return [false, "not ready yet"];
@@ -497,6 +581,8 @@ handlers.run_end = (r) => {
 	}
 	d.farthest = Math.max(d.farthest || 0, (s.runFrom || 0) + dist);
 	d.best = Math.max(d.best, dist);
+	if (!d.week || d.week.id !== weekId()) d.week = { id: weekId(), best: 0 };
+	d.week.best = Math.max(d.week.best, dist);
 	// lifetime stats for the profile
 	const st = d.stats;
 	st.runs++;
@@ -530,6 +616,7 @@ handlers.run_end = (r) => {
 	award.best = d.best;
 	award.dist = dist;
 	award.mult = mult;
+	award.missionsDone = missionProgress(d, { dist, one: dist, glass, kills, close: closes, runs: 1, maps, boss: bosses, coins: award.coins, pickups: gemPads + keyPads });
 	return [true, award];
 };
 handlers.set_name = (name) => {
@@ -553,11 +640,43 @@ handlers.vs_played = () => {
 	s.data.vsGames = (s.data.vsGames || 0) + 1;
 	return [true];
 };
+// what every achievement pays out
+const ACH_REWARDS = {
+	towers: { gems: 10 }, moving: { gems: 15 }, canyon: { gems: 20 }, smash: { gems: 25 }, boss: { gems: 40 }, turrets: { gems: 40 }, city: { gems: 50 }, sea: { gems: 60 },
+	space: { gems: 100, keys: 2 }, fullcircle: { gems: 300, keys: 5 },
+	run5k: { gems: 10 }, run25k: { gems: 60 }, glass50: { gems: 25 }, close10: { gems: 15 }, kills50: { gems: 25 }, saved: { gems: 15 }, nodamage: { gems: 30 },
+	heart: { gems: 10 }, revive: { gems: 10 }, pickups100: { gems: 40 }, rich: { gems: 30 }, skins3: { gems: 30 }, codes5: { gems: 20 },
+	dist100k: { gems: 50 }, runs100: { gems: 50 }, level10: { gems: 50, keys: 2 }, vswin: { gems: 40 }, vs10: { gems: 50 },
+};
+CONFIG.achRewards = ACH_REWARDS;
 handlers.ach = (id) => {
 	if (typeof id !== "string" || id.length > 30) return [false, "bad id"];
 	if (s.data.ach[id]) return [false, "already"];
 	s.data.ach[id] = Date.now();
-	return [true];
+	s.data.achPaid = s.data.achPaid || {};
+	const rw = ACH_REWARDS[id];
+	if (rw && !s.data.achPaid[id]) {
+		s.data.achPaid[id] = true;
+		grant(s.data, rw);
+	}
+	return [true, rw ? describe(rw) : ""];
+};
+// the ones you unlocked before achievements paid anything
+handlers.ach_retro = () => {
+	const d = s.data;
+	d.achPaid = d.achPaid || {};
+	const total = { gems: 0, keys: 0, coins: 0 };
+	let n = 0;
+	for (const id in d.ach) {
+		const rw = ACH_REWARDS[id];
+		if (!rw || d.achPaid[id]) continue;
+		d.achPaid[id] = true;
+		n++;
+		for (const k in rw) total[k] += rw[k];
+	}
+	if (!n) return [false, ""];
+	grant(d, total);
+	return [true, n + (n === 1 ? " achievement: " : " achievements: ") + describe(total)];
 };
 handlers.spawn_char = () => [true];
 handlers.despawn_char = () => [true];
