@@ -3,9 +3,9 @@ import {
 	camera, Lighting, Instance, workspace, markQueryRoot, Enum, OverlapParams, TweenService, TweenInfo, Debris, UIS, playSfx, loopSound, loadSounds, setSfxVolume,
 	NumberSequence, NumberSequenceKeypoint, NumberRange, ColorSequence, ColorSequenceKeypoint, guiRootInst, setUiScale, setLowGraphics, physicsGround,
 	mergeFloor, start, perf,
-} from "./engine.js?v=1790931890";
-import * as Server from "./server.js?v=1790931890";
-import * as Online from "./online.js?v=1790931890";
+} from "./engine.js?v=1790932123";
+import * as Server from "./server.js?v=1790932123";
+import * as Online from "./online.js?v=1790932123";
 
 const V3 = (x, y, z) => new Vector3(x, y, z);
 const RGB = Color3.fromRGB;
@@ -57,7 +57,8 @@ function apply(s) {
 	sessionBase = s.session;
 	snapNow = s.now;
 	snapClock = clock();
-	if (s.config) CONFIG = JSON.parse(JSON.stringify(s.config));
+	// the config never changes while the page is open. taking it again would wipe where the stages start, and then the boss shows up in the towers
+	if (s.config && !CONFIG) CONFIG = JSON.parse(JSON.stringify(s.config));
 	saveState = s.saving;
 	if (refreshUI) refreshUI();
 }
@@ -2342,6 +2343,11 @@ let notify;
 		const my = toastToken;
 		toastL.Text = msg;
 		toastL.TextColor3 = color || WHITE;
+		// the box grows with the text, and really long ones get smaller letters instead of running out of it
+		const room = Math.min(1100, gui.AbsoluteSize.X - 30);
+		const need = [...String(msg)].length * 13.5 + 60;
+		toast.Size = UO(clamp(need, 320, room), 46);
+		toastL.TextSize = need > room ? Math.max(13, Math.floor((22 * room) / need)) : 22;
 		toast.Position = U2(0.5, 0, 1, -20);
 		tw(toast, 0.35, { GroupTransparency: 0, Position: U2(0.5, 0, 1, -40) });
 		task.delay(2.5, () => {
@@ -6905,6 +6911,9 @@ let startBoss, updateBoss, resetSky;
 		let tx = st.text;
 		if (typeof tx === "function") tx = tx();
 		head.Text = Game.touch.on && st.touch ? st.touch : tx;
+		// one line, always. long ones get smaller so they don't fall onto the keys below
+		const room = Math.min(880, gui.AbsoluteSize.X - 30);
+		head.TextSize = clamp(Math.floor(room / ([...head.Text].length * 0.62)), 18, 44);
 		for (const k of st.keys || []) {
 			const label = Game.touch.on ? TOUCH[k] : Game.keyName(ACT[k]);
 			const cap = make("Frame", { Size: UO(Math.max(72, [...label].length * 24 + 32), 72), BackgroundColor3: BLACK, BackgroundTransparency: 0.35, Parent: row_ });
@@ -8105,7 +8114,7 @@ applySettings();
 toMenu();
 start();
 document.getElementById("boot").remove();
-if (DEV) window.__dev = { del: () => Online.deleteAccount(), lb: () => openPanel("leaderboard"), hello: () => Game.cloudLoad(true), crash: () => task.spawn(crash, []), data: () => data, stats: () => stats, vs: () => Game.versusToggle(), heart: () => Game.heartFx(), pad: (k) => Game.makePad(k, pos.X, pos.Z - 45, pickups), reg: async (n, p) => { await Online.register(n, p); request("set_name", n); return Online.account(); }, win: () => Game._vsWin(), vsd: () => Game._vsDebug(), dbg: () => [mode, dead, !!stats, !!planeMain, planeMain && !!planeMain.Parent, Game.raceState.mid], race: () => [Game.race, Game.raceState.inQueue, Game.queueText(), JSON.stringify(Game.raceState.final)], shot: () => Game.flow.startApproach(), uid: () => Online.myId(), achp: () => openPanel("achievements"), achgo: (id) => Game.ach(id), bp: (s) => Game.openBackpack(s), pf: () => [1, 2, 3].map(Game.planeFor), req: (a, b) => request(a, b), gift: () => openPanel("gift"), push: () => Game.pushProfile(), gems: () => { Game.openShop(); shopTab = "GEMS"; rebuildShop(); }, run: (id) => startRun(id || "towers"), skip: () => Game.skip(), ahead: () => { const r = Math.floor(-pos.Z / CHUNK); return [r, beyondStart, stageFor(-pos.Z)[0], stageFor((r + 5) * CHUNK + 1)[0], stageFor((r + 40) * CHUNK + 1)[0]]; }, state: () => [mode, curStage, Game.flow.cine && Game.flow.cine.kind, Math.round(-pos.Z)] };
+if (DEV) window.__dev = { note: (m) => notify(m, GOOD), del: () => Online.deleteAccount(), lb: () => openPanel("leaderboard"), hello: () => Game.cloudLoad(true), crash: () => task.spawn(crash, []), data: () => data, stats: () => stats, vs: () => Game.versusToggle(), heart: () => Game.heartFx(), pad: (k) => Game.makePad(k, pos.X, pos.Z - 45, pickups), reg: async (n, p) => { await Online.register(n, p); request("set_name", n); return Online.account(); }, win: () => Game._vsWin(), vsd: () => Game._vsDebug(), dbg: () => [mode, dead, !!stats, !!planeMain, planeMain && !!planeMain.Parent, Game.raceState.mid], race: () => [Game.race, Game.raceState.inQueue, Game.queueText(), JSON.stringify(Game.raceState.final)], shot: () => Game.flow.startApproach(), uid: () => Online.myId(), achp: () => openPanel("achievements"), achgo: (id) => Game.ach(id), bp: (s) => Game.openBackpack(s), pf: () => [1, 2, 3].map(Game.planeFor), req: (a, b) => request(a, b), gift: () => openPanel("gift"), push: () => Game.pushProfile(), gems: () => { Game.openShop(); shopTab = "GEMS"; rebuildShop(); }, run: (id) => startRun(id || "towers"), skip: () => Game.skip(), ahead: () => { const r = Math.floor(-pos.Z / CHUNK); return [r, beyondStart, stageFor(-pos.Z)[0], stageFor((r + 5) * CHUNK + 1)[0], stageFor((r + 40) * CHUNK + 1)[0]]; }, state: () => [mode, curStage, Game.flow.cine && Game.flow.cine.kind, Math.round(-pos.Z)] };
 
 // ------------------------------------------------------------------ versus
 // same idea as roblox: queue up, everyone starts on the same map, farthest wins.
@@ -9205,7 +9214,7 @@ if (DEV) window.__dev = { del: () => Online.deleteAccount(), lb: () => openPanel
 // ------------------------------------------------------------------ old version warning
 // every build has its own number, the page checks now and then whether a newer one is online
 (() => {
-	const BUILD = "1790931890";
+	const BUILD = "1790932123";
 	if (BUILD.startsWith("__")) return;
 	const bar = make("TextButton", {
 		AnchorPoint: V2(0.5, 0),
