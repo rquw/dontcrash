@@ -842,9 +842,11 @@ function rnd(n) {
 	}
 	return Math.floor(Math.random() * n);
 }
-const CAS_CUR = ["coins", "gems", "keys"];
+// no gems in here: they can be bought with real money, and betting those is a different thing by law
+const CAS_CUR = ["coins", "keys"];
+CASINO.curs = CAS_CUR;
 function stake(cur, amt) {
-	if (!CAS_CUR.includes(cur)) return "pick coins, gems or keys";
+	if (!CAS_CUR.includes(cur)) return "you can only bet coins or keys";
 	if (!Number.isInteger(amt) || amt < CASINO.min[cur]) return "the smallest bet is " + CASINO.min[cur];
 	if (amt > CASINO.max[cur]) return "the biggest bet is " + CASINO.max[cur];
 	if ((s.data[cur] || 0) < amt) return "not enough " + cur;

@@ -3,9 +3,9 @@ import {
 	camera, Lighting, Instance, workspace, markQueryRoot, Enum, OverlapParams, TweenService, TweenInfo, Debris, UIS, playSfx, loopSound, loadSounds, setSfxVolume,
 	NumberSequence, NumberSequenceKeypoint, NumberRange, ColorSequence, ColorSequenceKeypoint, guiRootInst, setUiScale, setLowGraphics, physicsGround,
 	mergeFloor, start, perf,
-} from "./engine.js?v=1790939591";
-import * as Server from "./server.js?v=1790939591";
-import * as Online from "./online.js?v=1790939591";
+} from "./engine.js?v=1790944749";
+import * as Server from "./server.js?v=1790944749";
+import * as Online from "./online.js?v=1790944749";
 
 const V3 = (x, y, z) => new Vector3(x, y, z);
 const RGB = Color3.fromRGB;
@@ -442,7 +442,7 @@ let trackChunks, updateMovers, regenerate, canyonPath, canyonHalfGap, updatePads
 	};
 
 	// ---------------- the casino. now and then the canyon splits near its end: left goes on, right ends in a black door
-	const FORK = { len: 900, ramp: 320, off: 58, gap: 30, door: 540, sign: 170 };
+	const FORK = { len: 900, ramp: 320, off: 58, gap: 30, door: 540, sign: 178 };
 	const smooth = (x) => {
 		x = clamp(x, 0, 1);
 		return x * x * (3 - 2 * x);
@@ -492,17 +492,26 @@ let trackChunks, updateMovers, regenerate, canyonPath, canyonHalfGap, updatePads
 			x += (r[0].length + 1) * px;
 		}
 	}
+	// a gantry like over a motorway: one panel over each way, same size, each in its own colour
 	function casinoSign(folder, d) {
-		const x = canyonPath(d), z = -d;
-		const board = block(V3(118, 46, 2), V3(x, 67, z - 1.6), RGB(14, 12, 20), folder);
-		board.CastShadow = false;
-		for (const [sx, sy, w, h] of [[0, 23.6, 120, 1.2], [0, -23.6, 120, 1.2], [-59.4, 0, 1.2, 46], [59.4, 0, 1.2, 46]]) {
-			const e = block(V3(w, h, 2.4), V3(x + sx, 67 + sy, z - 1.6), RGB(255, 200, 60), folder);
-			e.Material = "Neon";
-			e.CastShadow = false;
-		}
-		write(folder, "CASINO >", V3(x, 77, z), 2.2, RGB(255, 205, 70));
-		write(folder, "< NEXT MAP", V3(x, 56, z), 1.7, RGB(235, 235, 245));
+		const lanes = Game.forkAt(d);
+		if (!lanes || lanes.length < 2) return;
+		const z = -d, y = 69, W = 60, H = 34;
+		const beam = block(V3(lanes[1][0] - lanes[0][0] + W + 8, 2.4, 2.4), V3((lanes[0][0] + lanes[1][0]) / 2, y + H / 2 + 2.4, z - 1.6), RGB(40, 36, 52), folder);
+		beam.CastShadow = false;
+		const panel = (x, color, word, px, arrow) => {
+			const board = block(V3(W, H, 2), V3(x, y, z - 1.6), RGB(14, 12, 20), folder);
+			board.CastShadow = false;
+			for (const [sx, sy, w, hh] of [[0, H / 2 - 0.6, W + 1.2, 1.2], [0, -H / 2 + 0.6, W + 1.2, 1.2], [-W / 2, 0, 1.2, H], [W / 2, 0, 1.2, H]]) {
+				const e = block(V3(w, hh, 2.4), V3(x + sx, y + sy, z - 1.6), color, folder);
+				e.Material = "Neon";
+				e.CastShadow = false;
+			}
+			write(folder, word, V3(x, y + 7.5, z), px, color);
+			write(folder, arrow, V3(x, y - 8, z), 1.5, color);
+		};
+		panel(lanes[0][0], RGB(120, 225, 255), "NEXT MAP", 1.25, "<");
+		panel(lanes[1][0], RGB(255, 205, 70), "CASINO", 1.45, ">");
 	}
 	// the way in: the corridor gets darker and darker until there's nothing left to see
 	function casinoDoor(folder, d) {
@@ -9397,7 +9406,7 @@ if (DEV) window.__dev = { fin: () => STAGE_BY_ID.canyon.finish, cp: (d) => canyo
 // ------------------------------------------------------------------ old version warning
 // every build has its own number, the page checks now and then whether a newer one is online
 (() => {
-	const BUILD = "1790939591";
+	const BUILD = "1790944749";
 	if (BUILD.startsWith("__")) return;
 	const bar = make("TextButton", {
 		AnchorPoint: V2(0.5, 0),
@@ -9928,11 +9937,13 @@ for (const id in PACKS) if (PACKS[id].link.includes("/test_") && !DEV) PACKS[id]
 .cas-game { padding:10px 26px 22px; gap:26px; align-items:stretch; }
 .cas-stage { flex:1; min-width:0; position:relative; display:flex; align-items:center; justify-content:center; gap:22px; }
 .cas-side { width:330px; flex:none; background:#0009; border:2px solid #ffffff1c; border-radius:22px; padding:18px; display:flex; flex-direction:column; gap:12px; }
-.cas-side h3 { margin:0; font-size:15px; letter-spacing:2px; color:#b9a9d6; font-weight:800; }
+.cas-side h3 { margin:0; font-size:15px; letter-spacing:1px; color:#ffd77a; font-weight:800; white-space:pre; }
 .cas-row { display:flex; gap:8px; } .cas-row > * { flex:1; }
 .cas-tab { padding:9px 0; font-size:18px; } .cas-tab.on { background:#fff; color:#12081c; border-color:#fff; }
 .cas-amt { font-size:44px; font-weight:900; text-align:center; background:#000a; border-radius:14px; padding:6px; border:2px solid #ffffff22; }
-.cas-small { font-size:16px; padding:8px 0; }
+.cas-small { font-size:14px; padding:8px 0; }
+.cas-arow { align-items:stretch; } .cas-arow .cas-amt { flex:3; font-size:38px; } .cas-pm { flex:1; font-size:30px; padding:0; }
+.cas-btn.go, .cas-btn.cash { font-size:24px; }
 .cas-info { font-size:15px; color:#b9a9d6; text-align:center; min-height:20px; } .cas-info.bad { color:#ff7d8a; }
 .cas-spacer { flex:1; }
 .cas-banner { position:absolute; left:50%; top:50%; transform:translate(-50%,-50%); font-size:90px; font-weight:900; pointer-events:none; white-space:nowrap; opacity:0; z-index:5; text-align:center; line-height:1; }
@@ -9992,8 +10003,8 @@ for (const id in PACKS) if (PACKS[id].link.includes("/test_") && !DEV) PACKS[id]
 	const CURS = ["coins", "gems", "keys"];
 	const pills = {};
 	for (const c of CURS) pills[c] = h("div", "cas-pill c-" + c, "", bal);
-	const leaveB = h("button", "cas-btn leave", "LEAVE", top);
-	const backB = h("button", "cas-btn cas-back", "◀ GAMES", box);
+	const leaveB = h("button", "cas-btn leave", "LEAVE CASINO ▶", top);
+	const backB = h("button", "cas-btn cas-back", "◀ ALL GAMES", box);
 	const fxC = h("canvas", "cas-fx", null, box);
 	const flashE = h("div", "cas-flash", null, box);
 	const banner = h("div", "cas-banner", null, box);
@@ -10111,11 +10122,14 @@ for (const id in PACKS) if (PACKS[id].link.includes("/test_") && !DEV) PACKS[id]
 	// ---------------- the bet box on the right, every game has one
 	const bet = { cur: "coins", amt: { coins: 100, gems: 10, keys: 1 } };
 	const lim = () => CONFIG.casino;
+	const BETS = () => lim().curs || CURS;
+	// "100 ●" for the big buttons, so you always see what a press costs
+	const betText = (n) => fmt(n == null ? bet.amt[bet.cur] : n) + " " + SYM[bet.cur];
 	function betBox(side, onChange) {
-		h("h3", null, "BET WITH", side);
+		h("h3", null, "1   WHAT DO YOU BET?", side);
 		const tabs = h("div", "cas-row", null, side);
 		const tabB = {};
-		for (const c of CURS) {
+		for (const c of BETS()) {
 			tabB[c] = h("button", "cas-btn cas-tab c-" + c, SYM[c] + " " + c.toUpperCase(), tabs);
 			click(tabB[c], () => {
 				if (api.locked) return;
@@ -10124,8 +10138,11 @@ for (const id in PACKS) if (PACKS[id].link.includes("/test_") && !DEV) PACKS[id]
 				api.draw();
 			});
 		}
-		h("h3", null, "HOW MUCH", side);
-		const amt = h("div", "cas-amt", "", side);
+		const head2 = h("h3", null, "2   HOW MUCH?", side);
+		const arow = h("div", "cas-row cas-arow", null, side);
+		const minus = h("button", "cas-btn cas-pm", "−", arow);
+		const amt = h("div", "cas-amt", "", arow);
+		const plus = h("button", "cas-btn cas-pm", "+", arow);
 		const row = h("div", "cas-row", null, side);
 		const set = (v) => {
 			if (api.locked) return;
@@ -10134,14 +10151,23 @@ for (const id in PACKS) if (PACKS[id].link.includes("/test_") && !DEV) PACKS[id]
 			sfx("cas_chip");
 			api.draw();
 		};
-		click(h("button", "cas-btn cas-small", "MIN", row), () => set(0));
-		click(h("button", "cas-btn cas-small", "½", row), () => set(bet.amt[bet.cur] / 2));
-		click(h("button", "cas-btn cas-small", "×2", row), () => set(bet.amt[bet.cur] * 2));
-		click(h("button", "cas-btn cas-small", "MAX", row), () => set(1e9));
+		// one step is the smallest bet, bigger once the bet is big
+		const stepOf = () => {
+			const a = bet.amt[bet.cur], m = lim().min[bet.cur];
+			return a >= m * 100 ? m * 20 : a >= m * 20 ? m * 10 : a >= m * 4 ? m * 2 : m;
+		};
+		click(minus, () => set(bet.amt[bet.cur] - stepOf()));
+		click(plus, () => set(bet.amt[bet.cur] + stepOf()));
+		click(h("button", "cas-btn cas-small", "LEAST", row), () => set(0));
+		click(h("button", "cas-btn cas-small", "HALF", row), () => set(bet.amt[bet.cur] / 2));
+		click(h("button", "cas-btn cas-small", "DOUBLE", row), () => set(bet.amt[bet.cur] * 2));
+		click(h("button", "cas-btn cas-small", "ALL IN", row), () => set(1e9));
 		const api = {
 			locked: false,
+			head2,
 			draw() {
-				for (const c of CURS) tabB[c].classList.toggle("on", c === bet.cur);
+				if (!BETS().includes(bet.cur)) bet.cur = BETS()[0];
+				for (const c of BETS()) tabB[c].classList.toggle("on", c === bet.cur);
 				amt.textContent = fmt(bet.amt[bet.cur]) + " " + SYM[bet.cur];
 				amt.className = "cas-amt c-" + bet.cur;
 				if (onChange) onChange();
@@ -10214,6 +10240,7 @@ for (const id in PACKS) if (PACKS[id].link.includes("/test_") && !DEV) PACKS[id]
 		const bb = betBox(side, () => {
 			info.classList.remove("bad");
 			info.textContent = "ON AVERAGE THE HOUSE KEEPS 8%";
+			go.textContent = "SPIN FOR " + betText();
 			go.disabled = !canPay(bet.amt[bet.cur]);
 		});
 		h("div", "cas-spacer", null, side);
@@ -10367,7 +10394,8 @@ for (const id in PACKS) if (PACKS[id].link.includes("/test_") && !DEV) PACKS[id]
 				if (a && !cells[k].querySelector("u")) h("u", null, fmt(a), cells[k]);
 			}
 			const t = total();
-			note(t ? "ON THE TABLE: " + fmt(t) + " " + SYM[bet.cur] : "PICK A CHIP SIZE, THEN TAP THE TABLE");
+			note(t ? "TAP A FIELD AGAIN TO ADD ANOTHER CHIP" : "NOW TAP THE TABLE TO PUT A CHIP DOWN");
+			go.textContent = t ? "SPIN FOR " + betText(t) : "SPIN";
 			go.disabled = !t;
 			clr.disabled = !t;
 		}
@@ -10377,10 +10405,10 @@ for (const id in PACKS) if (PACKS[id].link.includes("/test_") && !DEV) PACKS[id]
 			bb.cur = bet.cur;
 			drawBets();
 		});
-		side.querySelectorAll("h3")[1].textContent = "CHIP SIZE";
+		bb.head2.textContent = "2   HOW BIG IS ONE CHIP?";
 		h("div", "cas-spacer", null, side);
 		side.appendChild(info);
-		const clr = h("button", "cas-btn", "CLEAR TABLE", side);
+		const clr = h("button", "cas-btn", "TAKE ALL CHIPS BACK", side);
 		const go = h("button", "cas-btn go", "SPIN", side);
 		click(clr, () => {
 			if (busy) return;
@@ -10527,7 +10555,7 @@ for (const id in PACKS) if (PACKS[id].link.includes("/test_") && !DEV) PACKS[id]
 		const info = h("div", "cas-info", "", null);
 		let bombs = 3, game = null;
 		const bb = betBox(side, () => drawSide());
-		h("h3", null, "BOMBS", side);
+		h("h3", null, "3   HOW MANY BOMBS?", side);
 		const brow = h("div", "cas-row", null, side);
 		const less = h("button", "cas-btn cas-small", "−", brow);
 		const bl = h("div", "cas-amt", "", brow);
@@ -10548,14 +10576,14 @@ for (const id in PACKS) if (PACKS[id].link.includes("/test_") && !DEV) PACKS[id]
 				multL.textContent = "FOR THE FIRST SAFE FIELD";
 				info.textContent = "MORE BOMBS, MORE MONEY PER FIELD";
 				go.className = "cas-btn go";
-				go.textContent = "START";
+				go.textContent = "START FOR " + betText();
 				go.disabled = !canPay(bet.amt[bet.cur]);
 			} else {
 				multV.textContent = game.mult.toFixed(2) + "x";
 				multL.textContent = game.picks ? "NEXT FIELD: " + game.next.toFixed(2) + "x" : "PICK A FIELD";
 				info.textContent = game.picks ? "TAKE IT OR KEEP GOING" : "";
 				go.className = "cas-btn cash";
-				go.textContent = game.picks ? "CASH OUT " + fmt(Math.floor(game.amt * game.mult)) + " " + SYM[game.cur] : "CASH OUT";
+				go.textContent = game.picks ? "TAKE " + fmt(Math.floor(game.amt * game.mult)) + " " + SYM[game.cur] : "PICK A FIELD FIRST";
 				go.disabled = !game.picks;
 			}
 		}
