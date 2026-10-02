@@ -157,6 +157,8 @@ const DEFAULT = {
 	coins: 0, gems: 0, keys: 0, best: 0, revives: 0, farthest: 0,
 	power: { coins: 0 },
 	skins: { Default: true }, skin: "Default",
+	// what you fly after the first boss and in space. empty = the standard jet / stealth
+	skin2: "", skin3: "",
 	deaths: { Default: true }, death: "Default",
 	lastDaily: 0, lastHourly: 0,
 	codes: {},
@@ -337,6 +339,18 @@ function cosmetic(list, ownedKey, equipKey, currency, id) {
 	}
 	return [false, "unknown item"];
 }
+// the backpack: which plane goes in which of the three slots
+handlers.loadout = (a) => {
+	if (!a || ![1, 2, 3].includes(a.slot)) return [false, "unknown slot"];
+	const d = s.data;
+	const id = a.id || "";
+	if (id && !d.skins[id]) return [false, "you don't own that one"];
+	if (a.slot === 1) {
+		if (!id) return [false, "pick a plane"];
+		d.skin = id;
+	} else d["skin" + a.slot] = id;
+	return [true, "equipped"];
+};
 handlers.skin = (id) => cosmetic(CONFIG.skins, "skins", "skin", "gems", id);
 handlers.death = (id) => cosmetic(CONFIG.deaths, "deaths", "death", "keys", id);
 handlers.settings = (t) => {

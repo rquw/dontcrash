@@ -3,9 +3,9 @@ import {
 	camera, Lighting, Instance, workspace, markQueryRoot, Enum, OverlapParams, TweenService, TweenInfo, Debris, UIS, playSfx, loopSound, loadSounds, setSfxVolume,
 	NumberSequence, NumberSequenceKeypoint, NumberRange, ColorSequence, ColorSequenceKeypoint, guiRootInst, setUiScale, setLowGraphics, physicsGround,
 	mergeFloor, start, perf,
-} from "./engine.js?v=1790766723";
-import * as Server from "./server.js?v=1790766723";
-import * as Online from "./online.js?v=1790766723";
+} from "./engine.js?v=1790921848";
+import * as Server from "./server.js?v=1790921848";
+import * as Online from "./online.js?v=1790921848";
 
 const V3 = (x, y, z) => new Vector3(x, y, z);
 const RGB = Color3.fromRGB;
@@ -2083,6 +2083,11 @@ const Icons = {};
 		put(0.5, 0.36, 0.9, 0.2, RGB(255, 125, 125));
 		put(0.5, 0.6, 0.16, 0.66, rib);
 	};
+	DRAW.pack = (put, s) => {
+		put(0.5, 0.2, 0.3, 0.22, WHITE, { round: true, stroke: Math.max(1, s * 0.07) });
+		put(0.5, 0.58, 0.7, 0.72, WHITE, { round: 0.22, grad: SHADE });
+		put(0.5, 0.7, 0.46, 0.26, RGB(60, 60, 60), { round: 0.15, alpha: 0.35 });
+	};
 	DRAW.bag = (put, s) => {
 		put(0.5, 0.36, 0.36, 0.4, WHITE, { round: true, stroke: Math.max(1, s * 0.07) });
 		put(0.5, 0.64, 0.74, 0.56, WHITE, { round: 0.12, grad: SHADE });
@@ -2588,10 +2593,19 @@ const niceName = (id) => String(id).replace(/([a-z])([A-Z])/g, "$1 $2").toUpperC
 		make("UICorner", { CornerRadius: UDim.new(0.5, 0), Parent: b });
 		make("UIStroke", { Color: WHITE, Transparency: 0.7, Thickness: 2, Parent: b });
 		const sc = make("UIScale", { Parent: b });
+		let lastTap = 0;
 		const down = (id) => {
 			held.set(id, { key, b, sc });
 			if (key) TC[key] = true;
 			if (onTap) onTap();
+			// tap a steering button twice quickly and you roll that way
+			if (key === "left" || key === "right") {
+				const now = clock();
+				if (now - lastTap < 0.3) {
+					Game.roll(key === "left" ? -1 : 1);
+					lastTap = 0;
+				} else lastTap = now;
+			}
 			tw(b, 0.08, { BackgroundTransparency: 0.15 });
 			tw(sc, 0.08, { Scale: 0.9 });
 		};
@@ -2619,7 +2633,7 @@ const niceName = (id) => String(id).replace(/([a-z])([A-Z])/g, "$1 $2").toUpperC
 		return b;
 	}
 
-	// left thumb steers and dashes, right thumb does nitro and fire. everything sits well inside the edges
+	// left thumb steers (double tap = roll), right thumb does nitro and fire. everything sits well inside the edges
 	const left = pad(150, U2(0, 150, 1, -60), null, "left");
 	const right = pad(150, U2(0, 330, 1, -60), null, "right");
 	for (const [b, flip] of [[left, true], [right, false]]) {
@@ -2631,8 +2645,6 @@ const niceName = (id) => String(id).replace(/([a-z])([A-Z])/g, "$1 $2").toUpperC
 	}
 	pad(170, U2(1, -160, 1, -60), "NITRO", "nitro");
 	TC.fireBtn = pad(130, U2(1, -350, 1, -70), "FIRE", "shoot");
-	pad(96, U2(0, 150, 1, -240), "«", null, () => Game.roll(-1));
-	pad(96, U2(0, 330, 1, -240), "»", null, () => Game.roll(1));
 
 	if (TC.on) {
 		Game.fuelBar.Position = U2(0.5, 0, 1, -10);
@@ -2655,7 +2667,7 @@ let openPanel, closePanels, startRun, toMenu;
 	titleL = text(menu, CONFIG.title, UO(700, 100), UO(56, 50), 96, WHITE, LEFT);
 	bestL = text(menu, "", UO(500, 26), UO(60, 146), 22, DIM, LEFT);
 
-	const col = make("Frame", { Position: UO(56, 200), Size: UO(320, 420), BackgroundTransparency: 1, Parent: menu });
+	const col = make("Frame", { Position: UO(56, 190), Size: UO(320, 480), BackgroundTransparency: 1, Parent: menu });
 	make("UIListLayout", { Padding: UDim.new(0, 8), SortOrder: "LayoutOrder", Parent: col });
 
 	const menuItems = [];
@@ -2809,6 +2821,10 @@ let openPanel, closePanels, startRun, toMenu;
 	menuButton("SHOP", "bag", () => {
 		Game.closeStrip();
 		openPanel("shop");
+	});
+	menuButton("BACKPACK", "pack", () => {
+		Game.closeStrip();
+		Game.openBackpack();
 	});
 	menuButton("LEADERBOARD", "trophy", () => Game.openLeaderboard());
 	menuButton("PROFILE", "user", () => {
@@ -3574,11 +3590,11 @@ function deathView(vp, kind) {
 			Supernova: ["a star is gone", "white and gold shockwaves"],
 		},
 	};
-	const DEATH_COLOR = {
+	const DEATH_COLOR = (Game.DEATH_COLOR = {
 		Default: RGB(255, 130, 40), Confetti: RGB(255, 90, 200), Pixel: RGB(60, 240, 255), Nuke: RGB(255, 230, 120),
 		Firework: RGB(255, 120, 60), Freeze: RGB(150, 220, 255), BlackHole: RGB(150, 60, 255), Lightning: RGB(255, 245, 120), Coins: RGB(255, 200, 50),
 		Hearts: RGB(255, 100, 150), Glitch: RGB(60, 255, 140), Bubbles: RGB(140, 210, 255), SmokeBomb: RGB(130, 130, 140), Supernova: RGB(255, 235, 170),
-	};
+	});
 
 	// the rarer, the more it glows
 	function rarity(price, isSkin) {
@@ -3591,15 +3607,23 @@ function deathView(vp, kind) {
 		return ["FREE", DIM];
 	}
 
+	// a skin counts as equipped when it sits in any of the three backpack slots
+	const inUse = (id, isSkin) => (isSkin ? [data.skin, data.skin2, data.skin3].includes(id) : data.death === id);
 	function actionButton(parent, item, isSkin, owned, equipped, size, pos) {
 		const money = isSkin ? data.gems : data.keys;
 		let label, c, base = 0.1;
-		if (equipped === item.id) [label, c] = ["EQUIPPED", GOOD];
+		if (inUse(item.id, isSkin)) [label, c] = ["EQUIPPED", GOOD];
 		else if (owned[item.id]) [label, c] = ["EQUIP", WHITE];
 		else if (item.eur) [label, c] = [item.eur === "SPECIAL PACK" ? "IN THE SPECIAL PACK" : item.eur + "  BUY", RGB(255, 70, 170)];
 		else [label, c] = [fmt(item.price) + (isSkin ? " ◆" : " ✦") + "  BUY", money >= item.price ? (isSkin ? GEM : KEY) : DIM];
 		const b = button(parent, "", size, pos, async () => {
-			if (equipped === item.id) return;
+			// your skins go through the backpack: that's where you pick which of your three planes it is
+			if (isSkin && owned[item.id]) {
+				Game.openBackpack(item.id);
+				return;
+			}
+			if (inUse(item.id, isSkin)) return;
+			const had = owned[item.id];
 			if (item.eur && !owned[item.id]) {
 				if (item.pack === "special") {
 					shopTab = "GEMS";
@@ -3612,13 +3636,14 @@ function deathView(vp, kind) {
 			result(ok, msg);
 			if (ok) {
 				Game.pushProfile();
-				if (!owned[item.id]) sfx("record");
+				if (!had) sfx("record");
+				if (!had && isSkin) Game.openBackpack(item.id);
 			}
 		}, base);
 		b.TextSize = 24;
 		const l = Icons.text(b, US(1, 1), null, 24, c);
 		l.Text = label;
-		if (equipped !== item.id && !owned[item.id] && !item.eur && money >= item.price) {
+		if (!inUse(item.id, isSkin) && !owned[item.id] && !item.eur && money >= item.price) {
 			// pulse so you know you can afford it
 			const glow = make("UIStroke", { Color: c, Thickness: 2, Transparency: 0.2, ApplyStrokeMode: "Border", Parent: b });
 			const conn = RunService.RenderStepped.Connect(() => {
@@ -3828,7 +3853,7 @@ function deathView(vp, kind) {
 			make("UICorner", { CornerRadius: UDim.new(0, 6), Parent: fx });
 			const fl = text(fx, (isSkin ? "EFFECT: " : "") + d[1].toUpperCase(), U2(1, -16, 1, 0), UO(8, 1), 14, rc.Lerp(WHITE, 0.3), LEFT);
 			fl.TextTruncate = "AtEnd";
-			const st = equipped === it.id ? ["EQUIPPED", GOOD] : owned[it.id] ? ["OWNED", WHITE] : ["NOT OWNED", DIM];
+			const st = inUse(it.id, isSkin) ? ["EQUIPPED", GOOD] : owned[it.id] ? ["OWNED", WHITE] : ["NOT OWNED", DIM];
 			text(right, st[0], U2(1, -28, 0, 22), UO(14, 316), 17, st[1], LEFT);
 			actionButton(right, it, isSkin, owned, equipped, U2(1, -24, 0, 64), U2(0, 12, 1, -76));
 		}
@@ -3860,7 +3885,7 @@ function deathView(vp, kind) {
 			const nm = text(c, niceName(it.id), U2(1, -8, 0, 22), UO(4, 88), 17, WHITE);
 			nm.TextTruncate = "AtEnd";
 			const st = Icons.text(c, U2(1, -8, 0, 20), UO(4, 112), 15, DIM);
-			if (equipped === it.id) {
+			if (inUse(it.id, isSkin)) {
 				st.Text = "EQUIPPED";
 				st.TextColor3 = GOOD;
 			} else if (owned[it.id]) st.Text = "OWNED";
@@ -4816,6 +4841,185 @@ Game.showXp = (award, my, alive) => {
 		void t0;
 	});
 };
+
+// ------------------------------------------------------------------ backpack
+// three planes per run (start, after the first boss, space) plus the crash effect. any skin you own can go in any slot
+
+(() => {
+	const bp = panel("backpack", "BACKPACK", UO(780, 600));
+	const SLOTS = [
+		{ n: 1, label: "START", sub: "WHAT YOU TAKE OFF WITH" },
+		{ n: 2, label: "AFTER BOSS 1", sub: "YOUR JET WITH GUNS" },
+		{ n: 3, label: "SPACE", sub: "THE LAST STRETCH" },
+		{ n: 4, label: "CRASH EFFECT", sub: "HOW YOU BLOW UP" },
+	];
+	const STD = { 2: "TeamJet", 3: "Stealth" };
+	const STD_NAME = { 2: "STANDARD", 3: "STANDARD" };
+	let slot = 1, pending = null;
+
+	// what's really in a slot, "" = the standard one
+	const inSlot = (n) => {
+		if (n === 4) return data.death;
+		if (n === 1) return data.skin;
+		const id = data["skin" + n];
+		return id && data.skins[id] ? id : "";
+	};
+	const nameOf = (n, id) => (id ? niceName(id) : STD_NAME[n]);
+
+	function put(n, id, quiet) {
+		const [ok, msg] = n === 4 ? request("death", id) : request("loadout", { slot: n, id });
+		if (!ok) {
+			notify(msg, BAD);
+			sfx("bad");
+			return false;
+		}
+		if (!quiet) {
+			notify(nameOf(n, id) + " IS NOW IN: " + SLOTS[n - 1].label, GOOD);
+			sfx("good");
+		}
+		return true;
+	}
+
+	function skull(parent, id, size, y) {
+		const ic = make("Frame", { AnchorPoint: V2(0.5, 0), Position: U2(0.5, 0, 0, y), Size: UO(size, size), BackgroundColor3: (Game.DEATH_COLOR || {})[id] || WHITE, Parent: parent });
+		make("UICorner", { CornerRadius: UDim.new(0.5, 0), Parent: ic });
+		make("UIGradient", { Color: new ColorSequence(WHITE, RGB(120, 120, 120)), Rotation: 45, Parent: ic });
+		const sk = Icons.make("skull", ic, Math.floor(size * 0.56));
+		sk.AnchorPoint = V2(0.5, 0.5);
+		sk.Position = US(0.5, 0.5);
+	}
+
+	function draw() {
+		for (const c of bp.body.GetChildren()) if (!c.IsA("UIListLayout")) c.Destroy();
+		Game.spinning = Game.spinning.filter((x) => x.model.Parent && !x.model._destroyed);
+
+		// ---------------- what to do, in one line
+		const hint = row(bp.body, 40, 1);
+		if (pending) text(hint, "WHERE DO YOU WANT " + niceName(pending) + "?  TAP A SLOT", U2(1, -10, 1, 0), UO(4, 0), 24, GOOD, LEFT);
+		else text(hint, "1. TAP A SLOT     2. PICK WHAT GOES IN IT", U2(1, -10, 1, 0), UO(4, 0), 22, WHITE, LEFT);
+
+		// ---------------- the four slots
+		const slots = make("Frame", { Size: U2(1, -10, 0, 204), BackgroundTransparency: 1, LayoutOrder: nextOrder(), Parent: bp.body });
+		SLOTS.forEach((s, i) => {
+			const cur = inSlot(s.n);
+			const sel = !pending && slot === s.n;
+			const target = pending && s.n <= 3;
+			const c = button(slots, "", U2(0.25, -6, 1, -4), U2(0.25 * i, 3, 0, 2), () => {
+				if (pending) {
+					if (s.n > 3) return;
+					put(s.n, pending);
+					pending = null;
+				}
+				slot = s.n;
+				sfx("click");
+				draw();
+			}, sel ? 0.1 : 0.45);
+			c.ClipsDescendants = true;
+			const st = make("UIStroke", { Color: target ? GOOD : WHITE, Thickness: 3, Transparency: sel || target ? 0.05 : 1, ApplyStrokeMode: "Border", Parent: c });
+			if (target) {
+				const conn = RunService.RenderStepped.Connect(() => {
+					if (c._destroyed) return conn.Disconnect();
+					st.Transparency = 0.25 + Math.sin(clock() * 5) * 0.25;
+				});
+			}
+			if (pending && s.n > 3) c.BackgroundTransparency = 0.8;
+			if (s.n <= 3) {
+				const badge = make("Frame", { Position: UO(8, 8), Size: UO(26, 26), BackgroundColor3: target || sel ? GOOD : RGB(90, 92, 105), ZIndex: 3, Parent: c });
+				make("UICorner", { CornerRadius: UDim.new(0.5, 0), Parent: badge });
+				text(badge, String(s.n), US(1, 1), UO(0, 1), 18, BLACK).ZIndex = 3;
+			}
+			text(c, s.label, U2(1, -44, 0, 26), UO(s.n <= 3 ? 40 : 10, 8), 17, WHITE, LEFT);
+			if (s.n <= 3) {
+				const v = planeView(c, cur || STD[s.n], U2(1, -12, 0, 96), UO(6, 40), { bgT: 1, noFx: true, fov: 30, cam: CFrame.lookAt(V3(0, 6, 26), V3(0, -0.3, 0)), spin: 0.6 });
+				v.el.style.pointerEvents = "none";
+			} else skull(c, cur, 72, 52);
+			const nm = text(c, s.n === 4 ? niceName(cur) : nameOf(s.n, cur), U2(1, -8, 0, 24), UO(4, 142), 19, cur || s.n === 4 ? WHITE : DIM);
+			nm.TextTruncate = "AtEnd";
+			text(c, s.sub, U2(1, -8, 0, 18), UO(4, 170), 12, DIM);
+		});
+
+		if (pending) {
+			// ---------------- just bought or picked a skin in the shop: where does it go
+			const r = row(bp.body, 70, 1);
+			const all = button(r, "USE IT ON ALL 3 PLANES", U2(0.6, -6, 0, 60), UO(0, 5), () => {
+				for (const n of [1, 2, 3]) put(n, pending, true);
+				notify(niceName(pending) + " IS NOW ALL 3 OF YOUR PLANES", GOOD);
+				sfx("good");
+				pending = null;
+				slot = 1;
+				draw();
+			}, 0.05);
+			all.TextColor3 = GOOD;
+			all.TextSize = 22;
+			const no = button(r, "NOT NOW", U2(0.4, -10, 0, 60), U2(0.6, 0, 0, 5), () => {
+				pending = null;
+				sfx("click");
+				draw();
+			}, 0.5);
+			no.TextColor3 = DIM;
+			no.TextSize = 20;
+			return;
+		}
+
+		// ---------------- everything you own that fits the slot
+		const cur = inSlot(slot);
+		const head = row(bp.body, 44, 1);
+		text(head, "PICK FOR:  " + SLOTS[slot - 1].label, U2(0.6, 0, 1, 0), UO(4, 0), 20, COIN, LEFT);
+		if (slot <= 3 && cur) {
+			const same = button(head, "SAME PLANE ON ALL 3", UO(250, 36), U2(1, -260, 0.5, -18), () => {
+				for (const n of [1, 2, 3]) put(n, cur, true);
+				notify(niceName(cur) + " IS NOW ALL 3 OF YOUR PLANES", GOOD);
+				sfx("good");
+				draw();
+			}, 0.3);
+			same.TextSize = 16;
+			same.TextColor3 = GOOD;
+		}
+		let items;
+		if (slot === 4) items = CONFIG.deaths.filter((x) => data.deaths[x.id]).map((x) => x.id);
+		else {
+			items = CONFIG.skins.filter((x) => data.skins[x.id]).map((x) => x.id);
+			if (slot > 1) items.unshift("");
+		}
+		const grid = make("Frame", { Size: U2(1, -10, 0, 0), AutomaticSize: "Y", BackgroundTransparency: 1, LayoutOrder: nextOrder(), Parent: bp.body });
+		make("UIGridLayout", { CellSize: UO(138, 132), CellPadding: UO(6, 6), SortOrder: "LayoutOrder", Parent: grid });
+		make("UIPadding", { PaddingTop: UDim.new(0, 2), PaddingLeft: UDim.new(0, 2), PaddingBottom: UDim.new(0, 8), Parent: grid });
+		items.forEach((id, i) => {
+			const on = id === cur;
+			const c = button(grid, "", new UDim2(), null, () => {
+				if (on) return;
+				put(slot, id);
+				draw();
+			}, on ? 0.15 : 0.5);
+			c.LayoutOrder = i;
+			c.ClipsDescendants = true;
+			if (on) make("UIStroke", { Color: GOOD, Thickness: 2, Transparency: 0.1, ApplyStrokeMode: "Border", Parent: c });
+			if (slot === 4) skull(c, id, 56, 12);
+			else {
+				const v = planeView(c, id || STD[slot], UO(126, 76), UO(6, 4), { bgT: 1, noFx: true, fov: 30, cam: CFrame.lookAt(V3(0, 6, 26), V3(0, -0.3, 0)), spin: 0.6 });
+				v.el.style.pointerEvents = "none";
+			}
+			const nm = text(c, slot === 4 ? niceName(id) : nameOf(slot, id), U2(1, -8, 0, 20), UO(4, 84), 16, WHITE);
+			nm.TextTruncate = "AtEnd";
+			text(c, on ? "IN USE" : "TAP TO USE", U2(1, -8, 0, 18), UO(4, 106), 13, on ? GOOD : DIM);
+		});
+		if (items.length <= 1) {
+			const r = row(bp.body, 50, 1);
+			const more = button(r, slot === 4 ? "GET MORE CRASH EFFECTS IN THE SHOP" : "GET MORE PLANES IN THE SHOP", U2(1, -10, 0, 42), UO(0, 4), () => Game.openShop(), 0.4);
+			more.TextSize = 18;
+			more.TextColor3 = GEM;
+		}
+	}
+
+	bp.onOpen = draw;
+	// from the shop: "equip" on a skin lands here and asks where it should go
+	Game.openBackpack = (skin) => {
+		pending = skin && data.skins[skin] ? skin : null;
+		slot = 1;
+		if (panels.backpack.frame.Visible && !panels.backpack.closing) draw();
+		else openPanel("backpack");
+	};
+})();
 
 // ------------------------------------------------------------------ boss
 
@@ -6072,7 +6276,7 @@ let startBoss, updateBoss, resetSky;
 		if (F.cine || dead) return;
 		Missiles.clear();
 		vx = 0;
-		const [jet, jmain, jparts] = Game.makePlane("TeamJet", junk);
+		const [jet, jmain, jparts] = Game.makePlane(Game.planeFor(2), junk);
 		jmain.CFrame = CFrame.fromPos(pos.add(V3(60, 14, 140)));
 		sfx("jet_arrive");
 		F.holdCam = true;
@@ -6177,7 +6381,7 @@ let startBoss, updateBoss, resetSky;
 		F.bars(true);
 		const c = { kind: "shot", t: 0, speed: Math.max(speedNow, 160) };
 		// the stealth jet is already up ahead on the right
-		const [jet, jmain, jparts] = Game.makePlane("Stealth", junk);
+		const [jet, jmain, jparts] = Game.makePlane(Game.planeFor(3), junk);
 		c.jet = jet;
 		c.jmain = jmain;
 		c.jparts = jparts;
@@ -6421,13 +6625,13 @@ let startBoss, updateBoss, resetSky;
 
 	const STEPS = [
 		{ text: () => Game.keyName("left") + " AND " + Game.keyName("right") + " TO STEER", touch: "LEFT AND RIGHT TO STEER", keys: ["A", "D"] },
-		{ text: () => Game.keyName("dashL") + " AND " + Game.keyName("dashR") + " TO ROLL", touch: "« AND » TO ROLL", keys: ["Q", "E"] },
+		{ text: () => Game.keyName("dashL") + " AND " + Game.keyName("dashR") + " TO ROLL", touch: "DOUBLE TAP LEFT OR RIGHT TO ROLL", keys: ["Q", "E"] },
 		{ text: () => Game.keyName("nitro") + " FOR BOOST", touch: "NITRO FOR BOOST", keys: ["W"] },
 		{ text: "YOU'RE INVINCIBLE WHILE BOOSTING!", hold: 2.6 },
 		{ text: "YOU CAN USE IT TO FLY THROUGH DEAD ENDS", hold: 3.2 },
 		{ text: "IT USES A LOT OF FUEL!", hold: 2.6 },
 	];
-	const TOUCH = { A: "LEFT", D: "RIGHT", Q: "«", E: "»", W: "NITRO" };
+	const TOUCH = { A: "LEFT", D: "RIGHT", Q: "2x LEFT", E: "2x RIGHT", W: "NITRO" };
 	const ACT = { A: "left", D: "right", Q: "dashL", E: "dashR", W: "nitro" };
 
 	let show;
@@ -6754,10 +6958,13 @@ Game.alt = () => {
 	return ALT;
 };
 
-Game.tierPlane = () => {
-	const t = Game.flow.tier;
-	return t >= 3 ? "Stealth" : t === 2 ? "TeamJet" : data.skin;
+// what you fly in each of the three phases. slots 2 and 3 fall back to the standard jet and the stealth
+Game.planeFor = (t) => {
+	if (t >= 3) return data.skin3 && data.skins[data.skin3] ? data.skin3 : "Stealth";
+	if (t === 2) return data.skin2 && data.skins[data.skin2] ? data.skin2 : "TeamJet";
+	return data.skin;
 };
+Game.tierPlane = () => Game.planeFor(Game.flow.tier);
 
 Game.roll = (dir) => {
 	if (roll.cd > 0 || dead || mode !== "run" || Game.flow.cine || Game.hold) return;
@@ -7654,7 +7861,7 @@ applySettings();
 toMenu();
 start();
 document.getElementById("boot").remove();
-if (DEV) window.__dev = { crash: () => task.spawn(crash, []), data: () => data, stats: () => stats, vs: () => Game.versusToggle(), heart: () => Game.heartFx(), pad: (k) => Game.makePad(k, pos.X, pos.Z - 45, pickups), reg: async (n, p) => { await Online.register(n, p); request("set_name", n); return Online.account(); }, win: () => Game._vsWin(), vsd: () => Game._vsDebug(), dbg: () => [mode, dead, !!stats, !!planeMain, planeMain && !!planeMain.Parent, Game.raceState.mid], race: () => [Game.race, Game.raceState.inQueue, Game.queueText(), JSON.stringify(Game.raceState.final)], shot: () => Game.flow.startApproach(), uid: () => Online.myId(), gift: () => openPanel("gift"), push: () => Game.pushProfile(), gems: () => { Game.openShop(); shopTab = "GEMS"; rebuildShop(); }, run: (id) => startRun(id || "towers"), skip: () => Game.skip(), ahead: () => { const r = Math.floor(-pos.Z / CHUNK); return [r, beyondStart, stageFor(-pos.Z)[0], stageFor((r + 5) * CHUNK + 1)[0], stageFor((r + 40) * CHUNK + 1)[0]]; }, state: () => [mode, curStage, Game.flow.cine && Game.flow.cine.kind, Math.round(-pos.Z)] };
+if (DEV) window.__dev = { crash: () => task.spawn(crash, []), data: () => data, stats: () => stats, vs: () => Game.versusToggle(), heart: () => Game.heartFx(), pad: (k) => Game.makePad(k, pos.X, pos.Z - 45, pickups), reg: async (n, p) => { await Online.register(n, p); request("set_name", n); return Online.account(); }, win: () => Game._vsWin(), vsd: () => Game._vsDebug(), dbg: () => [mode, dead, !!stats, !!planeMain, planeMain && !!planeMain.Parent, Game.raceState.mid], race: () => [Game.race, Game.raceState.inQueue, Game.queueText(), JSON.stringify(Game.raceState.final)], shot: () => Game.flow.startApproach(), uid: () => Online.myId(), bp: (s) => Game.openBackpack(s), pf: () => [1, 2, 3].map(Game.planeFor), req: (a, b) => request(a, b), gift: () => openPanel("gift"), push: () => Game.pushProfile(), gems: () => { Game.openShop(); shopTab = "GEMS"; rebuildShop(); }, run: (id) => startRun(id || "towers"), skip: () => Game.skip(), ahead: () => { const r = Math.floor(-pos.Z / CHUNK); return [r, beyondStart, stageFor(-pos.Z)[0], stageFor((r + 5) * CHUNK + 1)[0], stageFor((r + 40) * CHUNK + 1)[0]]; }, state: () => [mode, curStage, Game.flow.cine && Game.flow.cine.kind, Math.round(-pos.Z)] };
 
 // ------------------------------------------------------------------ versus
 // same idea as roblox: queue up, everyone starts on the same map, farthest wins.
@@ -8746,7 +8953,7 @@ if (DEV) window.__dev = { crash: () => task.spawn(crash, []), data: () => data, 
 		if (e.key === "Enter") send();
 	});
 	bp.onOpen = () => task.delay(0.1, () => box.CaptureFocus());
-	const b = button(menu, "SEND MESSAGE", UO(200, 40), U2(1, -216, 1, -56), () => openPanel("broadcast"), 0.3);
+	const b = button(menu, "SEND MESSAGE", UO(200, 40), U2(1, -216, 1, -90), () => openPanel("broadcast"), 0.3);
 	b.TextSize = 18;
 	b.TextColor3 = COIN;
 })();
@@ -8754,7 +8961,7 @@ if (DEV) window.__dev = { crash: () => task.spawn(crash, []), data: () => data, 
 // ------------------------------------------------------------------ old version warning
 // every build has its own number, the page checks now and then whether a newer one is online
 (() => {
-	const BUILD = "1790766723";
+	const BUILD = "1790921848";
 	if (BUILD.startsWith("__")) return;
 	const bar = make("TextButton", {
 		AnchorPoint: V2(0.5, 0),
@@ -9131,7 +9338,7 @@ for (const id in PACKS) if (PACKS[id].link.includes("/test_") && !DEV) PACKS[id]
 	setInterval(watch, 3000);
 
 	// small legal link in the corner of the menu
-	const il = button(menu, "IMPRESSUM", UO(110, 28), U2(0, 16, 1, -40), () => window.open("impressum.html", "_blank"), 0.7);
+	const il = button(menu, "IMPRESSUM", UO(110, 28), U2(1, -126, 1, -40), () => window.open("impressum.html", "_blank"), 0.7);
 	il.TextSize = 14;
 	il.TextColor3 = DIM;
 
@@ -9211,7 +9418,7 @@ for (const id in PACKS) if (PACKS[id].link.includes("/test_") && !DEV) PACKS[id]
 	};
 	const sb = button(r6, "SEND GIFT", U2(1, -10, 0, 60), UO(0, 5), send, 0.05);
 	sb.TextColor3 = GOOD;
-	const b = button(menu, "GIVE STUFF", UO(200, 40), U2(1, -216, 1, -104), () => openPanel("gift"), 0.3);
+	const b = button(menu, "GIVE STUFF", UO(200, 40), U2(1, -216, 1, -138), () => openPanel("gift"), 0.3);
 	b.TextSize = 18;
 	b.TextColor3 = GEM;
 })();
