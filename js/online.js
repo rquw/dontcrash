@@ -138,12 +138,26 @@ export function logout() {
 	keep();
 }
 
-// removes the account for good: leaderboard entry, cloud save and the login itself
+// the worker keeps everyone's real save. the game tells it what you did and gets back how things really stand
+const WORKER = EMU ? "http://127.0.0.1:8787" : "https://dontcrash-pay.schwaiger-fabio0907.workers.dev";
+export async function sync(payload) {
+	const t = await token();
+	let r;
+	try {
+		r = await fetch(WORKER + "/sync", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ token: t, ...payload }) });
+	} catch (e) {
+		throw new Error("no connection");
+	}
+	if (r.status === 401) throw new Error("login");
+	if (!r.ok) throw new Error("sync failed " + r.status);
+	return await r.json();
+}
+
+// removes the account for good: leaderboard entry, save and the login itself
 export async function deleteAccount() {
 	if (!auth || !auth.name) throw new Error("not logged in");
 	const t = await token();
-	await del(`players/${auth.uid}`).catch(() => {});
-	await del(`saves/${auth.uid}`).catch(() => {});
+	await sync({ remove: true });
 	await post(`${ID}delete?key=${FIREBASE.apiKey}`, { idToken: t });
 	auth = null;
 	keep();
@@ -166,6 +180,7 @@ export const SERVER_TIME = { ".sv": "timestamp" };
 let offset = 0;
 export const serverNow = () => Date.now() + offset;
 export async function syncClock() {
+	await token();
 	const t0 = Date.now();
 	const v = await put(`clock/${auth ? auth.uid : "x"}`, SERVER_TIME).catch(() => null);
 	const t1 = Date.now();

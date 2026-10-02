@@ -3,9 +3,9 @@ import {
 	camera, Lighting, Instance, workspace, markQueryRoot, Enum, OverlapParams, TweenService, TweenInfo, Debris, UIS, playSfx, loopSound, loadSounds, setSfxVolume,
 	NumberSequence, NumberSequenceKeypoint, NumberRange, ColorSequence, ColorSequenceKeypoint, guiRootInst, setUiScale, setLowGraphics, physicsGround,
 	mergeFloor, start, perf,
-} from "./engine.js?v=1790927397";
-import * as Server from "./server.js?v=1790927397";
-import * as Online from "./online.js?v=1790927397";
+} from "./engine.js?v=1790931114";
+import * as Server from "./server.js?v=1790931114";
+import * as Online from "./online.js?v=1790931114";
 
 const V3 = (x, y, z) => new Vector3(x, y, z);
 const RGB = Color3.fromRGB;
@@ -62,6 +62,76 @@ function apply(s) {
 	if (refreshUI) refreshUI();
 }
 
+// ---------------- the worker has the real save. what happens here in the browser is only a guess that makes everything
+// feel instant: every action also goes to the worker, and what it answers replaces the guess
+const NOSYNC = new Set(["get", "settings", "set_name", "spawn_char", "despawn_char", "badge"]);
+const syncQ = [];
+let syncBusy = false, syncHello = false, syncFails = 0, syncWaiters = [];
+const Sync = { offline: false, on: true };
+function syncDone() {
+	const w = syncWaiters;
+	syncWaiters = [];
+	for (const fn of w) fn();
+}
+async function syncPump() {
+	if (syncBusy) return;
+	if (!Sync.on || !Online.account() || !Online.enabled()) {
+		syncQ.length = 0;
+		syncHello = false;
+		syncDone();
+		return;
+	}
+	if (!syncQ.length && !syncHello) {
+		syncDone();
+		return;
+	}
+	syncBusy = true;
+	const batch = syncQ.splice(0, syncQ.length);
+	const hello = syncHello;
+	syncHello = false;
+	const who = Online.myId();
+	try {
+		const r = await Online.sync({ hello, actions: batch });
+		syncFails = 0;
+		Sync.offline = false;
+		// only take it over when nothing newer is on its way, otherwise what you just did would flicker back
+		if (r && r.ok && !syncQ.length && Online.myId() === who) {
+			Server.importAuth(r.data, r.sess);
+			apply(Server.call("get")[2]);
+			Sync.got = true;
+		}
+	} catch (e) {
+		syncBusy = false;
+		if (e.message === "login") {
+			syncDone();
+			return;
+		}
+		// no internet or the worker is down: keep it and try again in a bit
+		syncFails++;
+		Sync.offline = true;
+		syncQ.unshift(...batch);
+		if (hello) syncHello = true;
+		if (syncFails >= 3) syncDone();
+		setTimeout(syncPump, Math.min(30000, 2000 * syncFails));
+		return;
+	}
+	syncBusy = false;
+	if (syncQ.length || syncHello) syncPump();
+	else syncDone();
+}
+// resolves once everything has been sent and answered
+Sync.idle = () => new Promise((res) => {
+	if (!syncBusy && !syncQ.length && !syncHello) return res();
+	syncWaiters.push(res);
+	syncPump();
+});
+// start of a session, or a fresh login: fetch the real save
+Sync.hello = () => {
+	syncHello = true;
+	syncPump();
+	return Sync.idle();
+};
+
 function request(action, arg) {
 	let r;
 	try {
@@ -71,6 +141,10 @@ function request(action, arg) {
 		return [false, "error"];
 	}
 	apply(r[2]);
+	if (!NOSYNC.has(action) && Sync.on && Online.account()) {
+		if (syncQ.length < 200) syncQ.push({ a: action, t: Date.now(), arg: arg === undefined ? null : JSON.parse(JSON.stringify(arg)) });
+		syncPump();
+	}
 	return [r[0], r[1]];
 }
 
@@ -700,7 +774,7 @@ let trackChunks, updateMovers, regenerate, canyonPath, canyonHalfGap, updatePads
 		const x1 = x0 + CHUNK;
 		const [stage, t] = stageFor(Math.max(d0, 0) + 1);
 		const mult = 1;
-		const safe = cz < SAFE_ROWS || (Game.safeRow != null && cz >= Game.safeRow && cz < Game.safeRow + SAFE_ROWS);
+		const safe = cz < SAFE_ROWS || (Game.safeRow != null && cz >= Game.safeRow - 1 && cz <= Game.safeRow + SAFE_ROWS);
 		const playable = x1 > -SOFT && x0 < SOFT;
 
 		const tile = x0 >= -400 && x1 <= 400 && !settings.low ? 20 : 40;
@@ -3373,12 +3447,12 @@ function drawMissions() {
 	const m = data.missions;
 	if (!m || !Array.isArray(m.list)) return 0;
 	// a new day: the server deals new ones
-	const t = new Date();
-	const day = t.getFullYear() + "-" + String(t.getMonth() + 1).padStart(2, "0") + "-" + String(t.getDate()).padStart(2, "0");
-	if (m.day !== day) {
+	if (m.day !== Server.periodId("day")) {
 		request("get");
 		return 0;
 	}
+	// the day turns over at midnight in austria, wherever you are
+	const t = new Date(new Date().toLocaleString("en-US", { timeZone: "Europe/Vienna" }));
 	const left = 86400 - (t.getHours() * 3600 + t.getMinutes() * 60 + t.getSeconds());
 	rewardRefs.missionHead.Text = "DAILY MISSIONS   NEW ONES IN " + fmtTime(left);
 	const allClaimed = m.list.every((x) => x.claimed);
@@ -4321,24 +4395,12 @@ function myProfile() {
 		stats: data.stats,
 		created: data.created,
 		updated: Date.now(),
-		wk: data.week && data.week.id === Server.weekId() ? data.week.id : "",
-		wbest: data.week && data.week.id === Server.weekId() ? data.week.best || 0 : 0,
-		seen: Online.SERVER_TIME,
-		active: Date.now() - (Game.lastInput || 0) < 10000 ? Online.SERVER_TIME : undefined,
 		ach: Object.keys(data.ach || {}).length,
 	};
 }
-let pushing = false;
-Game.pushProfile = async () => {
-	if (!Online.account() || !Online.enabled() || pushing) return;
-	pushing = true;
-	try {
-		await Online.push(myProfile());
-	} catch (e) {
-		console.warn(e);
-	}
-	pushing = false;
-};
+// the worker writes your public profile whenever it saves, so "pushing" is just waiting until it's caught up
+Game.sync = Sync;
+Game.pushProfile = () => Sync.idle();
 
 // the level badge: a round purple thing with the number in it
 function levelBadge(parent, level, size, pos) {
@@ -4466,13 +4528,9 @@ function xpBar(parent, size, pos, k, color) {
 	}, 0.3);
 	outBtn.TextColor3 = WHITE;
 	confirmBtn("RESET MY PROGRESS", 66, RGB(255, 170, 60), async () => {
-		const name = Online.account();
-		Server.resetData();
-		request("get");
-		if (name) request("set_name", name);
+		request("reset");
 		if (Game.refreshLevel) Game.refreshLevel();
 		await Game.pushProfile();
-		Game.cloudSave(true);
 		notify("progress reset, fresh start", WHITE);
 		sfx("good");
 	});
@@ -4549,8 +4607,7 @@ function xpBar(parent, size, pos, k, color) {
 			if (makeNew) {
 				await Online.register(nameBox.Text, pwBox.Text);
 				request("set_name", Online.account());
-				await Game.pushProfile();
-				Game.cloudSave(true);
+				await Game.cloudLoad(true);
 				notify("account created, hi " + Online.account() + "!", GOOD);
 			} else {
 				await Online.login(nameBox.Text, pwBox.Text);
@@ -4604,31 +4661,26 @@ function xpBar(parent, size, pos, k, color) {
 		openPanel("name");
 	};
 
-	// every save goes to your account a few seconds later, and a newer one from the account wins when you open the game
-	let saveT = null;
-	Game.cloudSave = (now) => {
-		if (!Online.account()) return;
-		clearTimeout(saveT);
-		saveT = setTimeout(() => {
-			Online.storeSave(Server.exportData()).catch((e) => console.warn(e));
-		}, now ? 0 : 4000);
-	};
-	Server.setOnSave(() => Game.cloudSave());
-	Game.cloudLoad = async (force) => {
+	// your save lives with the worker. saving happens by itself with everything you do, loading is asking for it
+	Game.cloudSave = () => {};
+	Game.cloudLoad = async () => {
 		if (!Online.account()) return false;
-		const d = await Online.loadSave();
-		if (!d) {
-			// first time on this account: what's on this device becomes the account's save
-			request("set_name", Online.account());
-			Game.cloudSave(true);
-			return false;
-		}
-		if (!force && (d.savedAt || 0) <= (data.savedAt || 0)) return false;
-		Server.importData(d);
-		request("get");
+		await Sync.hello();
 		if (Game.refreshLevel) Game.refreshLevel();
 		return true;
 	};
+	// no connection: say so once, what you do right now won't stick
+	let toldOffline = false;
+	setInterval(() => {
+		if (Sync.offline && !toldOffline && Online.account()) {
+			toldOffline = true;
+			notify("no connection: your progress isn't saved right now", BAD);
+		}
+		if (!Sync.offline && toldOffline) {
+			toldOffline = false;
+			notify("back online, everything's saved again", GOOD);
+		}
+	}, 2000);
 	task.delay(1, () => Game.cloudLoad(false).catch((e) => console.warn(e)));
 	task.delay(1.4, () => {
 		if (mode === "menu") Game.forceAccount();
@@ -4715,23 +4767,46 @@ function xpBar(parent, size, pos, k, color) {
 		return r;
 	}
 
-	// all time or just this week, the weekly one starts from zero every monday
-	let weekly = false;
+	// four boards. the day, week and month ones start from zero when their time is up, and the top 3 get a prize
+	const BOARDS = [
+		{ id: "day", label: "TODAY", k: "d" },
+		{ id: "week", label: "THIS WEEK", k: "w" },
+		{ id: "month", label: "THIS MONTH", k: "m" },
+		{ id: "all", label: "ALL TIME" },
+	];
+	let board = "day";
+	const rewardText = (r) => {
+		const bits = [];
+		if (r.gems) bits.push(r.gems + " ◆");
+		if (r.keys) bits.push(r.keys + " ✦");
+		return bits.join(" + ");
+	};
+	// time left on a board, good enough to the hour
+	function endsIn(kind) {
+		const t = new Date(new Date().toLocaleString("en-US", { timeZone: "Europe/Vienna" }));
+		let hrs;
+		if (kind === "day") hrs = 24 - t.getHours() - t.getMinutes() / 60;
+		else if (kind === "week") hrs = ((8 - (t.getDay() || 7)) % 7 || 7) * 24 - t.getHours();
+		else hrs = (new Date(t.getFullYear(), t.getMonth() + 1, 1) - t) / 3600000;
+		if (hrs >= 48) return Math.floor(hrs / 24) + " DAYS";
+		if (hrs >= 1) return Math.floor(hrs) + "H";
+		return Math.max(1, Math.round(hrs * 60)) + " MIN";
+	}
 	async function load() {
 		token++;
 		const my = token;
 		for (const c of lb.body.GetChildren()) if (!c.IsA("UIListLayout")) c.Destroy();
 		const tabs = make("Frame", { Size: U2(1, -10, 0, 44), BackgroundTransparency: 1, LayoutOrder: nextOrder(), Parent: lb.body });
-		for (const [label, w, x] of [["ALL TIME", false, 0], ["THIS WEEK", true, 0.5]]) {
-			const sel = weekly === w;
-			const b = button(tabs, label, U2(0.5, -4, 1, 0), U2(x, x ? 4 : 0, 0, 0), () => {
-				if (weekly === w) return;
-				weekly = w;
+		BOARDS.forEach((bd, i) => {
+			const sel = board === bd.id;
+			const b = button(tabs, bd.label, U2(0.25, -4, 1, 0), U2(0.25 * i, 2, 0, 0), () => {
+				if (board === bd.id) return;
+				board = bd.id;
 				load();
 			}, sel ? 0.05 : 0.55);
-			b.TextSize = 20;
+			b.TextSize = 19;
 			b.TextColor3 = sel ? WHITE : DIM;
-		}
+		});
 		const head = row(lb.body, 34, 1);
 		const status = text(head, Online.enabled() ? "LOADING..." : "", U2(1, -130, 1, 0), UO(6, 0), 16, DIM, LEFT);
 		const rb = button(head, "REFRESH", UO(110, 30), U2(1, -116, 0.5, -15), () => load(), 0.4);
@@ -4743,7 +4818,7 @@ function xpBar(parent, size, pos, k, color) {
 		}
 		try {
 			await Game.pushProfile();
-			list = await Online.top(300);
+			list = await Online.top(500);
 		} catch (e) {
 			if (my !== token) return;
 			status.Text = "COULDN'T LOAD, CHECK YOUR INTERNET";
@@ -4751,36 +4826,47 @@ function xpBar(parent, size, pos, k, color) {
 			return;
 		}
 		if (my !== token) return;
-		const all = list;
-		if (weekly) {
-			// only runs from this week count, sorted by the best one
-			const wk = Server.weekId();
-			list = all.filter((e) => e.wk === wk && e.wbest > 0).map((e) => ({ ...e, best: e.wbest })).sort((a, b) => b.best - a.best);
-			const t = new Date();
-			const days = (8 - (t.getDay() || 7)) % 7 || 7;
-			const hrs = Math.max(0, days * 24 - t.getHours() - 1);
-			status.Text = list.length === 0 ? "NOBODY FLEW THIS WEEK YET. BE THE FIRST." : "BEST RUN THIS WEEK   " + list.length + " PLAYERS   RESETS IN " + (hrs >= 24 ? Math.floor(hrs / 24) + "D " + (hrs % 24) + "H" : hrs + "H");
+		const bd = BOARDS.find((x) => x.id === board);
+		let shown = list;
+		if (bd.k) {
+			// only runs from this period count, sorted by the best one
+			const cur = Server.periodId(bd.id);
+			shown = list.filter((e) => e[bd.k + "k"] === cur && e[bd.k + "b"] > 0).map((e) => ({ ...e, allBest: e.best, best: e[bd.k + "b"] })).sort((a, b) => b.best - a.best);
+			status.Text = shown.length === 0 ? "NOBODY FLEW YET. BE THE FIRST." : shown.length + (shown.length === 1 ? " PLAYER" : " PLAYERS") + "   ENDS IN " + endsIn(bd.id);
+			// what there is to win
+			const rw = (CONFIG.lbRewards || {})[bd.id];
+			if (rw) {
+				const need = CONFIG.lbMin || 3;
+				const pr = row(lb.body, 58, 0.45);
+				make("UICorner", { CornerRadius: UDim.new(0, 10), Parent: pr });
+				make("UIStroke", { Color: COIN, Thickness: 2, Transparency: 0.55, ApplyStrokeMode: "Border", Parent: pr });
+				const tr = Icons.make("trophy", pr, 32);
+				tr.AnchorPoint = V2(0, 0.5);
+				tr.Position = U2(0, 12, 0.5, 0);
+				Icons.text(pr, U2(1, -64, 0, 24), UO(56, 6), 17, COIN, LEFT).Text = "PRIZES WHEN IT ENDS:   #1  " + rewardText(rw[0]) + "    #2  " + rewardText(rw[1]) + "    #3  " + rewardText(rw[2]);
+				const enough = shown.length >= need;
+				text(pr, enough ? "ENOUGH PLAYERS, THE PRIZES ARE ON" : "NEEDS AT LEAST " + need + " PLAYERS ON THIS BOARD, " + (need - shown.length) + " MORE TO GO", U2(1, -64, 0, 20), UO(56, 31), 14, enough ? GOOD : DIM, LEFT);
+			}
 		} else {
 			const online = list.filter((e) => Game.isOnline(e)).length;
 			status.Text = list.length === 0 ? "NOBODY'S ON IT YET. GO FLY." : "BEST DISTANCE   " + list.length + " PLAYERS   " + online + " ONLINE";
 		}
-		const shown = list;
-		list = all;
 		const me = Online.myId();
 		podium(shown.slice(0, 3), me);
-		if (shown.length > 3) {
+		if (shown.length > 0) {
 			const cols = row(lb.body, 22, 1);
 			text(cols, "#", UO(52, 22), UO(4, 0), 13, DIM);
 			text(cols, "PLAYER", UO(200, 22), UO(100, 0), 13, DIM, LEFT);
 			text(cols, "BEST", UO(160, 22), U2(1, -176, 0, 0), 13, DIM, RIGHT);
 		}
-		let found = shown.slice(0, 3).some((e) => e.id === me);
-		shown.slice(3).forEach((e, i) => {
+		// everyone in the list, the top 3 too
+		let found = false;
+		shown.forEach((e, i) => {
 			const isMe = e.id === me;
 			if (isMe) found = true;
-			entryRow(e, i + 4, isMe);
+			entryRow(e, i + 1, isMe);
 		});
-		if (Online.account() && !found && !weekly) {
+		if (Online.account() && !found && !bd.k) {
 			const gap = row(lb.body, 16, 1);
 			text(gap, "...", US(1, 1), null, 16, DIM);
 			entryRow(myProfile(), list.length + 1, true);
@@ -6672,6 +6758,9 @@ let startBoss, updateBoss, resetSky;
 				c.fading = true;
 				fade(() => {
 					Game.marks.final = (maxRow + 1) * CHUNK;
+					// nothing in the way where you come out, and a moment to look around
+					Game.safeRow = maxRow + 1;
+					buff.immortal = Math.max(buff.immortal || 0, 3);
 					pos = V3(pos.X, ALT, -(Game.marks.final + 60));
 					planeMain.CFrame = CFrame.fromPos(pos);
 					Game.cam.last = null;
@@ -8014,7 +8103,7 @@ applySettings();
 toMenu();
 start();
 document.getElementById("boot").remove();
-if (DEV) window.__dev = { crash: () => task.spawn(crash, []), data: () => data, stats: () => stats, vs: () => Game.versusToggle(), heart: () => Game.heartFx(), pad: (k) => Game.makePad(k, pos.X, pos.Z - 45, pickups), reg: async (n, p) => { await Online.register(n, p); request("set_name", n); return Online.account(); }, win: () => Game._vsWin(), vsd: () => Game._vsDebug(), dbg: () => [mode, dead, !!stats, !!planeMain, planeMain && !!planeMain.Parent, Game.raceState.mid], race: () => [Game.race, Game.raceState.inQueue, Game.queueText(), JSON.stringify(Game.raceState.final)], shot: () => Game.flow.startApproach(), uid: () => Online.myId(), achp: () => openPanel("achievements"), achgo: (id) => Game.ach(id), bp: (s) => Game.openBackpack(s), pf: () => [1, 2, 3].map(Game.planeFor), req: (a, b) => request(a, b), gift: () => openPanel("gift"), push: () => Game.pushProfile(), gems: () => { Game.openShop(); shopTab = "GEMS"; rebuildShop(); }, run: (id) => startRun(id || "towers"), skip: () => Game.skip(), ahead: () => { const r = Math.floor(-pos.Z / CHUNK); return [r, beyondStart, stageFor(-pos.Z)[0], stageFor((r + 5) * CHUNK + 1)[0], stageFor((r + 40) * CHUNK + 1)[0]]; }, state: () => [mode, curStage, Game.flow.cine && Game.flow.cine.kind, Math.round(-pos.Z)] };
+if (DEV) window.__dev = { del: () => Online.deleteAccount(), lb: () => openPanel("leaderboard"), hello: () => Game.cloudLoad(true), crash: () => task.spawn(crash, []), data: () => data, stats: () => stats, vs: () => Game.versusToggle(), heart: () => Game.heartFx(), pad: (k) => Game.makePad(k, pos.X, pos.Z - 45, pickups), reg: async (n, p) => { await Online.register(n, p); request("set_name", n); return Online.account(); }, win: () => Game._vsWin(), vsd: () => Game._vsDebug(), dbg: () => [mode, dead, !!stats, !!planeMain, planeMain && !!planeMain.Parent, Game.raceState.mid], race: () => [Game.race, Game.raceState.inQueue, Game.queueText(), JSON.stringify(Game.raceState.final)], shot: () => Game.flow.startApproach(), uid: () => Online.myId(), achp: () => openPanel("achievements"), achgo: (id) => Game.ach(id), bp: (s) => Game.openBackpack(s), pf: () => [1, 2, 3].map(Game.planeFor), req: (a, b) => request(a, b), gift: () => openPanel("gift"), push: () => Game.pushProfile(), gems: () => { Game.openShop(); shopTab = "GEMS"; rebuildShop(); }, run: (id) => startRun(id || "towers"), skip: () => Game.skip(), ahead: () => { const r = Math.floor(-pos.Z / CHUNK); return [r, beyondStart, stageFor(-pos.Z)[0], stageFor((r + 5) * CHUNK + 1)[0], stageFor((r + 40) * CHUNK + 1)[0]]; }, state: () => [mode, curStage, Game.flow.cine && Game.flow.cine.kind, Math.round(-pos.Z)] };
 
 // ------------------------------------------------------------------ versus
 // same idea as roblox: queue up, everyone starts on the same map, farthest wins.
@@ -9114,7 +9203,7 @@ if (DEV) window.__dev = { crash: () => task.spawn(crash, []), data: () => data, 
 // ------------------------------------------------------------------ old version warning
 // every build has its own number, the page checks now and then whether a newer one is online
 (() => {
-	const BUILD = "1790927397";
+	const BUILD = "1790931114";
 	if (BUILD.startsWith("__")) return;
 	const bar = make("TextButton", {
 		AnchorPoint: V2(0.5, 0),
@@ -9248,8 +9337,12 @@ if (DEV) window.__dev = { crash: () => task.spawn(crash, []), data: () => data, 
 		next();
 	}
 
+	// asked once per visit is enough, the server says no to the ones you didn't really earn
+	const tried = new Set();
 	Game.ach = (id) => {
-		if (!BY_ID[id] || has(id)) return;
+		if (!BY_ID[id] || has(id) || tried.has(id)) return;
+		tried.add(id);
+		task.delay(20, () => tried.delete(id));
 		const [ok] = request("ach", id);
 		if (!ok) return;
 		queue.push(BY_ID[id]);
@@ -9471,7 +9564,7 @@ for (const id in PACKS) if (PACKS[id].link.includes("/test_") && !DEV) PACKS[id]
 		if (!bits.length && g.keys) bits.push("+" + g.keys + " KEYS");
 		if (!bits.length && g.revives) bits.push("+" + g.revives + " REVIVES");
 		banner(bits.slice(0, 2).join("  "), g.skin ? PINK : GEM, 3.5);
-		notify(g.pack === "gift" ? "a gift from " + String(g.from || "the dev").toUpperCase() + (g.note ? ": " + String(g.note).slice(0, 80) : "") : "thanks for supporting the game!", GOOD);
+		notify(g.pack === "lb" ? "leaderboard prize: you were " + String(g.note || "in the top 3").toUpperCase() : g.pack === "gift" ? "a gift from " + String(g.from || "the dev").toUpperCase() + (g.note ? ": " + String(g.note).slice(0, 80) : "") : "thanks for supporting the game!", GOOD);
 		sfx("levelup");
 		if (g.skin && mode === "menu") buildPlane(g.skin);
 		Game.pushProfile();
@@ -9482,16 +9575,9 @@ for (const id in PACKS) if (PACKS[id].link.includes("/test_") && !DEV) PACKS[id]
 	async function claim(uid, id, g) {
 		if (busy.has(id)) return;
 		busy.add(id);
+		// the worker reads what's in it from the database itself and ticks it off, this is only so it shows right away
 		const [ok] = request("paid", { id, gems: g.gems, coins: g.coins, keys: g.keys, revives: g.revives, skin: g.skin, death: g.death });
-		try {
-			await Online.put(`grants/${uid}/${id}/claimed`, true);
-		} catch (e) {
-			// the save remembers it anyway
-		}
-		if (ok) {
-			Game.cloudSave(true);
-			thanks(g);
-		}
+		if (ok) thanks(g);
 	}
 
 	let stop = null, who = null;
@@ -9507,8 +9593,7 @@ for (const id in PACKS) if (PACKS[id].link.includes("/test_") && !DEV) PACKS[id]
 			if (!all || typeof all !== "object" || who !== uid) return;
 			for (const [id, g] of Object.entries(all)) {
 				if (!g || g.claimed) continue;
-				if (data.paid && data.paid[id]) Online.put(`grants/${uid}/${id}/claimed`, true).catch(() => {});
-				else claim(uid, id, g);
+				claim(uid, id, g);
 			}
 		});
 	}

@@ -1,5 +1,12 @@
-// the roblox server script, running locally: same config, same rules, saved in the browser
+// the game's rules. this exact file runs twice: in the browser, so everything reacts right away,
+// and inside the cloudflare worker, which is the one that counts. the browser copy is only a guess until the worker answers
 const KEY = "dontcrash_save_v1";
+const LS = typeof localStorage !== "undefined" ? localStorage : null;
+// true inside the worker
+let HOST = false;
+export function setHost(on) {
+	HOST = !!on;
+}
 
 export const CONFIG = {
 	title: "DON'T CRASH!",
@@ -165,8 +172,10 @@ const DEFAULT = {
 	bought: [],
 	shopHint: false,
 	missions: null,
-	// best run of the current week, for the weekly leaderboard
-	week: { id: "", best: 0 },
+	// best run of today, this week and this month, plus the period before each, for the leaderboards and their prizes
+	lb: {},
+	// the most you managed in a single run, some achievements ask for that
+	maxRun: { glass: 0, close: 0, kills: 0 },
 	achPaid: {},
 	paid: {},
 	ach: {},
@@ -195,7 +204,7 @@ let saving = true;
 function load() {
 	let d = null;
 	try {
-		d = JSON.parse(localStorage.getItem(KEY) || "null");
+		d = LS ? JSON.parse(LS.getItem(KEY) || "null") : null;
 	} catch (e) {
 		d = null;
 	}
@@ -217,7 +226,7 @@ export function setOnSave(fn) {
 function save(bump = true) {
 	try {
 		if (bump) s.data.savedAt = Date.now();
-		localStorage.setItem(KEY, JSON.stringify(s.data));
+		if (LS) LS.setItem(KEY, JSON.stringify(s.data));
 		saving = true;
 	} catch (e) {
 		saving = false;
@@ -241,6 +250,60 @@ export function importData(d) {
 }
 const s = { data: load(), joined: now(), claimed: {}, runStart: null, runFrom: 0 };
 save(false);
+
+// ---------------- the worker's side: it loads a player's real save, runs the same handlers on it and stores the result
+export function setState(data, sess, name) {
+	const d = data && typeof data === "object" ? copy(data) : {};
+	fill(d, DEFAULT);
+	if (!d.created) d.created = Date.now();
+	if (name) d.name = name;
+	sess = sess || {};
+	s.data = d;
+	s.joined = sess.joined || now();
+	s.claimed = sess.claimed || {};
+	s.runStart = sess.runStart || null;
+	s.runFrom = sess.runFrom || 0;
+}
+export function getState() {
+	return copy({ data: s.data, sess: { joined: s.joined, claimed: s.claimed, runStart: s.runStart, runFrom: s.runFrom } });
+}
+// a fresh page load starts a new session for the playtime rewards
+export function newSession() {
+	s.joined = now();
+	s.claimed = {};
+	s.runStart = null;
+}
+// the browser takes over what the worker says. settings stay the ones from this device, a run that's going on keeps its clock
+export function importAuth(data, sess) {
+	if (!data || typeof data !== "object") return false;
+	const keep = s.data.settings;
+	const d = copy(data);
+	fill(d, DEFAULT);
+	d.settings = keep;
+	d.sfxOptIn = true;
+	s.data = d;
+	if (sess) {
+		if (sess.joined) s.joined = sess.joined;
+		s.claimed = sess.claimed || {};
+	}
+	save(false);
+	return true;
+}
+// what everyone else gets to see of you: leaderboards and your profile
+export function profileOf(d) {
+	const p = {
+		name: d.name || "player", best: d.best || 0, level: d.level || 1, xp: d.xp || 0, skin: d.skin, death: d.death,
+		stats: d.stats, created: d.created || 0, updated: Date.now(), ach: Object.keys(d.ach || {}).length,
+	};
+	for (const [k, kind] of [["d", "day"], ["w", "week"], ["m", "month"]]) {
+		const o = (d.lb || {})[kind] || {};
+		p[k + "k"] = o.id || "";
+		p[k + "b"] = o.best || 0;
+		p[k + "pk"] = o.pid || "";
+		p[k + "pb"] = o.pbest || 0;
+	}
+	return p;
+}
 
 function describe(r) {
 	const parts = [];
@@ -277,19 +340,56 @@ const MISSION_POOL = [
 	{ id: "pickups", text: "PICK UP {n} GEMS OR KEYS", goals: [5, 10], gems: 15 },
 ];
 const MISSION_BONUS = { gems: 30, keys: 1 };
-// the monday this week started on
-export const weekId = () => {
-	const t = new Date();
-	t.setHours(0, 0, 0, 0);
-	t.setDate(t.getDate() - ((t.getDay() + 6) % 7));
-	return t.getFullYear() + "-" + String(t.getMonth() + 1).padStart(2, "0") + "-" + String(t.getDate()).padStart(2, "0");
+// ---------------- days, weeks and months. always counted in austrian time, so the worker and every browser agree on when a day ends
+const TZ = "Europe/Vienna";
+const dayFmt = new Intl.DateTimeFormat("sv-SE", { timeZone: TZ, year: "numeric", month: "2-digit", day: "2-digit" });
+const wdFmt = new Intl.DateTimeFormat("en-US", { timeZone: TZ, weekday: "short" });
+const iso = (t) => new Date(t).toISOString().slice(0, 10);
+const noon = (day) => Date.UTC(Number(day.slice(0, 4)), Number(day.slice(5, 7)) - 1, Number(day.slice(8, 10)), 12);
+const today = (ms) => dayFmt.format(new Date(ms || Date.now()));
+// the id of the day / week (its monday) / month a moment falls in
+export function periodId(kind, ms) {
+	const day = today(ms);
+	if (kind === "day") return day;
+	if (kind === "month") return day.slice(0, 7);
+	const wd = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"].indexOf(wdFmt.format(new Date(ms || Date.now())));
+	return iso(noon(day) - wd * 86400000);
+}
+// the one right before the current one
+export function prevPeriodId(kind, ms) {
+	const cur = periodId(kind, ms);
+	if (kind === "day") return iso(noon(cur) - 86400000);
+	if (kind === "week") return iso(noon(cur) - 7 * 86400000);
+	const y = Number(cur.slice(0, 4)), m = Number(cur.slice(5, 7));
+	return m === 1 ? y - 1 + "-12" : y + "-" + String(m - 1).padStart(2, "0");
+}
+export const weekId = () => periodId("week");
+// prizes when a leaderboard closes, places 1 to 3. only paid out when at least 3 people were on it
+const LB_REWARDS = {
+	day: [{ gems: 60 }, { gems: 30 }, { gems: 15 }],
+	week: [{ gems: 200, keys: 3 }, { gems: 100, keys: 1 }, { gems: 50 }],
+	month: [{ gems: 600, keys: 10 }, { gems: 300, keys: 5 }, { gems: 150, keys: 2 }],
 };
-const today = () => {
-	const t = new Date();
-	return t.getFullYear() + "-" + String(t.getMonth() + 1).padStart(2, "0") + "-" + String(t.getDate()).padStart(2, "0");
-};
+export const LB_MIN_PLAYERS = 3;
+CONFIG.lbRewards = LB_REWARDS;
+CONFIG.lbMin = LB_MIN_PLAYERS;
+function bumpLb(d, dist) {
+	d.lb = d.lb || {};
+	for (const kind of ["day", "week", "month"]) {
+		const cur = periodId(kind);
+		const o = d.lb[kind] || (d.lb[kind] = { id: cur, best: 0 });
+		if (o.id !== cur) {
+			// a new period: what you had becomes "last time", that's what the prizes look at
+			o.pid = o.id;
+			o.pbest = o.best;
+			o.id = cur;
+			o.best = 0;
+		}
+		o.best = Math.max(o.best || 0, dist);
+	}
+}
 function ensureMissions(d) {
-	const day = today();
+	const day = periodId("day");
 	if (d.missions && d.missions.day === day && Array.isArray(d.missions.list)) return d.missions;
 	// the date decides which three, so the whole class has the same ones
 	let h = 0;
@@ -391,7 +491,8 @@ handlers.buy_code = () => {
 	if (d.keys < 1) return [false, "not enough keys"];
 	const left = HIDDEN.filter((c) => !d.codes[c] && !d.bought.includes(c));
 	if (!left.length) return [false, "you already found every code"];
-	const c = left[Math.floor(Math.random() * left.length)];
+	// not random: the browser and the worker have to pick the same one
+	const c = left[(d.bought.length * 7 + (Math.floor((d.created || 0) / 1000) % 97)) % left.length];
 	d.keys -= 1;
 	d.bought.push(c);
 	return [true, "your code: " + c];
@@ -506,6 +607,8 @@ handlers.revive_gems = (price) => {
 // gems bought with real money. the payment itself is checked by the worker, this just makes sure one payment counts once
 handlers.paid = (g) => {
 	if (!g || typeof g.id !== "string") return [false, "bad payment"];
+	// on the worker this only ever gets what it read from the database itself
+	if (HOST && !g._fromDb) return [false, "bad payment"];
 	const n = (v, max) => Math.max(0, Math.min(max, Math.floor(Number(v) || 0)));
 	s.data.paid = s.data.paid || {};
 	if (s.data.paid[g.id]) return [false, "already got those"];
@@ -543,20 +646,27 @@ handlers.run_start = (id) => {
 		s.data.coins -= st.coins;
 		from = st.at;
 	}
-	s.runStart = performance.now() / 1000;
+	s.runStart = runClock() / 1000;
 	s.runFrom = from;
 	return [true];
 };
+// when a run started and ended. the worker sets this from what the browser says, but never outside of what's possible
+let clockAt = null;
+export function setRunClock(ms) {
+	clockAt = ms;
+}
+const runClock = () => (clockAt === null ? Date.now() : clockAt);
 handlers.run_end = (r) => {
 	if (typeof r !== "object" || !s.runStart) return [false, "no run"];
-	const elapsed = performance.now() / 1000 - s.runStart;
+	const elapsed = runClock() / 1000 - s.runStart;
 	s.runStart = null;
 	const num = (v, max) => {
 		v = Number(v) || 0;
 		return Math.max(0, Math.min(max, Math.floor(v)));
 	};
 	const d = s.data;
-	const dist = num(r.dist, Math.floor(elapsed * 3000));
+	// nobody flies faster than this on average, nitro and all. keeps made-up records out
+	const dist = num(r.dist, Math.floor(elapsed * 1200) + 1000);
 	const traveled = dist;
 	const maps = num(r.maps, Math.floor(traveled / 2500) + 1);
 	const bosses = num(r.bosses, Math.floor(traveled / 5000) + 1);
@@ -581,8 +691,11 @@ handlers.run_end = (r) => {
 	}
 	d.farthest = Math.max(d.farthest || 0, (s.runFrom || 0) + dist);
 	d.best = Math.max(d.best, dist);
-	if (!d.week || d.week.id !== weekId()) d.week = { id: weekId(), best: 0 };
-	d.week.best = Math.max(d.week.best, dist);
+	bumpLb(d, dist);
+	d.maxRun = d.maxRun || { glass: 0, close: 0, kills: 0 };
+	d.maxRun.glass = Math.max(d.maxRun.glass || 0, glass);
+	d.maxRun.close = Math.max(d.maxRun.close || 0, closes);
+	d.maxRun.kills = Math.max(d.maxRun.kills || 0, kills);
 	// lifetime stats for the profile
 	const st = d.stats;
 	st.runs++;
@@ -595,7 +708,7 @@ handlers.run_end = (r) => {
 	st.pickups += gemPads + keyPads;
 	st.hearts += hearts;
 	st.revives += num(r.revives, 50);
-	st.loops = Math.max(st.loops, num(r.loop, 100));
+	st.loops = Math.max(st.loops, num(r.loop, Math.floor(dist / 60000)));
 	st.time += Math.min(elapsed, 36000);
 	// xp, and a reward for every level you hit
 	const xp = Math.max(5, Math.floor(dist / 25) + maps * 40 + bosses * 150 + kills * 2 + glass * 3 + (gemPads + keyPads) * 10);
@@ -620,6 +733,8 @@ handlers.run_end = (r) => {
 	return [true, award];
 };
 handlers.set_name = (name) => {
+	// on the worker your name is your account name, nothing to set
+	if (HOST) return [false, ""];
 	if (typeof name !== "string") return [false, "invalid name"];
 	name = name.trim().replace(/\s+/g, " ");
 	if (name.length < 2 || name.length > 16) return [false, "2 to 16 characters"];
@@ -633,6 +748,9 @@ handlers.race_prize = (info) => {
 	const place = Math.floor(Number(info && info.place) || 0);
 	const bonus = place === 1 ? 100 * n : place === 2 && n >= 3 ? 50 * n : 0;
 	if (bonus <= 0) return [true, ""];
+	// one prize per match, a match takes a while
+	if (now() - (s.data.lastRacePrize || 0) < 45) return [false, "too soon"];
+	s.data.lastRacePrize = now();
 	grant(s.data, { coins: bonus });
 	return [true, "+" + bonus + " coins for your place"];
 };
@@ -649,9 +767,71 @@ const ACH_REWARDS = {
 	dist100k: { gems: 50 }, runs100: { gems: 50 }, level10: { gems: 50, keys: 2 }, vswin: { gems: 40 }, vs10: { gems: 50 },
 };
 CONFIG.achRewards = ACH_REWARDS;
+// can the save back the achievement up? the worker only hands one out when it can
+function earned(d, id) {
+	const st = d.stats || {};
+	const far = Math.max(d.farthest || 0, d.best || 0);
+	const mr = d.maxRun || {};
+	const stage = { towers: 3000, moving: 10200, canyon: 18800, smash: 29200, turrets: BEYOND + CONFIG.turretsLen, city: BEYOND + CONFIG.turretsLen + CONFIG.cityLen, sea: SEA_AT + CONFIG.seaLen };
+	if (stage[id]) return far >= stage[id] - 50;
+	switch (id) {
+		case "boss": return (st.bosses || 0) >= 1;
+		case "space": case "fullcircle": return (st.loops || 0) >= 1;
+		case "run5k": return d.best >= 5000;
+		case "run25k": return d.best >= 25000;
+		case "glass50": return (mr.glass || 0) >= 50;
+		case "close10": return (mr.close || 0) >= 10;
+		case "kills50": return (mr.kills || 0) >= 50;
+		case "saved": return (st.glass || 0) >= 1;
+		case "nodamage": return far >= 3000;
+		case "heart": return (st.hearts || 0) >= 1 || (d.revives || 0) >= 1;
+		case "revive": return (st.revives || 0) >= 1;
+		case "pickups100": return (st.pickups || 0) >= 100;
+		case "rich": return d.coins >= 10000;
+		case "skins3": return Object.keys(d.skins || {}).length >= 3;
+		case "codes5": return Object.keys(d.codes || {}).length >= 5;
+		case "dist100k": return (st.dist || 0) >= 100000;
+		case "runs100": return (st.runs || 0) >= 100;
+		case "level10": return (d.level || 1) >= 10;
+		case "vswin": return (d.vsGames || 0) >= 1;
+		case "vs10": return (d.vsGames || 0) >= 10;
+	}
+	return false;
+}
+// the worker hands out everything the save has earned by now, whatever the browser claimed
+export function checkAch() {
+	const d = s.data;
+	d.ach = d.ach || {};
+	d.achPaid = d.achPaid || {};
+	for (const id of ["towers", "moving", "canyon", "smash", "turrets", "city", "sea", "boss", "space", "run5k", "run25k", "glass50", "close10", "kills50", "heart", "revive", "pickups100", "rich", "skins3", "codes5", "dist100k", "runs100", "level10", "vs10"]) {
+		if (d.ach[id] || !earned(d, id)) continue;
+		d.ach[id] = Date.now();
+		if (ACH_REWARDS[id] && !d.achPaid[id]) {
+			d.achPaid[id] = true;
+			grant(d, ACH_REWARDS[id]);
+		}
+	}
+}
+// start over. what you paid real money for stays yours
+handlers.reset = () => {
+	const old = s.data;
+	const d = copy(DEFAULT);
+	d.name = old.name;
+	d.created = Date.now();
+	d.paid = old.paid || {};
+	d.settings = old.settings;
+	d.sfxOptIn = true;
+	for (const item of CONFIG.skins) if (item.eur && old.skins && old.skins[item.id]) d.skins[item.id] = true;
+	s.data = d;
+	s.claimed = {};
+	s.runStart = null;
+	ensureMissions(d);
+	return [true, "fresh start"];
+};
 handlers.ach = (id) => {
 	if (typeof id !== "string" || id.length > 30) return [false, "bad id"];
 	if (s.data.ach[id]) return [false, "already"];
+	if (HOST && !earned(s.data, id)) return [false, "not yet"];
 	s.data.ach[id] = Date.now();
 	s.data.achPaid = s.data.achPaid || {};
 	const rw = ACH_REWARDS[id];

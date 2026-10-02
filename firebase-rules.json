@@ -6,14 +6,19 @@
         "best"
       ],
       "$uid": {
-        ".write": "auth != null && auth.uid === $uid",
-        ".validate": "newData.hasChildren(['name', 'best']) && newData.child('name').isString() && newData.child('name').val().length >= 2 && newData.child('name').val().length <= 16 && newData.child('best').isNumber() && newData.child('best').val() >= 0 && newData.child('best').val() < 100000000"
+        "seen": {
+          ".write": "auth != null && auth.uid === $uid",
+          ".validate": "newData.isNumber()"
+        },
+        "active": {
+          ".write": "auth != null && auth.uid === $uid",
+          ".validate": "newData.isNumber()"
+        }
       }
     },
     "saves": {
       "$uid": {
-        ".read": "auth != null && auth.uid === $uid",
-        ".write": "auth != null && auth.uid === $uid"
+        ".read": "auth != null && auth.uid === $uid"
       }
     },
     "clock": {
@@ -48,13 +53,16 @@
     "grants": {
       "$uid": {
         ".read": "auth != null && auth.uid === $uid",
-        "$gid": {
-          "claimed": {
-            ".write": "auth != null && auth.uid === $uid && newData.val() === true && root.child('grants/' + $uid + '/' + $gid + '/pack').exists()"
-          }
-        },
         ".write": "auth != null && auth.uid === 'Jj2BGaR4ZBSqqQxmWtX8Vym95Ji1'"
       }
+    },
+    "vault": {
+      "$uid": {
+        ".read": "auth != null && auth.uid === $uid"
+      }
+    },
+    "meta": {
+      ".read": true
     }
   }
 }
