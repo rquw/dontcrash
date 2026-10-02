@@ -3,9 +3,9 @@ import {
 	camera, Lighting, Instance, workspace, markQueryRoot, Enum, OverlapParams, TweenService, TweenInfo, Debris, UIS, playSfx, loopSound, loadSounds, setSfxVolume,
 	NumberSequence, NumberSequenceKeypoint, NumberRange, ColorSequence, ColorSequenceKeypoint, guiRootInst, setUiScale, setLowGraphics, physicsGround,
 	mergeFloor, start, perf,
-} from "./engine.js?v=1790937836";
-import * as Server from "./server.js?v=1790937836";
-import * as Online from "./online.js?v=1790937836";
+} from "./engine.js?v=1790939591";
+import * as Server from "./server.js?v=1790939591";
+import * as Online from "./online.js?v=1790939591";
 
 const V3 = (x, y, z) => new Vector3(x, y, z);
 const RGB = Color3.fromRGB;
@@ -26,6 +26,8 @@ const SFX = {
 	hover: ["ui_hover", 1, 0.15, 0.05], click: ["ui_click", 1, 0.8, 0.04], open: ["ui_open", 1, 0.55, 0], close: ["ui_close", 1, 0.45, 0],
 	good: ["ui_good", 1, 0.6, 0], bad: ["ui_bad", 1, 0.6, 0], tick: ["ui_tick", 1, 0.15, 0], whoosh: ["whoosh_ui", 1, 0.5, 0.05],
 	portal: ["pick_fuel", 1, 0.8, 0], crash: ["crash", 1, 1, 0],
+	cas_tick: ["cas_tick", 1, 0.5, 0.06], cas_chip: ["cas_chip", 1, 0.6, 0.08], cas_safe: ["cas_safe", 1, 0.6, 0], cas_win: ["cas_win", 1, 0.7, 0],
+	cas_big: ["cas_big", 1, 0.9, 0], cas_lose: ["cas_lose", 1, 0.6, 0], cas_in: ["cas_in", 1, 0.7, 0],
 	crash_confetti: ["crash_confetti", 1, 1, 0], crash_pixel: ["crash_pixel", 1, 1, 0], crash_nuke: ["crash_nuke", 1, 1, 0],
 	coin_land: ["coin_land", 1, 0.3, 0.04], pick_fuel: ["pick_fuel", 1, 0.8, 0.06], pick_gem: ["pick_gem", 1, 0.8, 0.04], pick_key: ["pick_key", 1, 0.9, 0], pick_heart: ["pick_heart", 1, 1, 0],
 	nitro_on: ["nitro_on", 1, 0.45, 0.05], roll: ["roll", 1, 0.45, 0.08], near: ["near", 1, 0.45, 0.08],
@@ -101,8 +103,15 @@ async function syncPump() {
 			apply(Server.call("get")[2]);
 			Sync.got = true;
 		}
+		batch.forEach((b, i) => b.cb && b.cb((r && r.results && r.results[i]) || [false, "no answer"]));
 	} catch (e) {
 		syncBusy = false;
+		// a bet doesn't get sent twice, it just didn't happen
+		for (let i = batch.length - 1; i >= 0; i--) {
+			if (!batch[i].cb) continue;
+			batch[i].cb([false, "no connection"]);
+			batch.splice(i, 1);
+		}
 		if (e.message === "login") {
 			syncDone();
 			return;
@@ -124,6 +133,16 @@ async function syncPump() {
 Sync.idle = () => new Promise((res) => {
 	if (!syncBusy && !syncQ.length && !syncHello) return res();
 	syncWaiters.push(res);
+	syncPump();
+});
+// things only the worker may decide (the casino): nothing is guessed here, the answer is what happened
+Sync.ask = (action, arg) => new Promise((res) => {
+	if (!Sync.on || !Online.account() || !Online.enabled()) {
+		const r = Server.call(action, arg);
+		apply(r[2]);
+		return res([r[0], r[1]]);
+	}
+	syncQ.push({ a: action, t: Date.now(), arg: arg === undefined ? null : arg, cb: res });
 	syncPump();
 });
 // start of a session, or a fresh login: fetch the real save
@@ -421,6 +440,93 @@ let trackChunks, updateMovers, regenerate, canyonPath, canyonHalfGap, updatePads
 		const narrow = 60 - t * 18;
 		return [Math.max(narrow, funnel), funnel > narrow];
 	};
+
+	// ---------------- the casino. now and then the canyon splits near its end: left goes on, right ends in a black door
+	const FORK = { len: 900, ramp: 320, off: 58, gap: 30, door: 540, sign: 170 };
+	const smooth = (x) => {
+		x = clamp(x, 0, 1);
+		return x * x * (3 - 2 * x);
+	};
+	// where you can fly at this distance: a list of [middle, half width]
+	Game.forkAt = (d) => {
+		if (!Game.fork) return null;
+		const st = STAGE_BY_ID.canyon;
+		const u = d - (st.finish - FORK.len);
+		if (u < 0 || d >= st.finish) return null;
+		const c = canyonPath(d), hg = canyonHalfGap(d)[0];
+		const a = smooth(u / FORK.ramp), back = 1 - smooth((u - 600) / 260);
+		const open = [[c - FORK.off * a * back, hg + (FORK.gap - hg) * a * back]];
+		// the casino side stops at the door, behind it is solid rock
+		if (u <= FORK.door + 24) open.push([c + FORK.off * a, hg + (FORK.gap - hg) * a]);
+		return open;
+	};
+	Game.forkDoor = () => STAGE_BY_ID.canyon.finish - FORK.len + FORK.door;
+
+	// letters made of little glowing blocks, the game has no other way to write on things
+	const GLYPH = {
+		C: "01111,10000,10000,10000,10000,10000,01111", A: "01110,10001,10001,11111,10001,10001,10001", S: "01111,10000,10000,01110,00001,00001,11110",
+		I: "111,010,010,010,010,010,111", N: "10001,11001,10101,10101,10011,10001,10001", O: "01110,10001,10001,10001,10001,10001,01110",
+		E: "11111,10000,10000,11110,10000,10000,11111", X: "10001,10001,01010,00100,01010,10001,10001", T: "11111,00100,00100,00100,00100,00100,00100",
+		M: "10001,11011,10101,10101,10001,10001,10001", P: "11110,10001,10001,11110,10000,10000,10000", " ": "00,00,00,00,00,00,00",
+		">": "0010000,0001100,1111110,1111111,1111110,0001100,0010000", "<": "0000100,0011000,0111111,1111111,0111111,0011000,0000100",
+	};
+	function write(folder, str, mid, px, color) {
+		const rows = [...str].map((ch) => GLYPH[ch].split(","));
+		const width = rows.reduce((n, r) => n + r[0].length + 1, -1) * px;
+		let x = mid.X - width / 2;
+		for (const r of rows) {
+			for (let y = 0; y < 7; y++) {
+				// runs of lit pixels become one block, that's a lot fewer parts
+				let from = -1;
+				for (let i = 0; i <= r[y].length; i++) {
+					const on = r[y][i] === "1";
+					if (on && from < 0) from = i;
+					if (!on && from >= 0) {
+						const p = block(V3((i - from) * px, px, 1), V3(x + ((from + i) / 2) * px, mid.Y + (3 - y) * px, mid.Z), color, folder);
+						p.Material = "Neon";
+						p.CastShadow = false;
+						from = -1;
+					}
+				}
+			}
+			x += (r[0].length + 1) * px;
+		}
+	}
+	function casinoSign(folder, d) {
+		const x = canyonPath(d), z = -d;
+		const board = block(V3(118, 46, 2), V3(x, 67, z - 1.6), RGB(14, 12, 20), folder);
+		board.CastShadow = false;
+		for (const [sx, sy, w, h] of [[0, 23.6, 120, 1.2], [0, -23.6, 120, 1.2], [-59.4, 0, 1.2, 46], [59.4, 0, 1.2, 46]]) {
+			const e = block(V3(w, h, 2.4), V3(x + sx, 67 + sy, z - 1.6), RGB(255, 200, 60), folder);
+			e.Material = "Neon";
+			e.CastShadow = false;
+		}
+		write(folder, "CASINO >", V3(x, 77, z), 2.2, RGB(255, 205, 70));
+		write(folder, "< NEXT MAP", V3(x, 56, z), 1.7, RGB(235, 235, 245));
+	}
+	// the way in: the corridor gets darker and darker until there's nothing left to see
+	function casinoDoor(folder, d) {
+		// the corridor bends, so every layer looks up where the middle is at its own spot
+		const at = (dd) => (Game.forkAt(dd) || [])[1];
+		for (let i = 0; i < 7; i++) {
+			const dd = d - 78 + i * 13, o = at(dd);
+			if (!o) continue;
+			const veil = block(V3(o[1] * 2 + 30, 132, 1), V3(o[0], 66, -dd), BLACK, folder);
+			veil.Material = "Neon";
+			veil.Transparency = 0.86 - i * 0.14;
+			veil.CastShadow = false;
+		}
+		const o = at(d - 86);
+		if (!o) return;
+		for (const sx of [-1, 1]) {
+			const post = block(V3(1.6, 132, 1.6), V3(o[0] + sx * (o[1] - 1.2), 66, -(d - 86)), RGB(255, 200, 60), folder);
+			post.Material = "Neon";
+			post.CastShadow = false;
+		}
+		const lintel = block(V3(o[1] * 2, 1.6, 1.6), V3(o[0], 60, -(d - 86)), RGB(255, 200, 60), folder);
+		lintel.Material = "Neon";
+		lintel.CastShadow = false;
+	}
 
 	const amount = (rng, n) => Math.floor(n + rng.NextNumber());
 
@@ -824,14 +930,26 @@ let trackChunks, updateMovers, regenerate, canyonPath, canyonHalfGap, updatePads
 					const hg = canyonHalfGap(d)[0];
 					const tint = rock.Lerp(new Color3(0, 0, 0), rng.NextNumber(0, 0.25));
 					const zc = z0 - z - 10;
-					const lx1 = Math.min(x1, c - hg);
-					if (lx1 - x0 > 1) block(V3(lx1 - x0, 130, 20), V3((x0 + lx1) / 2, 65, zc), tint, folder);
-					const rx0 = Math.max(x0, c + hg);
-					if (x1 - rx0 > 1) block(V3(x1 - rx0, 130, 20), V3((rx0 + x1) / 2, 65, zc), tint, folder);
+					// rock everywhere except where the way is. usually that's one gap, at the fork it's two
+					const open = (Game.forkAt(d) || [[c, hg]]).map(([m, g]) => [m - g, m + g]).sort((a, b) => a[0] - b[0]);
+					let from = x0;
+					for (const [a, b] of open.concat([[x1, x1]])) {
+						const to = Math.min(x1, a);
+						if (to - from > 1) block(V3(to - from, 130, 20), V3((from + to) / 2, 65, zc), tint, folder);
+						from = Math.max(from, b);
+					}
+				}
+				if (Game.fork) {
+					const st = STAGE_BY_ID.canyon, f0 = st.finish - FORK.len;
+					for (const [at, make] of [[f0 + FORK.sign, casinoSign], [f0 + FORK.door, casinoDoor]]) {
+						const x = canyonPath(at) + (make === casinoDoor ? FORK.off : 0);
+						if (at >= d0 && at < d0 + CHUNK && x >= x0 && x < x1) make(pick, at);
+					}
 				}
 				if (rng.NextNumber() < 0.5) {
 					const d = d0 + rng.NextNumber(30, CHUNK - 30);
-					const x = canyonPath(d);
+					const f = Game.forkAt(d);
+					const x = f ? f[0][0] : canyonPath(d);
 					if (x >= x0 && x < x1) makePad("fuel", x + rng.NextNumber(-8, 8), -d, pick);
 				}
 			} else if (stage === "smash") {
@@ -967,6 +1085,8 @@ let trackChunks, updateMovers, regenerate, canyonPath, canyonHalfGap, updatePads
 			seed = random(1, 1e6);
 			canyonOffset = Math.random() * 1000;
 		}
+		// one run in twenty has a casino in the canyon. with ?dev it's always there
+		Game.fork = !Game.race && (/[?&]dev\b/.test(location.search) || Math.random() < 0.05);
 		maxRow = -1;
 		lastKey = null;
 		updateChunks(x || 0, z || 0);
@@ -7280,6 +7400,32 @@ Game.startAt = (id) => {
 	buff.immortal = 3;
 };
 
+// out of the casino: you come out of the dark at the start of the next map
+Game.casinoExit = () => {
+	const st = STAGE_BY_ID.canyon;
+	const d = st.finish + 70;
+	pos = V3(canyonPath(st.finish), ALT, -d);
+	vx = 0;
+	planeMain.CFrame = CFrame.fromPos(pos);
+	Game.cam.last = null;
+	buff.immortal = Math.max(buff.immortal || 0, 3.5);
+	for (let i = 0; i < 7; i++) {
+		const veil = Instance.new("Part");
+		veil.Anchored = true;
+		veil.CanCollide = false;
+		veil.CastShadow = false;
+		veil.Material = "Neon";
+		veil.Color = new Color3(0, 0, 0);
+		veil.Transparency = 0.1 + i * 0.13;
+		veil.Size = V3(700, 320, 1);
+		veil.CFrame = CFrame.fromPos(V3(pos.X, 100, pos.Z - 30 - i * 26));
+		veil.Parent = junk;
+		Debris.AddItem(veil, 6);
+	}
+	Game.inCasino = false;
+	Game.hold = false;
+};
+
 async function crash(hits) {
 	if (dead) return;
 	dead = true;
@@ -7674,6 +7820,12 @@ function step(dt) {
 		}
 	}
 
+	// the right-hand way at the fork ends in the casino
+	if (stage === "canyon" && Game.fork && !Game.inCasino) {
+		const d = -pos.Z, door = Game.forkDoor();
+		if (d > door - 34 && d < door + 30 && pos.X > canyonPath(d)) Game.casino.enter();
+	}
+
 	trackChunks(pos.X, pos.Z);
 	updateMovers();
 	updatePads(pos.Y, pos.Z);
@@ -8031,7 +8183,7 @@ task.spawn(async () => {
 	for (const n of LOOPS) L[n] = loopSound(n);
 	let nitroOn = false, alarmT = 0;
 	RunService.RenderStepped.Connect((dt) => {
-		const run = mode === "run" && !dead;
+		const run = mode === "run" && !dead && !Game.inCasino;
 		const pause = Game.paused ? 0.2 : 1;
 		const F = Game.flow;
 		const c = F.cine;
@@ -8145,7 +8297,7 @@ applySettings();
 toMenu();
 start();
 document.getElementById("boot").remove();
-if (DEV) window.__dev = { steer: (v) => { Game.steerFake = v; }, note: (m) => notify(m, GOOD), del: () => Online.deleteAccount(), lb: () => openPanel("leaderboard"), hello: () => Game.cloudLoad(true), crash: () => task.spawn(crash, []), data: () => data, stats: () => stats, vs: () => Game.versusToggle(), heart: () => Game.heartFx(), pad: (k) => Game.makePad(k, pos.X, pos.Z - 45, pickups), reg: async (n, p) => { await Online.register(n, p); request("set_name", n); return Online.account(); }, win: () => Game._vsWin(), vsd: () => Game._vsDebug(), dbg: () => [mode, dead, !!stats, !!planeMain, planeMain && !!planeMain.Parent, Game.raceState.mid], race: () => [Game.race, Game.raceState.inQueue, Game.queueText(), JSON.stringify(Game.raceState.final)], shot: () => Game.flow.startApproach(), uid: () => Online.myId(), achp: () => openPanel("achievements"), achgo: (id) => Game.ach(id), bp: (s) => Game.openBackpack(s), pf: () => [1, 2, 3].map(Game.planeFor), req: (a, b) => request(a, b), gift: () => openPanel("gift"), push: () => Game.pushProfile(), gems: () => { Game.openShop(); shopTab = "GEMS"; rebuildShop(); }, run: (id) => startRun(id || "towers"), skip: () => Game.skip(), ahead: () => { const r = Math.floor(-pos.Z / CHUNK); return [r, beyondStart, stageFor(-pos.Z)[0], stageFor((r + 5) * CHUNK + 1)[0], stageFor((r + 40) * CHUNK + 1)[0]]; }, state: () => [mode, curStage, Game.flow.cine && Game.flow.cine.kind, Math.round(-pos.Z)] };
+if (DEV) window.__dev = { fin: () => STAGE_BY_ID.canyon.finish, cp: (d) => canyonPath(d), hg: (d) => canyonHalfGap(d)[0], d: () => -pos.Z, setx: (x) => { pos = V3(x, pos.Y, pos.Z); vx = 0; }, tp: (back, side) => { const d = STAGE_BY_ID.canyon.finish - back; pos = V3(canyonPath(d) + (side || 0), ALT, -d); Game.cam.last = null; return [Game.fork, Math.round(d)]; }, steer: (v) => { Game.steerFake = v; }, note: (m) => notify(m, GOOD), del: () => Online.deleteAccount(), lb: () => openPanel("leaderboard"), hello: () => Game.cloudLoad(true), crash: () => task.spawn(crash, []), data: () => data, stats: () => stats, vs: () => Game.versusToggle(), heart: () => Game.heartFx(), pad: (k) => Game.makePad(k, pos.X, pos.Z - 45, pickups), reg: async (n, p) => { await Online.register(n, p); request("set_name", n); return Online.account(); }, win: () => Game._vsWin(), vsd: () => Game._vsDebug(), dbg: () => [mode, dead, !!stats, !!planeMain, planeMain && !!planeMain.Parent, Game.raceState.mid], race: () => [Game.race, Game.raceState.inQueue, Game.queueText(), JSON.stringify(Game.raceState.final)], shot: () => Game.flow.startApproach(), uid: () => Online.myId(), achp: () => openPanel("achievements"), achgo: (id) => Game.ach(id), bp: (s) => Game.openBackpack(s), pf: () => [1, 2, 3].map(Game.planeFor), req: (a, b) => request(a, b), gift: () => openPanel("gift"), push: () => Game.pushProfile(), gems: () => { Game.openShop(); shopTab = "GEMS"; rebuildShop(); }, run: (id) => startRun(id || "towers"), skip: () => Game.skip(), ahead: () => { const r = Math.floor(-pos.Z / CHUNK); return [r, beyondStart, stageFor(-pos.Z)[0], stageFor((r + 5) * CHUNK + 1)[0], stageFor((r + 40) * CHUNK + 1)[0]]; }, state: () => [mode, curStage, Game.flow.cine && Game.flow.cine.kind, Math.round(-pos.Z)] };
 
 // ------------------------------------------------------------------ versus
 // same idea as roblox: queue up, everyone starts on the same map, farthest wins.
@@ -9245,7 +9397,7 @@ if (DEV) window.__dev = { steer: (v) => { Game.steerFake = v; }, note: (m) => no
 // ------------------------------------------------------------------ old version warning
 // every build has its own number, the page checks now and then whether a newer one is online
 (() => {
-	const BUILD = "1790937836";
+	const BUILD = "1790939591";
 	if (BUILD.startsWith("__")) return;
 	const bar = make("TextButton", {
 		AnchorPoint: V2(0.5, 0),
@@ -9726,4 +9878,824 @@ for (const id in PACKS) if (PACKS[id].link.includes("/test_") && !DEV) PACKS[id]
 	const b = button(menu, "GIVE STUFF", UO(200, 40), U2(1, -216, 1, -138), () => openPanel("gift"), 0.3);
 	b.TextSize = 18;
 	b.TextColor3 = GEM;
+})();
+
+// ------------------------------------------------------------------ the casino
+// you get here through the black door in the canyon. three games, all of them flat on the screen.
+// the worker rolls every result, this file only makes it look good
+
+(() => {
+	const root = make("Frame", { Name: "Casino", Size: US(1, 1), BackgroundTransparency: 1, Visible: false, ZIndex: 55, Parent: gui });
+	root.el.style.pointerEvents = "auto";
+
+	const css = document.createElement("style");
+	css.textContent = `
+.cas { position:absolute; inset:0; color:#f4efe2; overflow:hidden; user-select:none; -webkit-user-select:none;
+	background: radial-gradient(120% 90% at 50% 0%, #3a1552 0%, #1a0a2a 45%, #07040c 100%); }
+.cas * { box-sizing:border-box; }
+.cas-glow { position:absolute; inset:-20%; background: conic-gradient(from 0deg, #ffcf4a11, #ff3d8111, #4ad8ff11, #ffcf4a11); animation: casTurn 40s linear infinite; pointer-events:none; }
+@keyframes casTurn { to { transform: rotate(360deg); } }
+.cas-top { position:absolute; left:0; right:0; top:0; height:84px; display:flex; align-items:center; gap:18px; padding:0 26px;
+	background: linear-gradient(#000a, #0000); z-index:3; }
+.cas-logo { font-size:44px; font-weight:900; letter-spacing:6px; color:#ffd35a; text-shadow:0 0 18px #ffb300, 0 0 46px #ff7a00aa; animation: casPulse 2.4s ease-in-out infinite; }
+@keyframes casPulse { 50% { text-shadow:0 0 28px #ffd35a, 0 0 70px #ff9d00; } }
+.cas-bulbs { flex:1; height:10px; background: radial-gradient(circle, #ffe9a0 0 3px, #0000 4px) 0 0/26px 10px repeat-x; animation: casBulbs 0.7s steps(2) infinite; opacity:.85; }
+@keyframes casBulbs { 50% { background-position:13px 0; opacity:.5; } }
+.cas-bal { display:flex; gap:10px; }
+.cas-pill { background:#000a; border:2px solid #ffffff22; border-radius:999px; padding:7px 16px; font-size:22px; font-weight:800; min-width:110px; text-align:center; transition: transform .15s, border-color .3s; }
+.cas-pill.up { border-color:#6dff9c; transform:scale(1.12); } .cas-pill.down { border-color:#ff5d6c; }
+.c-coins { color:#ffd35a; } .c-gems { color:#5fdcff; } .c-keys { color:#ff8ad8; }
+.cas-btn { font:inherit; font-weight:900; color:#fff; background:#ffffff14; border:2px solid #ffffff30; border-radius:12px; padding:10px 20px; font-size:20px; cursor:pointer; transition: transform .08s, background .15s, filter .15s; }
+.cas-btn:hover { background:#ffffff26; } .cas-btn:active { transform:scale(.95); }
+.cas-btn[disabled] { opacity:.35; pointer-events:none; }
+.cas-btn.go { background: linear-gradient(#ffdf6b, #ff9d1c); color:#2a1500; border-color:#fff3; font-size:28px; padding:16px 20px; box-shadow:0 6px 0 #a85a00, 0 0 34px #ffae0066; }
+.cas-btn.go:active { transform:translateY(4px) scale(.98); box-shadow:0 2px 0 #a85a00; }
+.cas-btn.cash { background: linear-gradient(#7dffa8, #18c76a); color:#03260f; box-shadow:0 6px 0 #0a7a3c, 0 0 34px #2dff8a66; font-size:26px; padding:16px 20px; }
+.cas-btn.leave { border-color:#ff5d6c88; color:#ff8a95; }
+.cas-view { position:absolute; inset:84px 0 0 0; display:none; z-index:2; }
+.cas-view.on { display:flex; animation: casIn .35s cubic-bezier(.2,1.3,.4,1); }
+@keyframes casIn { from { opacity:0; transform:scale(.96) translateY(14px); } }
+.cas-lobby { align-items:center; justify-content:center; gap:34px; flex-wrap:wrap; padding:20px; }
+.cas-card { width:290px; height:400px; border-radius:26px; background: linear-gradient(160deg, #2a1340, #120818); border:3px solid #ffd35a55; cursor:pointer; display:flex; flex-direction:column; align-items:center; justify-content:flex-end; padding:26px; gap:8px; position:relative; overflow:hidden; transition: transform .18s, border-color .18s, box-shadow .18s; }
+.cas-card:hover { transform:translateY(-10px) scale(1.03); border-color:#ffd35a; box-shadow:0 20px 60px #ffae0055; }
+.cas-card h2 { margin:0; text-align:center; white-space:nowrap; font-size:31px; font-weight:900; letter-spacing:2px; } .cas-card p { margin:0; font-size:16px; color:#cbbfe0; text-align:center; }
+.cas-art { position:absolute; top:34px; width:190px; height:190px; }
+.art-roul { border-radius:50%; background: repeating-conic-gradient(#c8102e 0 20deg, #15121b 20deg 40deg); border:10px solid #ffd35a; box-shadow: inset 0 0 0 34px #2a1a10, inset 0 0 0 38px #ffd35a; animation: casTurn 9s linear infinite; }
+.art-wheel { border-radius:50%; background: conic-gradient(#e0263d 0 30deg,#17131f 0 60deg,#ffd35a 0 90deg,#17131f 0 120deg,#e0263d 0 150deg,#17131f 0 180deg,#e0263d 0 210deg,#17131f 0 240deg,#3ddc84 0 270deg,#17131f 0 300deg,#e0263d 0 330deg,#17131f 0); border:10px solid #fff; animation: casTurn 6s cubic-bezier(.5,0,.5,1) infinite alternate; }
+.art-mines { display:grid; grid-template-columns:repeat(3,1fr); gap:9px; }
+.art-mines i { border-radius:12px; background:#3a2a55; } .art-mines i.g { background:#2be38a; box-shadow:0 0 20px #2be38a; animation: casBlink 1.6s infinite; } .art-mines i.b { background:#ff3b4e; box-shadow:0 0 20px #ff3b4e; }
+@keyframes casBlink { 50% { filter:brightness(1.6); } }
+.cas-game { padding:10px 26px 22px; gap:26px; align-items:stretch; }
+.cas-stage { flex:1; min-width:0; position:relative; display:flex; align-items:center; justify-content:center; gap:22px; }
+.cas-side { width:330px; flex:none; background:#0009; border:2px solid #ffffff1c; border-radius:22px; padding:18px; display:flex; flex-direction:column; gap:12px; }
+.cas-side h3 { margin:0; font-size:15px; letter-spacing:2px; color:#b9a9d6; font-weight:800; }
+.cas-row { display:flex; gap:8px; } .cas-row > * { flex:1; }
+.cas-tab { padding:9px 0; font-size:18px; } .cas-tab.on { background:#fff; color:#12081c; border-color:#fff; }
+.cas-amt { font-size:44px; font-weight:900; text-align:center; background:#000a; border-radius:14px; padding:6px; border:2px solid #ffffff22; }
+.cas-small { font-size:16px; padding:8px 0; }
+.cas-info { font-size:15px; color:#b9a9d6; text-align:center; min-height:20px; } .cas-info.bad { color:#ff7d8a; }
+.cas-spacer { flex:1; }
+.cas-banner { position:absolute; left:50%; top:50%; transform:translate(-50%,-50%); font-size:90px; font-weight:900; pointer-events:none; white-space:nowrap; opacity:0; z-index:5; text-align:center; line-height:1; }
+.cas-banner small { display:block; font-size:26px; letter-spacing:4px; margin-bottom:8px; }
+.cas-banner.win { color:#ffe27a; text-shadow:0 0 30px #ffae00, 0 6px 0 #a85a00; animation: casBan 2.2s cubic-bezier(.2,1.6,.3,1) forwards; }
+.cas-banner.lose { color:#ff6b7a; text-shadow:0 0 24px #ff0030aa; font-size:60px; animation: casBan 1.6s ease forwards; }
+@keyframes casBan { 0% { opacity:0; transform:translate(-50%,-50%) scale(.3) rotate(-6deg); } 18% { opacity:1; transform:translate(-50%,-50%) scale(1.1) rotate(2deg); } 30% { transform:translate(-50%,-50%) scale(1); } 80% { opacity:1; } 100% { opacity:0; transform:translate(-50%,-60%) scale(1); } }
+.cas-flash { position:absolute; inset:0; pointer-events:none; opacity:0; z-index:4; }
+.cas-flash.gold { background: radial-gradient(circle, #ffd35a88, #0000 70%); animation: casFl .9s ease-out; }
+.cas-flash.red { background:#ff0030; animation: casFl .5s ease-out; }
+@keyframes casFl { from { opacity:.9; } to { opacity:0; } }
+.cas-shake { animation: casShake .45s; }
+@keyframes casShake { 20% { transform:translate(-12px,6px); } 40% { transform:translate(10px,-8px); } 60% { transform:translate(-7px,-4px); } 80% { transform:translate(5px,5px); } }
+.cas-fx { position:absolute; inset:0; width:100%; height:100%; pointer-events:none; z-index:6; }
+.cas-canvas { filter: drop-shadow(0 18px 40px #000c); max-height:100%; }
+.cas-ptr { position:absolute; top:calc(50% - 262px); left:50%; margin-left:-22px; border:22px solid #0000; border-top:42px solid #fff; filter: drop-shadow(0 4px 6px #000); transform-origin:50% 0; z-index:2; }
+.cas-ptr.flick { animation: casFlick .09s; } @keyframes casFlick { 50% { transform:rotate(-16deg); } }
+.rt { display:grid; grid-template-columns: 46px repeat(12, 41px); grid-auto-rows:44px; gap:4px; }
+.rt b { display:flex; align-items:center; justify-content:center; border-radius:7px; font-size:18px; font-weight:800; cursor:pointer; position:relative; border:2px solid #ffffff18; transition: transform .08s, filter .12s; }
+.rt b:hover { filter:brightness(1.35); transform:scale(1.06); z-index:1; } .rt b:active { transform:scale(.94); }
+.rt .r { background:#c8102e; } .rt .k { background:#1b1723; } .rt .z { background:#12a150; grid-row:span 3; } .rt .o { background:#2a1a45; font-size:15px; }
+.rt b.hit { animation: casHit .5s 5 alternate; border-color:#fff; z-index:1; } @keyframes casHit { to { filter:brightness(2.2); box-shadow:0 0 26px #fff; } }
+.rt b u { position:absolute; right:-7px; top:-9px; min-width:26px; height:26px; padding:0 5px; border-radius:13px; background: radial-gradient(#fff 0 35%, #ffd35a 36%); border:2px dashed #7a4b00; color:#2a1500; font-size:12px; text-decoration:none; display:flex; align-items:center; justify-content:center; box-shadow:0 2px 0 #0008; animation: casChip .18s cubic-bezier(.2,1.8,.4,1); }
+@keyframes casChip { from { transform:translateY(-16px) scale(1.5); opacity:0; } }
+.mf { display:grid; grid-template-columns:repeat(5, 86px); grid-auto-rows:86px; gap:10px; }
+.mf b { border-radius:16px; background: linear-gradient(#4a3470, #2c1d47); border:2px solid #ffffff22; box-shadow:0 5px 0 #170d27; cursor:pointer; display:flex; align-items:center; justify-content:center; font-size:40px; transition: transform .1s, filter .12s; }
+.mf.live b:not(.open):hover { transform:translateY(-4px); filter:brightness(1.3); }
+.mf:not(.live) b { cursor:default; opacity:.75; }
+.mf b.open { box-shadow:none; transform:translateY(5px); animation: casFlip .3s; }
+.mf b.gem { background: radial-gradient(#1f6b47, #0c2a1d); border-color:#2be38a; color:#5dffae; text-shadow:0 0 16px #2be38a; opacity:1; }
+.mf b.bomb { background: radial-gradient(#7a1320, #2a0508); border-color:#ff3b4e; opacity:1; }
+.mf b.bomb.me { animation: casBoom .5s; box-shadow:0 0 50px #ff2038; }
+.mf b.dim { opacity:.4; }
+@keyframes casFlip { from { transform:rotateY(90deg) scale(1.15); } } @keyframes casBoom { 30% { transform:scale(1.5); } }
+.cas-bomb { width:34px; height:34px; border-radius:50%; background: radial-gradient(circle at 35% 30%, #777, #111 60%); position:relative; }
+.cas-bomb:after { content:""; position:absolute; left:50%; top:-9px; width:5px; height:12px; background:#ffb13b; border-radius:3px; transform:rotate(25deg); box-shadow:0 -4px 8px #ff6a00; }
+.cas-mult { text-align:center; } .cas-mult div { font-size:54px; font-weight:900; color:#5dffae; text-shadow:0 0 22px #2be38a88; line-height:1; } .cas-mult span { font-size:15px; color:#b9a9d6; letter-spacing:2px; }
+.cas-back { position:absolute; left:26px; top:96px; z-index:3; }
+@media (max-height: 700px) { .cas-card { height:340px; } }
+`;
+	document.head.appendChild(css);
+
+	const h = (tag, cls, txt, parent) => {
+		const e = document.createElement(tag);
+		if (cls) e.className = cls;
+		if (txt != null) e.textContent = txt;
+		if (parent) parent.appendChild(e);
+		return e;
+	};
+	const box = h("div", "cas", null, root.el);
+	h("div", "cas-glow", null, box);
+	const top = h("div", "cas-top", null, box);
+	h("div", "cas-logo", "CASINO", top);
+	h("div", "cas-bulbs", null, top);
+	const bal = h("div", "cas-bal", null, top);
+	const SYM = { coins: "●", gems: "◆", keys: "✦" };
+	const CURS = ["coins", "gems", "keys"];
+	const pills = {};
+	for (const c of CURS) pills[c] = h("div", "cas-pill c-" + c, "", bal);
+	const leaveB = h("button", "cas-btn leave", "LEAVE", top);
+	const backB = h("button", "cas-btn cas-back", "◀ GAMES", box);
+	const fxC = h("canvas", "cas-fx", null, box);
+	const flashE = h("div", "cas-flash", null, box);
+	const banner = h("div", "cas-banner", null, box);
+
+	const click = (e, fn) => e.addEventListener("click", (ev) => {
+		ev.stopPropagation();
+		fn(ev);
+	});
+	const wait = (s) => new Promise((r) => setTimeout(r, s * 1000));
+	const restart = (e, cls) => {
+		e.className = e.className.replace(/ ?(win|lose|gold|red|cas-shake|flick|up|down)\b/g, "");
+		void e.offsetWidth;
+		e.className += " " + cls;
+	};
+
+	// ---------------- what you have. the numbers up top only move when the game on screen is done
+	const shown = { coins: 0, gems: 0, keys: 0 };
+	function drawBal() {
+		for (const c of CURS) pills[c].textContent = SYM[c] + " " + fmt(Math.round(shown[c]));
+	}
+	function take(cur, n) {
+		shown[cur] -= n;
+		restart(pills[cur], "down");
+		drawBal();
+	}
+	function settle() {
+		for (const c of CURS) {
+			const to = data[c] || 0, from = shown[c];
+			if (to === from) continue;
+			if (to > from) restart(pills[c], "up");
+			const t0 = performance.now();
+			const step = () => {
+				const k = Math.min(1, (performance.now() - t0) / 700);
+				shown[c] = from + (to - from) * (1 - Math.pow(1 - k, 3));
+				if (k >= 1) shown[c] = to;
+				drawBal();
+				if (k < 1 && shown[c] !== data[c]) requestAnimationFrame(step);
+			};
+			step();
+		}
+	}
+
+	// ---------------- coins and confetti flying around when you win
+	const parts = [];
+	let fxOn = false;
+	function burst(n, big) {
+		const w = fxC.clientWidth, hh = fxC.clientHeight;
+		fxC.width = w;
+		fxC.height = hh;
+		const cols = ["#ffd35a", "#ffe9a0", "#ff9d1c", "#fff", "#5fdcff", "#ff8ad8"];
+		for (let i = 0; i < n; i++) {
+			const a = -Math.PI / 2 + (Math.random() - 0.5) * (big ? 2.4 : 1.6), v = 500 + Math.random() * (big ? 900 : 500);
+			parts.push({ x: w / 2 + (Math.random() - 0.5) * 200, y: hh * 0.55, vx: Math.cos(a) * v, vy: Math.sin(a) * v, r: 5 + Math.random() * 9, c: cols[Math.floor(Math.random() * (big ? 6 : 3))], sp: Math.random() * 10, life: 1.6 + Math.random() * 1.2, coin: Math.random() < 0.6 });
+		}
+		if (fxOn) return;
+		fxOn = true;
+		let last = performance.now();
+		const loop = (now) => {
+			const dt = Math.min(0.05, (now - last) / 1000);
+			last = now;
+			const g = fxC.getContext("2d");
+			g.clearRect(0, 0, fxC.width, fxC.height);
+			for (let i = parts.length - 1; i >= 0; i--) {
+				const p = parts[i];
+				p.vy += 1500 * dt;
+				p.x += p.vx * dt;
+				p.y += p.vy * dt;
+				p.life -= dt;
+				if (p.life <= 0 || p.y > fxC.height + 40) {
+					parts.splice(i, 1);
+					continue;
+				}
+				g.globalAlpha = Math.min(1, p.life * 2);
+				g.fillStyle = p.c;
+				g.beginPath();
+				// coins flip, so they get thin and wide again
+				if (p.coin) g.ellipse(p.x, p.y, p.r, p.r * Math.abs(Math.cos(p.life * 9 + p.sp)) + 1, 0, 0, 7);
+				else g.rect(p.x, p.y, p.r, p.r * 0.6);
+				g.fill();
+			}
+			g.globalAlpha = 1;
+			if (parts.length && root.Visible) requestAnimationFrame(loop);
+			else {
+				fxOn = false;
+				parts.length = 0;
+				g.clearRect(0, 0, fxC.width, fxC.height);
+			}
+		};
+		requestAnimationFrame(loop);
+	}
+
+	// what came out of a round: the banner, the noise, the money
+	function result(win, bet, cur) {
+		settle();
+		if (win > bet) {
+			const big = win >= bet * 3;
+			banner.innerHTML = "";
+			h("small", null, big ? "BIG WIN" : "YOU WIN", banner);
+			banner.appendChild(document.createTextNode("+" + fmt(win) + " " + SYM[cur]));
+			restart(banner, "win");
+			restart(flashE, "gold");
+			sfx(big ? "cas_big" : "cas_win");
+			burst(big ? 140 : 50, big);
+		} else if (win > 0) {
+			banner.textContent = (win === bet ? "MONEY BACK" : fmt(win) + " " + SYM[cur] + " BACK");
+			restart(banner, "lose");
+			sfx("cas_chip");
+		} else {
+			banner.textContent = "NOTHING";
+			restart(banner, "lose");
+			sfx("cas_lose");
+		}
+	}
+
+	// ---------------- the bet box on the right, every game has one
+	const bet = { cur: "coins", amt: { coins: 100, gems: 10, keys: 1 } };
+	const lim = () => CONFIG.casino;
+	function betBox(side, onChange) {
+		h("h3", null, "BET WITH", side);
+		const tabs = h("div", "cas-row", null, side);
+		const tabB = {};
+		for (const c of CURS) {
+			tabB[c] = h("button", "cas-btn cas-tab c-" + c, SYM[c] + " " + c.toUpperCase(), tabs);
+			click(tabB[c], () => {
+				if (api.locked) return;
+				bet.cur = c;
+				sfx("click");
+				api.draw();
+			});
+		}
+		h("h3", null, "HOW MUCH", side);
+		const amt = h("div", "cas-amt", "", side);
+		const row = h("div", "cas-row", null, side);
+		const set = (v) => {
+			if (api.locked) return;
+			const c = bet.cur;
+			bet.amt[c] = Math.max(lim().min[c], Math.min(lim().max[c], Math.max(lim().min[c], Math.floor(shown[c])), Math.floor(v)));
+			sfx("cas_chip");
+			api.draw();
+		};
+		click(h("button", "cas-btn cas-small", "MIN", row), () => set(0));
+		click(h("button", "cas-btn cas-small", "½", row), () => set(bet.amt[bet.cur] / 2));
+		click(h("button", "cas-btn cas-small", "×2", row), () => set(bet.amt[bet.cur] * 2));
+		click(h("button", "cas-btn cas-small", "MAX", row), () => set(1e9));
+		const api = {
+			locked: false,
+			draw() {
+				for (const c of CURS) tabB[c].classList.toggle("on", c === bet.cur);
+				amt.textContent = fmt(bet.amt[bet.cur]) + " " + SYM[bet.cur];
+				amt.className = "cas-amt c-" + bet.cur;
+				if (onChange) onChange();
+			},
+		};
+		return api;
+	}
+	const canPay = (n) => Math.floor(shown[bet.cur]) >= n;
+
+	// ---------------- lobby
+	const views = {};
+	const lobby = (views.lobby = h("div", "cas-view cas-lobby", null, box));
+	function card(id, name, desc, art) {
+		const c = h("div", "cas-card", null, lobby);
+		const a = h("div", "cas-art " + art, null, c);
+		h("h2", null, name, c);
+		h("p", null, desc, c);
+		click(c, () => {
+			sfx("click");
+			show(id);
+		});
+		return a;
+	}
+	card("roulette", "ROULETTE", "Red or black, or go all in on one number for 36x", "art-roul");
+	const ma = card("mines", "MINEFIELD", "Every safe field pays more. One bomb and it's gone", "art-mines");
+	for (let i = 0; i < 9; i++) h("i", i === 4 ? "b" : i % 2 ? "g" : "", null, ma);
+	card("wheel", "LUCKY WHEEL", "One spin, up to 5x your bet", "art-wheel");
+
+	let view = "lobby", busy = false;
+	function show(id) {
+		if (busy) return;
+		view = id;
+		for (const k in views) views[k].classList.toggle("on", k === id);
+		backB.style.display = id === "lobby" ? "none" : "";
+		if (views[id].open) views[id].open();
+	}
+	click(backB, async () => {
+		if (busy) return;
+		sfx("close");
+		await mines.bail();
+		show("lobby");
+	});
+
+	// ask the worker, with the buttons off until it answers
+	async function ask(action, arg, info) {
+		busy = true;
+		const [ok, r] = await Sync.ask(action, arg);
+		if (!ok) {
+			busy = false;
+			if (info) {
+				info.textContent = String(r || "that didn't work").toUpperCase();
+				info.classList.add("bad");
+			}
+			sfx("bad");
+			settle();
+			return null;
+		}
+		return r;
+	}
+
+	// ---------------- lucky wheel
+	(() => {
+		const v = (views.wheel = h("div", "cas-view cas-game", null, box));
+		const stage = h("div", "cas-stage", null, v);
+		const cv = h("canvas", "cas-canvas", null, stage);
+		cv.width = cv.height = 520;
+		const ptr = h("div", "cas-ptr", null, stage);
+		const side = h("div", "cas-side", null, v);
+		const info = h("div", "cas-info", "", null);
+		const bb = betBox(side, () => {
+			info.classList.remove("bad");
+			info.textContent = "ON AVERAGE THE HOUSE KEEPS 8%";
+			go.disabled = !canPay(bet.amt[bet.cur]);
+		});
+		h("div", "cas-spacer", null, side);
+		side.appendChild(info);
+		const go = h("button", "cas-btn go", "SPIN", side);
+		let ang = 0;
+		const COL = (m, i) => (m >= 5 ? "#ffd35a" : m >= 3 ? "#2bd97c" : i % 2 ? "#c8102e" : "#17131f");
+		function draw() {
+			const W = lim().wheel, n = W.length, g = cv.getContext("2d"), R = 250, seg = (Math.PI * 2) / n;
+			g.clearRect(0, 0, 520, 520);
+			g.save();
+			g.translate(260, 260);
+			g.rotate(ang);
+			for (let i = 0; i < n; i++) {
+				g.beginPath();
+				g.moveTo(0, 0);
+				g.arc(0, 0, R, i * seg - Math.PI / 2 - seg / 2, i * seg - Math.PI / 2 + seg / 2);
+				g.fillStyle = COL(W[i], i);
+				g.fill();
+				g.strokeStyle = "#ffffff30";
+				g.lineWidth = 2;
+				g.stroke();
+				g.save();
+				g.rotate(i * seg);
+				g.fillStyle = W[i] >= 5 ? "#2a1500" : "#fff";
+				g.font = "900 " + (W[i] >= 3 ? 30 : 24) + "px Highway, sans-serif";
+				g.textAlign = "center";
+				g.fillText(W[i] ? W[i] + "x" : "0", 0, -R + 44);
+				g.restore();
+			}
+			g.beginPath();
+			g.arc(0, 0, R, 0, 7);
+			g.lineWidth = 12;
+			g.strokeStyle = "#fff";
+			g.stroke();
+			for (let i = 0; i < n; i++) {
+				g.beginPath();
+				g.arc(Math.cos(i * seg + seg / 2) * R, Math.sin(i * seg + seg / 2) * R, 5, 0, 7);
+				g.fillStyle = "#ffd35a";
+				g.fill();
+			}
+			g.beginPath();
+			g.arc(0, 0, 46, 0, 7);
+			g.fillStyle = "#ffd35a";
+			g.fill();
+			g.lineWidth = 6;
+			g.strokeStyle = "#a85a00";
+			g.stroke();
+			g.restore();
+		}
+		v.open = () => {
+			bb.draw();
+			draw();
+		};
+		click(go, async () => {
+			if (busy) return;
+			const amt = bet.amt[bet.cur], cur = bet.cur;
+			if (!canPay(amt)) return;
+			bb.locked = true;
+			go.disabled = true;
+			take(cur, amt);
+			sfx("cas_chip");
+			const r = await ask("cas_wheel", { cur, amt }, info);
+			if (!r) {
+				bb.locked = false;
+				bb.draw();
+				return;
+			}
+			const n = lim().wheel.length, seg = (Math.PI * 2) / n;
+			// lands somewhere inside the field, not always dead centre
+			const from = ang, target = -r.i * seg + (Math.random() - 0.5) * seg * 0.7;
+			let to = target;
+			while (to < from + Math.PI * 2 * 5) to += Math.PI * 2;
+			const T = 5.2, t0 = performance.now();
+			let lastSeg = 0;
+			await new Promise((done) => {
+				const step = () => {
+					const k = Math.min(1, (performance.now() - t0) / 1000 / T);
+					ang = from + (to - from) * (1 - Math.pow(1 - k, 4));
+					const sgi = Math.floor(ang / seg + 0.5);
+					if (sgi !== lastSeg) {
+						lastSeg = sgi;
+						sfx("cas_tick", 0.9 + Math.random() * 0.2);
+						restart(ptr, "flick");
+					}
+					draw();
+					if (k < 1 && root.Visible) requestAnimationFrame(step);
+					else done();
+				};
+				step();
+			});
+			ang %= Math.PI * 2;
+			busy = false;
+			bb.locked = false;
+			result(r.win, r.bet, r.cur);
+			await wait(0.7);
+			bb.draw();
+		});
+	})();
+
+	// ---------------- roulette
+	(() => {
+		const ORDER = [0, 32, 15, 19, 4, 21, 2, 25, 17, 34, 6, 27, 13, 36, 11, 30, 8, 23, 10, 5, 24, 16, 33, 1, 20, 14, 31, 9, 22, 18, 29, 7, 28, 12, 35, 3, 26];
+		const v = (views.roulette = h("div", "cas-view cas-game", null, box));
+		const stage = h("div", "cas-stage", null, v);
+		const cv = h("canvas", "cas-canvas", null, stage);
+		cv.width = cv.height = 380;
+		cv.style.width = "330px";
+		const table = h("div", "rt", null, stage);
+		const side = h("div", "cas-side", null, v);
+		const info = h("div", "cas-info", "", null);
+		const isRed = (n) => lim().reds.includes(n);
+		const bets = new Map(), cells = {};
+		const total = () => [...bets.values()].reduce((a, b) => a + b, 0);
+		function cell(key, label, cls, style) {
+			const c = h("b", cls, label, table);
+			if (style) c.style.cssText = style;
+			cells[key] = c;
+			c.dataset.k = key;
+			click(c, () => {
+				if (busy) return;
+				const chip = bet.amt[bet.cur];
+				if (total() + chip > lim().max[bet.cur]) return note("THE TABLE LIMIT IS " + fmt(lim().max[bet.cur]), true);
+				if (!canPay(total() + chip)) return note("NOT ENOUGH " + bet.cur.toUpperCase(), true);
+				bets.set(key, (bets.get(key) || 0) + chip);
+				sfx("cas_chip", 0.9 + Math.random() * 0.3);
+				drawBets();
+			});
+		}
+		function build() {
+			cell("n0", "0", "z");
+			for (let r = 0; r < 3; r++) for (let c = 0; c < 12; c++) {
+				const n = c * 3 + (3 - r);
+				cell("n" + n, String(n), isRed(n) ? "r" : "k", "grid-row:" + (r + 1) + ";grid-column:" + (c + 2));
+			}
+			for (let d = 1; d <= 3; d++) cell("d" + d, ["1 TO 12", "13 TO 24", "25 TO 36"][d - 1] + "   3x", "o", "grid-row:4;grid-column:" + ((d - 1) * 4 + 2) + "/span 4");
+			[["low", "1-18"], ["even", "EVEN"], ["red", "RED"], ["black", "BLACK"], ["odd", "ODD"], ["high", "19-36"]].forEach(([k, l], i) => {
+				cell(k, l, k === "red" ? "r" : k === "black" ? "k" : "o", "grid-row:5;grid-column:" + (i * 2 + 2) + "/span 2");
+			});
+		}
+		function note(t, bad) {
+			info.textContent = t;
+			info.classList.toggle("bad", !!bad);
+			if (bad) sfx("bad");
+		}
+		function drawBets() {
+			for (const k in cells) {
+				const old = cells[k].querySelector("u");
+				const a = bets.get(k);
+				if (old && (!a || old.textContent !== fmt(a))) old.remove();
+				if (a && !cells[k].querySelector("u")) h("u", null, fmt(a), cells[k]);
+			}
+			const t = total();
+			note(t ? "ON THE TABLE: " + fmt(t) + " " + SYM[bet.cur] : "PICK A CHIP SIZE, THEN TAP THE TABLE");
+			go.disabled = !t;
+			clr.disabled = !t;
+		}
+		const bb = betBox(side, () => {
+			// chips of another kind can't stay on the table
+			if (bb.cur !== bet.cur) bets.clear();
+			bb.cur = bet.cur;
+			drawBets();
+		});
+		side.querySelectorAll("h3")[1].textContent = "CHIP SIZE";
+		h("div", "cas-spacer", null, side);
+		side.appendChild(info);
+		const clr = h("button", "cas-btn", "CLEAR TABLE", side);
+		const go = h("button", "cas-btn go", "SPIN", side);
+		click(clr, () => {
+			if (busy) return;
+			bets.clear();
+			sfx("close");
+			drawBets();
+		});
+		let wa = 0, ba = 0, br = 150, showBall = false;
+		function draw() {
+			const g = cv.getContext("2d"), seg = (Math.PI * 2) / 37;
+			g.clearRect(0, 0, 380, 380);
+			g.save();
+			g.translate(190, 190);
+			g.beginPath();
+			g.arc(0, 0, 186, 0, 7);
+			g.fillStyle = "#5a3413";
+			g.fill();
+			g.lineWidth = 6;
+			g.strokeStyle = "#ffd35a";
+			g.stroke();
+			g.save();
+			g.rotate(wa);
+			ORDER.forEach((n, i) => {
+				g.beginPath();
+				g.moveTo(0, 0);
+				g.arc(0, 0, 150, i * seg - Math.PI / 2 - seg / 2, i * seg - Math.PI / 2 + seg / 2);
+				g.fillStyle = n === 0 ? "#12a150" : isRed(n) ? "#c8102e" : "#17131f";
+				g.fill();
+				g.strokeStyle = "#ffd35a55";
+				g.lineWidth = 1;
+				g.stroke();
+				g.save();
+				g.rotate(i * seg);
+				g.fillStyle = "#fff";
+				g.font = "800 13px Highway, sans-serif";
+				g.textAlign = "center";
+				g.fillText(String(n), 0, -132);
+				g.restore();
+			});
+			g.beginPath();
+			g.arc(0, 0, 100, 0, 7);
+			g.fillStyle = "#2a1a10";
+			g.fill();
+			g.lineWidth = 4;
+			g.strokeStyle = "#ffd35a";
+			g.stroke();
+			for (let i = 0; i < 4; i++) {
+				g.rotate(Math.PI / 2);
+				g.fillStyle = "#ffd35a";
+				g.fillRect(-4, -70, 8, 70);
+			}
+			g.beginPath();
+			g.arc(0, 0, 18, 0, 7);
+			g.fillStyle = "#ffe9a0";
+			g.fill();
+			g.restore();
+			if (showBall) {
+				g.beginPath();
+				g.arc(Math.cos(ba - Math.PI / 2) * br, Math.sin(ba - Math.PI / 2) * br, 8, 0, 7);
+				g.fillStyle = "#fff";
+				g.shadowColor = "#fff";
+				g.shadowBlur = 12;
+				g.fill();
+			}
+			g.restore();
+		}
+		v.open = () => {
+			if (!cells.n0) build();
+			bb.cur = bet.cur;
+			bb.draw();
+			draw();
+		};
+		// the wheel turns slowly on its own, it's a casino
+		setInterval(() => {
+			if (!root.Visible || view !== "roulette" || busy) return;
+			wa += 0.004;
+			draw();
+		}, 33);
+		click(go, async () => {
+			if (busy || !bets.size) return;
+			const cur = bet.cur, list = [];
+			for (const [k, amt] of bets) list.push(k[0] === "n" ? { k: "n", n: Number(k.slice(1)), amt } : { k, amt });
+			const sum = total();
+			bb.locked = true;
+			go.disabled = clr.disabled = true;
+			for (const k in cells) cells[k].classList.remove("hit");
+			take(cur, sum);
+			const r = await ask("cas_roulette", { cur, bets: list }, info);
+			if (!r) {
+				bb.locked = false;
+				drawBets();
+				return;
+			}
+			const seg = (Math.PI * 2) / 37, idx = ORDER.indexOf(r.n);
+			const T = 6, t0 = performance.now(), w0 = wa, wTurn = Math.PI * 2 * 1.6;
+			// the ball runs against the wheel and has to end up in the right pocket
+			const endRel = idx * seg;
+			const bEnd = w0 + wTurn + endRel, b0 = bEnd + Math.PI * 2 * 7;
+			showBall = true;
+			let lastP = 0;
+			await new Promise((done) => {
+				const step = () => {
+					const k = Math.min(1, (performance.now() - t0) / 1000 / T);
+					const e = 1 - Math.pow(1 - k, 3);
+					wa = w0 + wTurn * e;
+					ba = b0 + (bEnd - b0) * (1 - Math.pow(1 - k, 2.4));
+					// drops from the rim into the numbers near the end, with a little bounce
+					const drop = clamp((k - 0.62) / 0.3, 0, 1);
+					br = 172 - 40 * drop + Math.sin(drop * Math.PI * 3) * 6 * (1 - drop);
+					const p = Math.floor((ba - wa) / seg);
+					if (p !== lastP) {
+						lastP = p;
+						sfx("cas_tick", 1.25 - k * 0.45);
+					}
+					draw();
+					if (k < 1 && root.Visible) requestAnimationFrame(step);
+					else done();
+				};
+				step();
+			});
+			cells["n" + r.n].classList.add("hit");
+			busy = false;
+			bb.locked = false;
+			result(r.win, r.bet, r.cur);
+			note(r.n + (r.n === 0 ? " GREEN" : isRed(r.n) ? " RED" : " BLACK"));
+			await wait(2.2);
+			if (busy) return;
+			// bets stay on the table for the next round as long as you can pay them
+			if (!canPay(total())) bets.clear();
+			const keep = info.textContent;
+			drawBets();
+			if (bets.size) note(keep + "   SAME BETS AGAIN?");
+		});
+	})();
+
+	// ---------------- minefield
+	const mines = { bail: async () => {} };
+	(() => {
+		const v = (views.mines = h("div", "cas-view cas-game", null, box));
+		const stage = h("div", "cas-stage", null, v);
+		const grid = h("div", "mf", null, stage);
+		const tiles = [];
+		const side = h("div", "cas-side", null, v);
+		const info = h("div", "cas-info", "", null);
+		let bombs = 3, game = null;
+		const bb = betBox(side, () => drawSide());
+		h("h3", null, "BOMBS", side);
+		const brow = h("div", "cas-row", null, side);
+		const less = h("button", "cas-btn cas-small", "−", brow);
+		const bl = h("div", "cas-amt", "", brow);
+		bl.style.cssText = "font-size:34px;flex:2;color:#ff6b7a";
+		const more = h("button", "cas-btn cas-small", "+", brow);
+		const multE = h("div", "cas-mult", null, side);
+		const multV = h("div", null, "", multE), multL = h("span", null, "", multE);
+		h("div", "cas-spacer", null, side);
+		side.appendChild(info);
+		const go = h("button", "cas-btn go", "START", side);
+		const first = (n) => Math.floor(lim().minesEdge * (25 / (25 - n)) * 100) / 100;
+		function drawSide() {
+			bl.textContent = String(bombs);
+			less.disabled = more.disabled = !!game;
+			info.classList.remove("bad");
+			if (!game) {
+				multV.textContent = first(bombs).toFixed(2) + "x";
+				multL.textContent = "FOR THE FIRST SAFE FIELD";
+				info.textContent = "MORE BOMBS, MORE MONEY PER FIELD";
+				go.className = "cas-btn go";
+				go.textContent = "START";
+				go.disabled = !canPay(bet.amt[bet.cur]);
+			} else {
+				multV.textContent = game.mult.toFixed(2) + "x";
+				multL.textContent = game.picks ? "NEXT FIELD: " + game.next.toFixed(2) + "x" : "PICK A FIELD";
+				info.textContent = game.picks ? "TAKE IT OR KEEP GOING" : "";
+				go.className = "cas-btn cash";
+				go.textContent = game.picks ? "CASH OUT " + fmt(Math.floor(game.amt * game.mult)) + " " + SYM[game.cur] : "CASH OUT";
+				go.disabled = !game.picks;
+			}
+		}
+		const step = (d) => {
+			if (game || busy) return;
+			bombs = clamp(bombs + d, 1, lim().minesMax);
+			sfx("cas_chip");
+			drawSide();
+		};
+		click(less, () => step(-1));
+		click(more, () => step(1));
+		function reset() {
+			grid.classList.remove("live");
+			for (const t of tiles) {
+				t.className = "";
+				t.innerHTML = "";
+			}
+		}
+		function reveal(list, me) {
+			grid.classList.remove("live");
+			for (let i = 0; i < 25; i++) {
+				const t = tiles[i];
+				if (list.includes(i)) {
+					t.className = "open bomb" + (i === me ? " me" : "");
+					t.innerHTML = "";
+					h("div", "cas-bomb", null, t);
+				} else if (!t.classList.contains("gem")) t.classList.add("dim");
+			}
+		}
+		for (let i = 0; i < 25; i++) {
+			const t = h("b", "", null, grid);
+			tiles.push(t);
+			click(t, async () => {
+				if (!game || busy || t.classList.contains("open")) return;
+				const r = await ask("cas_mines_pick", i, info);
+				if (!r) return;
+				busy = false;
+				if (r.boom) {
+					const g = game;
+					game = null;
+					bb.locked = false;
+					reveal(r.mines, i);
+					sfx("blast");
+					restart(flashE, "red");
+					restart(stage, "cas-shake");
+					result(0, g.amt, g.cur);
+					drawSide();
+					return;
+				}
+				game.picks++;
+				game.mult = r.mult;
+				game.next = r.next || r.mult;
+				t.className = "open gem";
+				t.textContent = "◆";
+				sfx("cas_safe", 1 + game.picks * 0.06);
+				if (r.done) {
+					const g = game;
+					game = null;
+					bb.locked = false;
+					reveal(r.mines);
+					result(r.win, g.amt, g.cur);
+				}
+				drawSide();
+			});
+		}
+		async function cash() {
+			if (!game || !game.picks || busy) return;
+			const g = game;
+			const r = await ask("cas_mines_cash", null, info);
+			if (!r) return;
+			busy = false;
+			game = null;
+			bb.locked = false;
+			reveal(r.mines);
+			result(r.win, g.amt, g.cur);
+			drawSide();
+		}
+		click(go, async () => {
+			if (busy) return;
+			if (game) return cash();
+			const amt = bet.amt[bet.cur], cur = bet.cur;
+			if (!canPay(amt)) return;
+			take(cur, amt);
+			sfx("cas_chip");
+			const r = await ask("cas_mines_start", { cur, amt, mines: bombs }, info);
+			if (!r) return;
+			busy = false;
+			reset();
+			grid.classList.add("live");
+			game = { cur, amt, picks: 0, mult: 1, next: r.next };
+			bb.locked = true;
+			drawSide();
+		});
+		// walking away from a running game takes what's on the table, or the bet back if nothing was opened yet
+		mines.bail = async () => {
+			if (!game) return;
+			const g = game;
+			game = null;
+			bb.locked = false;
+			const r = await ask("cas_mines_cash", null, null);
+			busy = false;
+			if (r) result(r.win, g.amt, g.cur);
+			reset();
+		};
+		v.open = () => {
+			if (!game) reset();
+			bb.draw();
+		};
+	})();
+
+	// ---------------- in and out
+	Game.casino = {
+		enter() {
+			if (Game.inCasino) return;
+			Game.inCasino = true;
+			Game.hold = true;
+			fade(() => {
+				for (const c of CURS) shown[c] = data[c] || 0;
+				drawBal();
+				for (const c of CURS) bet.amt[c] = clamp(bet.amt[c], lim().min[c], lim().max[c]);
+				root.Visible = true;
+				busy = false;
+				show("lobby");
+				sfx("cas_in");
+			});
+		},
+		async leave() {
+			if (!Game.inCasino || busy) return;
+			await mines.bail();
+			busy = true;
+			fade(() => {
+				root.Visible = false;
+				busy = false;
+				Game.casinoExit();
+			});
+		},
+	};
+	click(leaveB, () => {
+		sfx("close");
+		Game.casino.leave();
+	});
+	if (DEV) window.__dev.casino = () => Game.casino.enter();
 })();

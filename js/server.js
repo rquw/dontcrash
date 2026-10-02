@@ -269,9 +269,12 @@ export function setState(data, sess, name) {
 	s.claimed = sess.claimed || {};
 	s.runStart = sess.runStart || null;
 	s.runFrom = sess.runFrom || 0;
+	s.mines = sess.mines || null;
+	// firebase drops empty lists, so a game with nothing opened yet comes back without one
+	if (s.mines && !Array.isArray(s.mines.picked)) s.mines.picked = [];
 }
 export function getState() {
-	return copy({ data: s.data, sess: { joined: s.joined, claimed: s.claimed, runStart: s.runStart, runFrom: s.runFrom } });
+	return copy({ data: s.data, sess: { joined: s.joined, claimed: s.claimed, runStart: s.runStart, runFrom: s.runFrom, mines: s.mines } });
 }
 // a fresh page load starts a new session for the playtime rewards
 export function newSession() {
@@ -818,6 +821,142 @@ export function checkAch() {
 		}
 	}
 }
+// ---------------- the casino. the worker rolls everything, the browser only shows it. the house is always a bit ahead
+const CASINO = {
+	min: { coins: 50, gems: 5, keys: 1 },
+	max: { coins: 20000, gems: 250, keys: 10 },
+	// the wheel of fortune, 24 fields. on average you get back about 92%
+	wheel: [0, 1.5, 0, 0.5, 2, 0, 1.5, 0, 0.5, 3, 0, 2, 0, 1.5, 0.5, 0, 5, 0, 2, 0, 0.5, 1.5, 0, 0],
+	// minefield: 5x5, the fair multiplier times this
+	minesEdge: 0.94,
+	minesMax: 20,
+	minesCap: 100,
+	reds: [1, 3, 5, 7, 9, 12, 14, 16, 18, 19, 21, 23, 25, 27, 30, 32, 34, 36],
+};
+CONFIG.casino = CASINO;
+function rnd(n) {
+	if (typeof crypto !== "undefined" && crypto.getRandomValues) {
+		const a = new Uint32Array(1);
+		crypto.getRandomValues(a);
+		return Math.floor((a[0] / 4294967296) * n);
+	}
+	return Math.floor(Math.random() * n);
+}
+const CAS_CUR = ["coins", "gems", "keys"];
+function stake(cur, amt) {
+	if (!CAS_CUR.includes(cur)) return "pick coins, gems or keys";
+	if (!Number.isInteger(amt) || amt < CASINO.min[cur]) return "the smallest bet is " + CASINO.min[cur];
+	if (amt > CASINO.max[cur]) return "the biggest bet is " + CASINO.max[cur];
+	if ((s.data[cur] || 0) < amt) return "not enough " + cur;
+	return null;
+}
+function casinoStat(cur, bet, won) {
+	const c = (s.data.casino = s.data.casino || { plays: 0 });
+	c.plays++;
+	c[cur + "In"] = (c[cur + "In"] || 0) + bet;
+	c[cur + "Out"] = (c[cur + "Out"] || 0) + won;
+}
+handlers.cas_wheel = (a) => {
+	if (!a || typeof a !== "object") return [false, "bad bet"];
+	const bad = stake(a.cur, a.amt);
+	if (bad) return [false, bad];
+	const i = rnd(CASINO.wheel.length);
+	const mult = CASINO.wheel[i];
+	const win = Math.floor(a.amt * mult);
+	s.data[a.cur] += win - a.amt;
+	casinoStat(a.cur, a.amt, win);
+	return [true, { i, mult, win, bet: a.amt, cur: a.cur }];
+};
+// one zero, 36 numbers. colours and halves pay double, a dozen triple, a single number 36 times
+handlers.cas_roulette = (a) => {
+	if (!a || typeof a !== "object" || !Array.isArray(a.bets) || a.bets.length < 1 || a.bets.length > 20) return [false, "bad bet"];
+	let total = 0;
+	for (const b of a.bets) {
+		if (!b || !Number.isInteger(b.amt) || b.amt < 1) return [false, "bad bet"];
+		if (!["red", "black", "even", "odd", "low", "high", "d1", "d2", "d3", "n"].includes(b.k)) return [false, "bad bet"];
+		if (b.k === "n" && !(Number.isInteger(b.n) && b.n >= 0 && b.n <= 36)) return [false, "bad bet"];
+		total += b.amt;
+	}
+	const bad = stake(a.cur, total);
+	if (bad) return [false, bad];
+	const n = rnd(37);
+	const red = CASINO.reds.includes(n);
+	let win = 0;
+	for (const b of a.bets) {
+		let m = 0;
+		if (b.k === "n") m = b.n === n ? 36 : 0;
+		else if (n === 0) m = 0;
+		else if (b.k === "red") m = red ? 2 : 0;
+		else if (b.k === "black") m = red ? 0 : 2;
+		else if (b.k === "even") m = n % 2 === 0 ? 2 : 0;
+		else if (b.k === "odd") m = n % 2 === 1 ? 2 : 0;
+		else if (b.k === "low") m = n <= 18 ? 2 : 0;
+		else if (b.k === "high") m = n >= 19 ? 2 : 0;
+		else m = Math.ceil(n / 12) === Number(b.k[1]) ? 3 : 0;
+		win += b.amt * m;
+	}
+	s.data[a.cur] += win - total;
+	casinoStat(a.cur, total, win);
+	return [true, { n, win, bet: total, cur: a.cur }];
+};
+// minefield. there is no hidden board: every pick is rolled when you make it, with the odds a real board would have.
+// so there's nothing to peek at, and where the bombs "were" is only made up at the end for the picture
+const minesMult = (n, k) => {
+	let m = CASINO.minesEdge;
+	for (let j = 0; j < k; j++) m *= (25 - j) / (25 - n - j);
+	return Math.min(CASINO.minesCap, Math.floor(m * 100) / 100);
+};
+function minesBoard(g, hit) {
+	const free = [];
+	for (let i = 0; i < 25; i++) if (!g.picked.includes(i) && i !== hit) free.push(i);
+	const out = hit == null ? [] : [hit];
+	while (out.length < g.n && free.length) out.push(free.splice(rnd(free.length), 1)[0]);
+	return out;
+}
+handlers.cas_mines_start = (a) => {
+	if (!a || typeof a !== "object") return [false, "bad bet"];
+	if (!Number.isInteger(a.mines) || a.mines < 1 || a.mines > CASINO.minesMax) return [false, "1 to " + CASINO.minesMax + " bombs"];
+	// a game that was left lying around gets paid out first
+	if (s.mines) handlers.cas_mines_cash();
+	const bad = stake(a.cur, a.amt);
+	if (bad) return [false, bad];
+	s.data[a.cur] -= a.amt;
+	s.mines = { cur: a.cur, amt: a.amt, n: a.mines, picked: [] };
+	return [true, { next: minesMult(a.mines, 1) }];
+};
+handlers.cas_mines_pick = (i) => {
+	const g = s.mines;
+	if (!g) return [false, "no game"];
+	if (!Number.isInteger(i) || i < 0 || i > 24 || g.picked.includes(i)) return [false, "bad field"];
+	const left = 25 - g.picked.length;
+	if (rnd(left) < g.n) {
+		s.mines = null;
+		casinoStat(g.cur, g.amt, 0);
+		return [true, { boom: true, mines: minesBoard(g, i), bet: g.amt, cur: g.cur }];
+	}
+	g.picked.push(i);
+	const mult = minesMult(g.n, g.picked.length);
+	// nothing but bombs left: that's a full clear, paid out right away
+	if (g.picked.length >= 25 - g.n) {
+		const win = Math.floor(g.amt * mult);
+		s.data[g.cur] += win;
+		s.mines = null;
+		casinoStat(g.cur, g.amt, win);
+		return [true, { boom: false, mult, done: true, win, mines: minesBoard(g), bet: g.amt, cur: g.cur }];
+	}
+	return [true, { boom: false, mult, next: minesMult(g.n, g.picked.length + 1) }];
+};
+handlers.cas_mines_cash = () => {
+	const g = s.mines;
+	if (!g) return [false, "no game"];
+	// nothing opened yet, nothing was rolled: the bet just goes back
+	const mult = g.picked.length ? minesMult(g.n, g.picked.length) : 1;
+	const win = Math.floor(g.amt * mult);
+	s.data[g.cur] += win;
+	s.mines = null;
+	casinoStat(g.cur, g.amt, win);
+	return [true, { mult, win, mines: minesBoard(g), bet: g.amt, cur: g.cur }];
+};
 // start over. what you paid real money for stays yours
 handlers.reset = () => {
 	const old = s.data;
