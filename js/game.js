@@ -3,9 +3,9 @@ import {
 	camera, Lighting, Instance, workspace, markQueryRoot, Enum, OverlapParams, TweenService, TweenInfo, Debris, UIS, playSfx, loopSound, loadSounds, setSfxVolume,
 	NumberSequence, NumberSequenceKeypoint, NumberRange, ColorSequence, ColorSequenceKeypoint, guiRootInst, setUiScale, setLowGraphics, physicsGround,
 	mergeFloor, start, perf,
-} from "./engine.js?v=1790921848";
-import * as Server from "./server.js?v=1790921848";
-import * as Online from "./online.js?v=1790921848";
+} from "./engine.js?v=1790923065";
+import * as Server from "./server.js?v=1790923065";
+import * as Online from "./online.js?v=1790923065";
 
 const V3 = (x, y, z) => new Vector3(x, y, z);
 const RGB = Color3.fromRGB;
@@ -4061,6 +4061,7 @@ let showResults;
 		results.GroupTransparency = 1;
 		results.Position = US(0.5, 0.6);
 		tw(results, 0.5, { GroupTransparency: 0, Position: US(0.5, 0.53) });
+		if (Game.shopNudge) Game.shopNudge();
 
 		const record = award && info.prevBest != null && award.dist > info.prevBest && award.dist > 0;
 		title.Text = record ? "NEW RECORD" : info.stopped ? "STOPPED" : "CRASHED";
@@ -4202,7 +4203,7 @@ let showResults;
 		use.Text = "USE A REVIVE  (" + owned + " LEFT)";
 		box.Size = UO(500, owned > 0 ? 340 : 260);
 		const left = Game.MAX_REVIVES - (stats.revives || 0);
-		subL.Text = "KEEP GOING WHERE YOU CRASHED  (" + left + " LEFT THIS RUN)";
+		subL.Text = "CARRY ON RIGHT HERE  (" + left + " LEFT THIS RUN)";
 		box.Visible = true;
 		box.GroupTransparency = 1;
 		box.Position = US(0.5, 0.56);
@@ -5018,6 +5019,67 @@ Game.showXp = (award, my, alive) => {
 		slot = 1;
 		if (panels.backpack.frame.Visible && !panels.backpack.closing) draw();
 		else openPanel("backpack");
+	};
+})();
+
+// ------------------------------------------------------------------ first time you die with 60+ gems: a little nudge towards the shop
+(() => {
+	const card = make("TextButton", {
+		AnchorPoint: V2(1, 0),
+		Position: U2(1, 460, 0, 128),
+		Size: UO(420, 92),
+		BackgroundColor3: RGB(18, 20, 30),
+		BackgroundTransparency: 0.05,
+		AutoButtonColor: false,
+		Text: "",
+		ZIndex: 54,
+		Visible: false,
+		Parent: gui,
+	});
+	make("UICorner", { CornerRadius: UDim.new(0, 12), Parent: card });
+	make("UIStroke", { Color: GEM, Thickness: 2, Transparency: 0.1, ApplyStrokeMode: "Border", Parent: card });
+	const ic = Icons.make("gem", card, 44);
+	ic.AnchorPoint = V2(0, 0.5);
+	ic.Position = U2(0, 16, 0.5, 0);
+	const l1 = text(card, "I SEE YOU HAVE A LOT OF GEMS...", U2(1, -84, 0, 26), UO(74, 16), 19, WHITE, LEFT);
+	const l2 = text(card, "CHECK OUT THE SHOP!  TAP HERE", U2(1, -84, 0, 26), UO(74, 46), 19, GEM, LEFT);
+	for (const l of [l1, l2]) l.ZIndex = 55;
+	let token = 0;
+	const hide = () => {
+		token++;
+		const my = token;
+		tw(card, 0.35, { Position: U2(1, 460, 0, 128) }, "Quad", "In");
+		task.delay(0.4, () => {
+			if (my === token) card.Visible = false;
+		});
+	};
+	card.MouseButton1Click.Connect(() => {
+		hide();
+		sfx("click");
+		fade(() => {
+			toMenu();
+			task.delay(0.3, () => Game.openShop());
+		});
+	});
+	// gone as soon as you leave the results screen
+	setInterval(() => {
+		if (card.Visible && !results.Visible) hide();
+	}, 300);
+	Game.shopNudge = () => {
+		if (data.shopHint || (data.gems || 0) < 60 || Game.race) return;
+		request("shop_hint");
+		token++;
+		const my = token;
+		task.delay(1.2, () => {
+			if (my !== token) return;
+			card.Visible = true;
+			card.Position = U2(1, 460, 0, 128);
+			tw(card, 0.5, { Position: U2(1, -16, 0, 128) }, "Back");
+			sfx("map_clear");
+			task.delay(9, () => {
+				if (my === token) hide();
+			});
+		});
 	};
 })();
 
@@ -8961,7 +9023,7 @@ if (DEV) window.__dev = { crash: () => task.spawn(crash, []), data: () => data, 
 // ------------------------------------------------------------------ old version warning
 // every build has its own number, the page checks now and then whether a newer one is online
 (() => {
-	const BUILD = "1790921848";
+	const BUILD = "1790923065";
 	if (BUILD.startsWith("__")) return;
 	const bar = make("TextButton", {
 		AnchorPoint: V2(0.5, 0),

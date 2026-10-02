@@ -163,6 +163,7 @@ const DEFAULT = {
 	lastDaily: 0, lastHourly: 0,
 	codes: {},
 	bought: [],
+	shopHint: false,
 	paid: {},
 	ach: {},
 	boost: 1, boostUntil: 0,
@@ -293,6 +294,11 @@ handlers.redeem = (code) => {
 	s.data.codes[code] = true;
 	grant(s.data, r);
 	return [true, "code redeemed: " + describe(r)];
+};
+// the "you've got gems, go spend them" nudge only shows once
+handlers.shop_hint = () => {
+	s.data.shopHint = true;
+	return [true];
 };
 handlers.buy_code = () => {
 	const d = s.data;
