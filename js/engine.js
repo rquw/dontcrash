@@ -2250,8 +2250,13 @@ export class GuiObject extends Instance {
 		if (this._changed[k]) this._changed[k].Fire();
 		// text changes every frame on the hud, skip the full restyle for those
 		if (k === "Text" && this.txt && !this.p.TextScaled && !this.p.RichText && !this._batch) {
-			if (this.txt.textContent !== v) this.txt.textContent = v;
-			return;
+			// in another language the text can be longer and needs the letters resized, that's the long way round
+			const tr = window.__tr;
+			if (!tr || tr(v) === v) {
+				if (this.txt.textContent !== v) this.txt.textContent = v;
+				if (this._shrunk) this._apply(k);
+				return;
+			}
 		}
 		this._apply(k);
 	}
@@ -2482,13 +2487,36 @@ export class GuiObject extends Instance {
 				const sc = d.TextStrokeColor3.css((1 - st) * (1 - d.TextTransparency));
 				t.style.textShadow = st < 1 ? `1px 0 0 ${sc}, -1px 0 0 ${sc}, 0 1px 0 ${sc}, 0 -1px 0 ${sc}, 1px 1px 0 ${sc}, -1px -1px 0 ${sc}, 1px -1px 0 ${sc}, -1px 1px 0 ${sc}` : "none";
 			}
-			t.style.fontSize = (d.TextScaled ? fitSize(this) : d.TextSize) + "px";
+			// what's shown is the text in the player's language. longer than the english it was laid out for: smaller letters
+			const tr = window.__tr;
+			const raw = String(d.Text == null ? "" : d.Text);
+			const shown = tr && this.ClassName !== "TextBox" ? tr(raw) : raw;
+			let fs = d.TextScaled ? fitSize(this, shown) : d.TextSize;
+			this._shrunk = !d.TextScaled && shown !== raw && raw.length > 0 && this.ClassName !== "TextBox";
+			if (this._shrunk) {
+				// worked out once per text: as much room as the box has, or as much as the english took if that
+				// already hung over the edge on purpose
+				const key = shown + "|" + d.TextSize + "|" + (d.TextWrapped ? 1 : 0);
+				if (this._fitKey !== key) {
+					const w = this.el.clientWidth, h = this.el.clientHeight;
+					if (w > 0) {
+						this._fitKey = key;
+						measure.font = `${d.TextSize}px Overpass`;
+						const need = measure.measureText(shown).width, was = measure.measureText(raw).width;
+						const lines = d.TextWrapped ? Math.max(1, Math.floor(h / (d.TextSize * 1.15))) : 1;
+						const room = Math.max(w * 0.96 * (lines > 1 ? lines * 0.85 : 1), was);
+						this._fit = need > room ? Math.max(0.55, room / need) : 1;
+					} else this._fit = 1;
+				}
+				fs *= this._fit;
+			}
+			t.style.fontSize = fs + "px";
 			if (this.ClassName === "TextBox") {
 				if (this.el.value !== d.Text && document.activeElement !== this.el) this.el.value = d.Text;
-				this.el.placeholder = d.PlaceholderText || "";
+				this.el.placeholder = tr ? tr(d.PlaceholderText || "") : d.PlaceholderText || "";
 			} else {
-				if (d.RichText) t.innerHTML = richText(d.Text);
-				else if (t.textContent !== d.Text) t.textContent = d.Text;
+				if (d.RichText) t.innerHTML = richText(shown);
+				else if (t.textContent !== shown) t.textContent = shown;
 			}
 			const wrap = d.TextWrapped || autoY;
 			t.style.whiteSpace = wrap ? "pre-wrap" : "pre";
@@ -2514,11 +2542,11 @@ function richText(s) {
 	return String(s).replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
 }
 const measure = document.createElement("canvas").getContext("2d");
-function fitSize(g) {
+function fitSize(g, shown) {
 	const w = g.el.clientWidth || 100, h = g.el.clientHeight || 20;
 	let size = Math.floor(h * 0.9);
 	measure.font = `${size}px Overpass`;
-	const tw = measure.measureText(g.p.Text).width;
+	const tw = measure.measureText(shown == null ? g.p.Text : shown).width;
 	if (tw > w) size = Math.floor((size * w) / tw);
 	return Math.max(8, size);
 }

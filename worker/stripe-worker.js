@@ -163,6 +163,7 @@ function levelReward(level) {
 
 const DEFAULT = {
 	coins: 0, gems: 0, keys: 0, best: 0, revives: 0, farthest: 0, points: 0,
+	style: { own: {}, color: "", title: "", trail: "" },
 	power: { coins: 0 },
 	skins: { Default: true }, skin: "Default",
 	// what you fly after the first boss and in space. empty = the standard jet / stealth
@@ -306,6 +307,7 @@ function profileOf(d) {
 	const p = {
 		name: d.name || "player", best: d.best || 0, level: d.level || 1, xp: d.xp || 0, skin: d.skin, death: d.death,
 		stats: d.stats, created: d.created || 0, updated: Date.now(), ach: Object.keys(d.ach || {}).length,
+		nc: (d.style && d.style.color) || "", tt: (d.style && d.style.title) || "",
 	};
 	for (const [k, kind] of [["d", "day"], ["w", "week"], ["m", "month"]]) {
 		const o = (d.lb || {})[kind] || {};
@@ -827,6 +829,42 @@ function checkAch() {
 		}
 	}
 }
+// ---------------- things to spend coins on. none of it makes you fly better, it's all for showing off
+CONFIG.style = {
+	color: [
+		{ id: "red", hex: "#ff5d6c", price: 4000 }, { id: "orange", hex: "#ff9d3c", price: 6000 }, { id: "green", hex: "#5df08a", price: 8000 },
+		{ id: "cyan", hex: "#5fdcff", price: 12000 }, { id: "purple", hex: "#b98aff", price: 18000 }, { id: "pink", hex: "#ff7ad8", price: 25000 },
+		{ id: "gold", hex: "#ffd35a", price: 40000 }, { id: "rainbow", hex: "rainbow", price: 90000 },
+	],
+	title: [
+		{ id: "rookie", name: "ROOKIE", price: 2000 }, { id: "pilot", name: "PILOT", price: 6000 }, { id: "ace", name: "ACE", price: 15000 },
+		{ id: "daredevil", name: "DAREDEVIL", price: 25000 }, { id: "menace", name: "MENACE", price: 40000 }, { id: "legend", name: "LEGEND", price: 75000 },
+		{ id: "myth", name: "MYTH", price: 150000 },
+	],
+	trail: [
+		{ id: "red", hex: "#ff4050", price: 3000 }, { id: "green", hex: "#4dff8a", price: 5000 }, { id: "cyan", hex: "#40e0ff", price: 5000 },
+		{ id: "pink", hex: "#ff60d0", price: 8000 }, { id: "gold", hex: "#ffd040", price: 12000 }, { id: "rainbow", hex: "rainbow", price: 50000 },
+	],
+};
+// buy it, or put it on if it's yours. id "" takes it off
+handlers.style = (a) => {
+	if (!a || typeof a !== "object" || !CONFIG.style[a.kind]) return [false, "unknown item"];
+	const st = s.data.style;
+	if (a.id === "") {
+		st[a.kind] = "";
+		return [true, "taken off"];
+	}
+	const item = CONFIG.style[a.kind].find((x) => x.id === a.id);
+	if (!item) return [false, "unknown item"];
+	const key = a.kind + ":" + item.id;
+	if (!st.own[key]) {
+		if (s.data.coins < item.price) return [false, "not enough coins"];
+		s.data.coins -= item.price;
+		st.own[key] = true;
+	}
+	st[a.kind] = item.id;
+	return [true, "it's yours"];
+};
 // gems for keys, the only way to trade one thing for another
 CONFIG.gemPacks = [
 	{ id: "k1", keys: 1, gems: 15 },
@@ -1206,7 +1244,7 @@ async function whoIs(env, token) {
 }
 
 // what the browser may ask for. everything else isn't a thing
-const ACTIONS = new Set(["mission_claim", "mission_bonus", "claim_daily", "claim_hourly", "claim_play", "redeem", "shop_hint", "buy_code", "buy_power", "loadout", "skin", "death", "tut_done", "unlock_start", "use_revive", "revive_gems", "paid", "buy_revive", "run_start", "run_end", "race_prize", "vs_played", "ach", "ach_retro", "reset", "cas_wheel", "cas_roulette", "cas_mines_start", "cas_mines_pick", "cas_mines_cash", "cas_bj_start", "cas_bj_hit", "cas_bj_stand", "cas_bj_double", "cas_enter", "cas_leave", "buy_gems"]);
+const ACTIONS = new Set(["mission_claim", "mission_bonus", "claim_daily", "claim_hourly", "claim_play", "redeem", "shop_hint", "buy_code", "buy_power", "loadout", "skin", "death", "tut_done", "unlock_start", "use_revive", "revive_gems", "paid", "buy_revive", "run_start", "run_end", "race_prize", "vs_played", "ach", "ach_retro", "reset", "cas_wheel", "cas_roulette", "cas_mines_start", "cas_mines_pick", "cas_mines_cash", "cas_bj_start", "cas_bj_hit", "cas_bj_stand", "cas_bj_double", "cas_enter", "cas_leave", "buy_gems", "style"]);
 
 async function sync(req, env, ctx) {
 	let body;
@@ -1285,6 +1323,14 @@ async function sync(req, env, ctx) {
 		setRunClock(null);
 		results.push([r[0], typeof r[1] === "string" || (r[1] && typeof r[1] === "object") ? r[1] : null]);
 	}
+	// big wins and cash outs go on the ticker everyone in the casino sees
+	const feed = [];
+	actions.forEach((a, i) => {
+		const r = results[i], o = r && r[0] && r[1];
+		if (!o || typeof o !== "object" || !a || typeof a.a !== "string") return;
+		if (a.a === "cas_leave" && o.paid > 0) feed.push({ n: who.name, k: "cash", w: o.paid });
+		else if (a.a.startsWith("cas_") && o.win >= 600 && o.bet > 0 && o.win >= o.bet * 3) feed.push({ n: who.name, k: "win", w: o.win, g: a.a.split("_")[1] });
+	});
 	call("get");
 	checkAch();
 	const out = getState();
@@ -1294,9 +1340,17 @@ async function sync(req, env, ctx) {
 
 	const writes = [fbWrite(env, "PUT", `vault/${uid}`, out), fbWrite(env, "PATCH", `players/${uid}`, profile)];
 	for (const id of collected) writes.push(fbWrite(env, "PUT", `grants/${uid}/${id}/claimed`, true));
+	for (const f of feed.slice(0, 3)) writes.push(fbWrite(env, "POST", "meta/feed", { ...f, at: { ".sv": "timestamp" } }));
+	if (feed.length) ctx.waitUntil(trimFeed(env).catch(() => {}));
 	await Promise.all(writes);
 	ctx.waitUntil(settle(env).catch(() => {}));
 	return json({ ok: true, results, data: out.data, sess: { joined: out.sess.joined, claimed: out.sess.claimed }, now: Math.floor(Date.now() / 1000) });
+}
+
+// the ticker only ever needs the last few
+async function trimFeed(env) {
+	const keys = Object.keys((await fbGet(env, "meta/feed", "shallow=true")) || {}).sort();
+	for (const k of keys.slice(0, Math.max(0, keys.length - 25))) await fbWrite(env, "DELETE", `meta/feed/${k}`);
 }
 
 // ---------------- leaderboard prizes. when a day, week or month is over the top 3 of it get something,

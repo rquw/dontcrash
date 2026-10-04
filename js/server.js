@@ -163,6 +163,7 @@ export function levelReward(level) {
 
 const DEFAULT = {
 	coins: 0, gems: 0, keys: 0, best: 0, revives: 0, farthest: 0, points: 0,
+	style: { own: {}, color: "", title: "", trail: "" },
 	power: { coins: 0 },
 	skins: { Default: true }, skin: "Default",
 	// what you fly after the first boss and in space. empty = the standard jet / stealth
@@ -306,6 +307,7 @@ export function profileOf(d) {
 	const p = {
 		name: d.name || "player", best: d.best || 0, level: d.level || 1, xp: d.xp || 0, skin: d.skin, death: d.death,
 		stats: d.stats, created: d.created || 0, updated: Date.now(), ach: Object.keys(d.ach || {}).length,
+		nc: (d.style && d.style.color) || "", tt: (d.style && d.style.title) || "",
 	};
 	for (const [k, kind] of [["d", "day"], ["w", "week"], ["m", "month"]]) {
 		const o = (d.lb || {})[kind] || {};
@@ -827,6 +829,42 @@ export function checkAch() {
 		}
 	}
 }
+// ---------------- things to spend coins on. none of it makes you fly better, it's all for showing off
+CONFIG.style = {
+	color: [
+		{ id: "red", hex: "#ff5d6c", price: 4000 }, { id: "orange", hex: "#ff9d3c", price: 6000 }, { id: "green", hex: "#5df08a", price: 8000 },
+		{ id: "cyan", hex: "#5fdcff", price: 12000 }, { id: "purple", hex: "#b98aff", price: 18000 }, { id: "pink", hex: "#ff7ad8", price: 25000 },
+		{ id: "gold", hex: "#ffd35a", price: 40000 }, { id: "rainbow", hex: "rainbow", price: 90000 },
+	],
+	title: [
+		{ id: "rookie", name: "ROOKIE", price: 2000 }, { id: "pilot", name: "PILOT", price: 6000 }, { id: "ace", name: "ACE", price: 15000 },
+		{ id: "daredevil", name: "DAREDEVIL", price: 25000 }, { id: "menace", name: "MENACE", price: 40000 }, { id: "legend", name: "LEGEND", price: 75000 },
+		{ id: "myth", name: "MYTH", price: 150000 },
+	],
+	trail: [
+		{ id: "red", hex: "#ff4050", price: 3000 }, { id: "green", hex: "#4dff8a", price: 5000 }, { id: "cyan", hex: "#40e0ff", price: 5000 },
+		{ id: "pink", hex: "#ff60d0", price: 8000 }, { id: "gold", hex: "#ffd040", price: 12000 }, { id: "rainbow", hex: "rainbow", price: 50000 },
+	],
+};
+// buy it, or put it on if it's yours. id "" takes it off
+handlers.style = (a) => {
+	if (!a || typeof a !== "object" || !CONFIG.style[a.kind]) return [false, "unknown item"];
+	const st = s.data.style;
+	if (a.id === "") {
+		st[a.kind] = "";
+		return [true, "taken off"];
+	}
+	const item = CONFIG.style[a.kind].find((x) => x.id === a.id);
+	if (!item) return [false, "unknown item"];
+	const key = a.kind + ":" + item.id;
+	if (!st.own[key]) {
+		if (s.data.coins < item.price) return [false, "not enough coins"];
+		s.data.coins -= item.price;
+		st.own[key] = true;
+	}
+	st[a.kind] = item.id;
+	return [true, "it's yours"];
+};
 // gems for keys, the only way to trade one thing for another
 CONFIG.gemPacks = [
 	{ id: "k1", keys: 1, gems: 15 },
