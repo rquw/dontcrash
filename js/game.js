@@ -3,9 +3,9 @@ import {
 	camera, Lighting, Instance, workspace, markQueryRoot, Enum, OverlapParams, TweenService, TweenInfo, Debris, UIS, playSfx, loopSound, loadSounds, setSfxVolume,
 	NumberSequence, NumberSequenceKeypoint, NumberRange, ColorSequence, ColorSequenceKeypoint, guiRootInst, setUiScale, setLowGraphics, physicsGround,
 	mergeFloor, start, perf,
-} from "./engine.js?v=1791128189";
-import * as Server from "./server.js?v=1791128189";
-import * as Online from "./online.js?v=1791128189";
+} from "./engine.js?v=1791128942";
+import * as Server from "./server.js?v=1791128942";
+import * as Online from "./online.js?v=1791128942";
 
 const V3 = (x, y, z) => new Vector3(x, y, z);
 const RGB = Color3.fromRGB;
@@ -5798,9 +5798,10 @@ let startBoss, updateBoss, resetSky;
 		bossDone = true;
 		stats.bosses++;
 		bossBar.Visible = false;
-		if (b.green) b.green.part.Destroy();
+		if (b.green) dropGreen(b);
 		if (b.shot) b.shot.part.Destroy();
 		const at = b.p;
+		bossFill.BackgroundColor3 = WHITE;
 		flash();
 		sfx("boss_down");
 		ball(at, 320, new Color3(1, 1, 0.9), 1.2);
@@ -5864,29 +5865,73 @@ let startBoss, updateBoss, resetSky;
 		p.Parent = junk;
 		return p;
 	}
-	function fireGreen(b) {
-		const from = b.cf.mul(V3(0, -12, 10));
-		b.green = { part: glowPart(7), x: from.X, y: from.Y, rz: from.Z - pos.Z, y0: from.Y, rz0: from.Z - pos.Z };
-		b.green.part.Position = from;
+	// nothing here is written out. the green one flies down its own lane and never comes to you: a green line shows
+	// the lane, arrows next to your plane point at it, and the boss bar is the same green and comes in three pieces
+	const marks = [1, 2].map((i) => make("Frame", { Position: U2(i / 3, -2, 0, 0), Size: U2(0, 4, 1, 0), BackgroundColor3: BLACK, BorderSizePixel: 0, ZIndex: 2, Visible: false, Parent: bossBar }));
+	const arrows = [-1, 1].map((side) => {
+		const a = text(hud, side < 0 ? "◀" : "▶", UO(70, 70), U2(0.5, side * 190 - 35, 0.66, -35), 60, GREEN);
+		a.TextStrokeTransparency = 0.3;
+		a.Visible = false;
+		return a;
+	});
+	RunService.RenderStepped.Connect(() => {
+		const on = !!boss;
+		if (marks[0].Visible !== on) for (const m of marks) m.Visible = on;
+		const g = on && !dead && boss.green;
+		const dx = g ? g.lane - pos.X : 0;
+		arrows.forEach((a, i) => {
+			const show = !!g && (i === 0 ? dx < -12 : dx > 12);
+			if (a.Visible !== show) a.Visible = show;
+			if (show) {
+				// they push outwards, the further away the lane is the harder
+				const push = (clock() * 2.2) % 1;
+				a.Position = U2(0.5, (i === 0 ? -1 : 1) * (170 + push * 46) - 35, 0.66, -35);
+				a.TextTransparency = push * 0.85;
+			}
+		});
+	});
+	function fireGreen(b, side) {
+		const from = b.cf.mul(V3(side * 30, -12, 10));
+		// a lane next to you, never the one you're in
+		const way = Math.random() < 0.5 ? -1 : 1;
+		let lane = clampX(pos.X + way * random(45, 105));
+		if (Math.abs(lane - pos.X) < 40) lane = clampX(pos.X - way * random(45, 105));
+		const line = beamPart(GREEN, 0.6);
+		const g = (b.green = { part: glowPart(8), line, lane, x: from.X, y: from.Y, rz: from.Z - pos.Z, x0: from.X, y0: from.Y, rz0: from.Z - pos.Z });
+		g.part.Position = from;
+		const halo = Instance.new("Glow");
+		halo.Size = 60;
+		halo.Color = GREEN;
+		halo.Transparency = 0.55;
+		halo.Parent = g.part;
 		sfx("missile_launch", 1.3);
-		if (!b.toldGreen) {
-			b.toldGreen = true;
-			banner("FLY INTO THE GREEN ONE!", GREEN, 2.6);
-		}
+		// from now on the bar is the colour of the thing that hurts it
+		tw(bossFill, 0.4, { BackgroundColor3: GREEN });
+	}
+	function dropGreen(b) {
+		b.green.part.Destroy();
+		b.green.line.Destroy();
+		b.green = null;
 	}
 	function stepGreen(b, dt) {
 		const g = b.green;
-		// it comes down to your height and drifts your way, slow enough to line up with
 		g.rz += 105 * dt;
 		const k = clamp(1 - g.rz / g.rz0, 0, 1);
-		g.y = g.y0 + (pos.Y - g.y0) * Math.min(1, k * 1.6);
-		g.x += clamp(pos.X - g.x, -40 * dt, 40 * dt);
+		// it swings into its lane on the way down, then it's dead straight
+		const e = Math.min(1, k * 2);
+		const ease = e * e * (3 - 2 * e);
+		g.x = g.x0 + (g.lane - g.x0) * ease;
+		g.y = g.y0 + (pos.Y - g.y0) * ease;
 		g.part.Position = V3(g.x, g.y, pos.Z + g.rz);
-		g.part.Size = Vector3.one.mul(7 + Math.sin(clock() * 14) * 1);
+		g.part.Size = Vector3.one.mul(8 + Math.sin(clock() * 14) * 1.2);
+		// the lane, from the missile all the way past you
+		const len = Math.max(4, -g.rz + 60);
+		g.line.Size = V3(1.1, 1.1, len);
+		g.line.Position = V3(g.lane, pos.Y, pos.Z + g.rz + len / 2);
+		g.line.Transparency = 0.45 + Math.sin(clock() * 9) * 0.2;
 		if (Math.abs(g.rz) < 12 && Math.abs(g.x - pos.X) < 13) {
 			// caught: it leaves the way you're flying
-			g.part.Destroy();
-			b.green = null;
+			dropGreen(b);
 			const dist = Math.abs(b.p.Z - pos.Z);
 			b.shot = { part: glowPart(5), x: pos.X, y: pos.Y, rz: -6, vx: vx, t: 0, dur: 0.85, dist, y0: pos.Y };
 			sfx("laser_fire", 1.5);
@@ -5895,10 +5940,8 @@ let startBoss, updateBoss, resetSky;
 			return;
 		}
 		if (g.rz > 30) {
-			g.part.Destroy();
-			b.green = null;
-			b.nextGreen = b.t + 3;
-			popup("MISSED IT", DIM);
+			dropGreen(b);
+			b.nextGreen = b.t + 2;
 		}
 	}
 	function stepShot(b, dt) {
@@ -5918,9 +5961,8 @@ let startBoss, updateBoss, resetSky;
 		b.shot = null;
 		if (Math.abs(sh.x - b.p.X) < 34) hitBoss(b, V3(sh.x, b.p.Y - 6, b.p.Z));
 		else {
-			popup("MISSED", DIM);
 			sfx("near", 0.8);
-			b.nextGreen = b.t + 3;
+			b.nextGreen = b.t + 2;
 		}
 	}
 	// bend a part where it sits. the boss is moved as one piece, so it keeps the dent
@@ -5929,7 +5971,9 @@ let startBoss, updateBoss, resetSky;
 	};
 	function hitBoss(b, at) {
 		b.hits++;
-		bossFill.Size = US(1 - b.hits / 3, 1);
+		// one piece of the bar goes: it flashes white and drains
+		bossFill.BackgroundColor3 = WHITE;
+		tw(bossFill, 0.5, { Size: US(1 - b.hits / 3, 1), BackgroundColor3: GREEN });
 		flash();
 		sfx("blast");
 		shake = Math.max(shake, 0.6);
@@ -5941,13 +5985,11 @@ let startBoss, updateBoss, resetSky;
 		const loose = b.model.GetChildren().filter((p) => p.IsA("BasePart") && p !== b.body && p !== b.beacon);
 		if (b.hits === 1) {
 			// smoking, and knocked out of shape here and there
-			banner("HIT!  1 / 3", GREEN, 2);
 			for (const p of loose) if (Math.random() < 0.35) dent(p, 0.12, Math.random() * 0.8);
 			b.engines[0].glow.Color = RGB(40, 40, 40);
 			b.engines[0].light.Brightness = 0;
 		} else if (b.hits === 2) {
 			// it can't hold itself straight any more and the wings hang
-			banner("HIT!  2 / 3", GREEN, 2);
 			sfx("alarm", 1, 0.7);
 			for (const side of [-1, 1]) for (const p of b.wings[side]) dent(p, 0.3, 2 + Math.random() * 3);
 			for (const p of loose) if (Math.random() < 0.3) dent(p, 0.2, Math.random());
@@ -5955,7 +5997,6 @@ let startBoss, updateBoss, resetSky;
 			b.engines[3].light.Brightness = 0;
 		} else {
 			// the wings go, and without wings it comes down
-			banner("HIT!  3 / 3", GREEN, 2);
 			for (const side of [-1, 1]) {
 				const wingAt = b.cf.mul(V3(side * 40, -4, 8));
 				ball(wingAt, 130, RGB(255, 140, 40), 1.2);
@@ -5995,8 +6036,7 @@ let startBoss, updateBoss, resetSky;
 		}
 		b.beams = [];
 		Missiles.clear();
-		if (b.green) b.green.part.Destroy();
-		b.green = null;
+		if (b.green) dropGreen(b);
 		for (const e of b.engines) e.glow.Color = RGB(40, 40, 40);
 		// which way it tips over
 		b.fallSide = Math.random() < 0.5 ? -1 : 1;
@@ -6056,9 +6096,10 @@ let startBoss, updateBoss, resetSky;
 		const [m, body, engines, beacon, wings] = bossPlane();
 		const [halo, rings] = makeHalo();
 		const start0 = V3(-450, 120, pos.Z + 260);
-		boss = { model: m, body, engines, beacon, wings, hits: 0, nextGreen: 7.5, t: 0, p: start0, x: 0, look: V3(0.6, -0.2, -1).Unit, roll: 0, beams: [], nextShot: 5, volleys: 0, finale: false };
+		boss = { model: m, body, engines, beacon, wings, hits: 0, sinceGreen: 1, t: 0, p: start0, x: 0, look: V3(0.6, -0.2, -1).Unit, roll: 0, beams: [], nextShot: 5, volleys: 0, finale: false };
 		m.PivotTo(CFrame.lookAt(start0, start0.add(boss.look)));
 		bossFill.Size = US(1, 1);
+		bossFill.BackgroundColor3 = WHITE;
 		boss.halo = halo;
 		boss.rings = rings;
 		bossBar.Visible = true;
@@ -6109,7 +6150,6 @@ let startBoss, updateBoss, resetSky;
 		if (b.shot) stepShot(b, dt);
 		if (b.finale) return;
 		if (b.green) stepGreen(b, dt);
-		else if (!b.shot && t >= b.nextGreen) fireGreen(b);
 
 		const laserEnd = HOLD + 4.5;
 		const missileEnd = laserEnd + MISSILE_TIME;
@@ -6127,10 +6167,18 @@ let startBoss, updateBoss, resetSky;
 			}
 			if (t >= b.nextMissile) {
 				const k = Math.min(1, (t - laserEnd) / MISSILE_TIME);
-				if (k > 0.5 && Math.random() < 0.4) {
-					launch(-1, k);
-					launch(1, k);
-				} else launch(Math.random() < 0.5 ? -1 : 1, k);
+				// now and then one of them is green. never two at once, and never one right after the other
+				const side = Math.random() < 0.5 ? -1 : 1;
+				if (!b.green && !b.shot && t >= (b.nextGreen || 0) && (b.sinceGreen >= 3 || (b.sinceGreen >= 1 && Math.random() < 0.3))) {
+					b.sinceGreen = 0;
+					fireGreen(b, side);
+				} else {
+					b.sinceGreen++;
+					if (k > 0.5 && Math.random() < 0.4) {
+						launch(-1, k);
+						launch(1, k);
+					} else launch(side, k);
+				}
 				b.nextMissile = t + 1.3 - k * 0.5;
 			}
 			// lasers don't stop completely while the missiles fly
@@ -8527,7 +8575,7 @@ applySettings();
 toMenu();
 start();
 document.getElementById("boot").remove();
-if (DEV) window.__dev = { bossS: () => boss && { hits: boss.hits, green: boss.green ? [Math.round(boss.green.x), Math.round(boss.green.rz)] : null, shot: !!boss.shot, t: Math.round(boss.t), fin: boss.finale, p: [Math.round(boss.p.X - pos.X), Math.round(boss.p.Y)] }, gx: () => (boss && boss.green ? boss.green.x : null), boom: () => { const c = workspace.GetPartBoundsInRadius(pos.add(V3(0, 0, -330)), 300, params).filter((t) => t.GetAttribute("Break") && t.Size.Y > 80 && t.Parent).sort((x, y) => Math.abs(x.Position.X - pos.X) - Math.abs(y.Position.X - pos.X))[0]; if (!c) return null; Game.hold = true; shatter(c, V3(c.Position.X, pos.Y, c.Position.Z + c.Size.Z / 2), 1); return Math.round(c.Position.X - pos.X); }, fin: () => STAGE_BY_ID.canyon.finish, cp: (d) => canyonPath(d), hg: (d) => canyonHalfGap(d)[0], d: () => -pos.Z, setx: (x) => { pos = V3(x, pos.Y, pos.Z); vx = 0; }, tp: (back, side) => { const d = STAGE_BY_ID.canyon.finish - back; pos = V3(canyonPath(d) + (side || 0), ALT, -d); Game.cam.last = null; return [Game.fork, Math.round(d)]; }, steer: (v) => { Game.steerFake = v; }, note: (m) => notify(m, GOOD), del: () => Online.deleteAccount(), lb: () => openPanel("leaderboard"), hello: () => Game.cloudLoad(true), crash: () => task.spawn(crash, []), data: () => data, stats: () => stats, vs: () => Game.versusToggle(), heart: () => Game.heartFx(), pad: (k) => Game.makePad(k, pos.X, pos.Z - 45, pickups), reg: async (n, p) => { await Online.register(n, p); request("set_name", n); return Online.account(); }, win: () => Game._vsWin(), vsd: () => Game._vsDebug(), dbg: () => [mode, dead, !!stats, !!planeMain, planeMain && !!planeMain.Parent, Game.raceState.mid], race: () => [Game.race, Game.raceState.inQueue, Game.queueText(), JSON.stringify(Game.raceState.final)], shot: () => Game.flow.startApproach(), uid: () => Online.myId(), achp: () => openPanel("achievements"), achgo: (id) => Game.ach(id), bp: (s) => Game.openBackpack(s), pf: () => [1, 2, 3].map(Game.planeFor), req: (a, b) => request(a, b), gift: () => openPanel("gift"), push: () => Game.pushProfile(), gems: () => { Game.openShop(); shopTab = "GEMS"; rebuildShop(); }, run: (id) => startRun(id || "towers"), skip: () => Game.skip(), ahead: () => { const r = Math.floor(-pos.Z / CHUNK); return [r, beyondStart, stageFor(-pos.Z)[0], stageFor((r + 5) * CHUNK + 1)[0], stageFor((r + 40) * CHUNK + 1)[0]]; }, state: () => [mode, curStage, Game.flow.cine && Game.flow.cine.kind, Math.round(-pos.Z)] };
+if (DEV) window.__dev = { bt: (v) => { if (boss) { boss.t = v; boss.nextShot = v + 1; } }, bossS: () => boss && { hits: boss.hits, green: boss.green ? [Math.round(boss.green.x), Math.round(boss.green.rz)] : null, shot: !!boss.shot, t: Math.round(boss.t), fin: boss.finale, p: [Math.round(boss.p.X - pos.X), Math.round(boss.p.Y)] }, gx: () => (boss && boss.green ? boss.green.x : null), boom: () => { const c = workspace.GetPartBoundsInRadius(pos.add(V3(0, 0, -330)), 300, params).filter((t) => t.GetAttribute("Break") && t.Size.Y > 80 && t.Parent).sort((x, y) => Math.abs(x.Position.X - pos.X) - Math.abs(y.Position.X - pos.X))[0]; if (!c) return null; Game.hold = true; shatter(c, V3(c.Position.X, pos.Y, c.Position.Z + c.Size.Z / 2), 1); return Math.round(c.Position.X - pos.X); }, fin: () => STAGE_BY_ID.canyon.finish, cp: (d) => canyonPath(d), hg: (d) => canyonHalfGap(d)[0], d: () => -pos.Z, setx: (x) => { pos = V3(x, pos.Y, pos.Z); vx = 0; }, tp: (back, side) => { const d = STAGE_BY_ID.canyon.finish - back; pos = V3(canyonPath(d) + (side || 0), ALT, -d); Game.cam.last = null; return [Game.fork, Math.round(d)]; }, steer: (v) => { Game.steerFake = v; }, note: (m) => notify(m, GOOD), del: () => Online.deleteAccount(), lb: () => openPanel("leaderboard"), hello: () => Game.cloudLoad(true), crash: () => task.spawn(crash, []), data: () => data, stats: () => stats, vs: () => Game.versusToggle(), heart: () => Game.heartFx(), pad: (k) => Game.makePad(k, pos.X, pos.Z - 45, pickups), reg: async (n, p) => { await Online.register(n, p); request("set_name", n); return Online.account(); }, win: () => Game._vsWin(), vsd: () => Game._vsDebug(), dbg: () => [mode, dead, !!stats, !!planeMain, planeMain && !!planeMain.Parent, Game.raceState.mid], race: () => [Game.race, Game.raceState.inQueue, Game.queueText(), JSON.stringify(Game.raceState.final)], shot: () => Game.flow.startApproach(), uid: () => Online.myId(), achp: () => openPanel("achievements"), achgo: (id) => Game.ach(id), bp: (s) => Game.openBackpack(s), pf: () => [1, 2, 3].map(Game.planeFor), req: (a, b) => request(a, b), gift: () => openPanel("gift"), push: () => Game.pushProfile(), gems: () => { Game.openShop(); shopTab = "GEMS"; rebuildShop(); }, run: (id) => startRun(id || "towers"), skip: () => Game.skip(), ahead: () => { const r = Math.floor(-pos.Z / CHUNK); return [r, beyondStart, stageFor(-pos.Z)[0], stageFor((r + 5) * CHUNK + 1)[0], stageFor((r + 40) * CHUNK + 1)[0]]; }, state: () => [mode, curStage, Game.flow.cine && Game.flow.cine.kind, Math.round(-pos.Z)] };
 
 // ------------------------------------------------------------------ versus
 // same idea as roblox: queue up, everyone starts on the same map, farthest wins.
@@ -9643,7 +9691,7 @@ if (DEV) window.__dev = { bossS: () => boss && { hits: boss.hits, green: boss.gr
 // ------------------------------------------------------------------ old version warning
 // every build has its own number, the page checks now and then whether a newer one is online
 (() => {
-	const BUILD = "1791128189";
+	const BUILD = "1791128942";
 	if (BUILD.startsWith("__")) return;
 	const bar = make("TextButton", {
 		AnchorPoint: V2(0.5, 0),
