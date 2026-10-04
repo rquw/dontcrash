@@ -12,7 +12,7 @@ const CONFIG = {
 	title: "DON'T CRASH!",
 	stages: [
 		// towers is 6000, every map after it is 1.2x the one before
-		{ id: "towers", name: "TOWERS", len: 3000 },
+		{ id: "towers", name: "BLOCKS", len: 3000 },
 		{ id: "moving", name: "WALLS", len: 7200 },
 		{ id: "canyon", name: "CANYON", len: 8600 },
 		{ id: "smash", name: "SMASH", len: 10400 },
@@ -1155,6 +1155,7 @@ function call(action, arg) {
 //   FIREBASE_SECRET        database secret from firebase (project settings > service accounts > database secrets)
 //   FIREBASE_DB            https://dontcrash-7a1db-default-rtdb.europe-west1.firebasedatabase.app
 
+const DEV_UID = "Jj2BGaR4ZBSqqQxmWtX8Vym95Ji1";
 const FIREBASE_KEY = "AIzaSyDbXhlHYOlbbTTU2xm7QfytbQXiT58uIDw";
 
 // what every pack costs (in cents) and gives. has to match the payment links and PACKS in the game
@@ -1218,6 +1219,17 @@ async function sync(req, env, ctx) {
 	if (!who) return json({ ok: false, error: "login" }, 401);
 	const uid = who.uid;
 	const actions = Array.isArray(body.actions) ? body.actions.slice(0, 40) : [];
+
+	// who is who: only the dev may ask, and only the dev gets an answer
+	if (body.names !== undefined) {
+		if (uid !== DEV_UID) return json({ ok: false, error: "not for you" }, 403);
+		const n = body.names;
+		if (n && typeof n === "object" && typeof n.id === "string" && /^[A-Za-z0-9-]{6,128}$/.test(n.id)) {
+			const name = String(n.name || "").trim().slice(0, 60);
+			await fbWrite(env, name ? "PUT" : "DELETE", `realnames/${n.id}`, name || undefined);
+		}
+		return json({ ok: true, names: (await fbGet(env, "realnames")) || {} });
+	}
 
 	if (body.remove === true) {
 		await Promise.all([fbWrite(env, "DELETE", `vault/${uid}`), fbWrite(env, "DELETE", `players/${uid}`), fbWrite(env, "DELETE", `saves/${uid}`), fbWrite(env, "DELETE", `grants/${uid}`)]);

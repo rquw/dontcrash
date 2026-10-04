@@ -12,7 +12,7 @@ export const CONFIG = {
 	title: "DON'T CRASH!",
 	stages: [
 		// towers is 6000, every map after it is 1.2x the one before
-		{ id: "towers", name: "TOWERS", len: 3000 },
+		{ id: "towers", name: "BLOCKS", len: 3000 },
 		{ id: "moving", name: "WALLS", len: 7200 },
 		{ id: "canyon", name: "CANYON", len: 8600 },
 		{ id: "smash", name: "SMASH", len: 10400 },

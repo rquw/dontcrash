@@ -1665,7 +1665,8 @@ function stepPhysics(dt) {
 			v = new Vector3(v.X, v.Y - g * dt, v.Z);
 			let pos = p.CFrame.p.add(v.mul(dt));
 			const half = Math.min(p.Size.Y, p.Size.X, p.Size.Z) / 2;
-			const floorY = physicsGround.height;
+			// rubble can come to rest a bit above the ground, so a fallen tower is a heap and not a carpet
+			const floorY = physicsGround.height + (p._pile || 0);
 			if (p.CanCollide !== false && pos.Y - half < floorY && g > 0) {
 				pos = new Vector3(pos.X, floorY + half, pos.Z);
 				v = new Vector3(v.X * 0.7, Math.abs(v.Y) * 0.25, v.Z * 0.7);

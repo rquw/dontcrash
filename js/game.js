@@ -3,9 +3,9 @@ import {
 	camera, Lighting, Instance, workspace, markQueryRoot, Enum, OverlapParams, TweenService, TweenInfo, Debris, UIS, playSfx, loopSound, loadSounds, setSfxVolume,
 	NumberSequence, NumberSequenceKeypoint, NumberRange, ColorSequence, ColorSequenceKeypoint, guiRootInst, setUiScale, setLowGraphics, physicsGround,
 	mergeFloor, start, perf,
-} from "./engine.js?v=1791126657";
-import * as Server from "./server.js?v=1791126657";
-import * as Online from "./online.js?v=1791126657";
+} from "./engine.js?v=1791128189";
+import * as Server from "./server.js?v=1791128189";
+import * as Online from "./online.js?v=1791128189";
 
 const V3 = (x, y, z) => new Vector3(x, y, z);
 const RGB = Color3.fromRGB;
@@ -321,6 +321,8 @@ let devK = 0;
 		if (n === "") return "-";
 		return NICE[n] || n.toUpperCase();
 	};
+	// every key that does it: "W OR SPACE"
+	Game.keyNames = (action) => Game.binds()[action].filter((n) => n !== "").map(Game.niceKey).join(" OR ") || "-";
 	Game.keyName = (action) => {
 		const b = Game.binds()[action];
 		return Game.niceKey(b[0] !== "" ? b[0] : b[1]);
@@ -1347,6 +1349,9 @@ let shatter;
 
 		const s = big ? 2.2 : 1;
 		let count = 0;
+		// how high the heap gets that's left of it
+		const pile = clamp(size.Y * 0.12, 2, 13);
+		if (size.Y > 60) task.delay(0.25, () => sfx("tower_fall", 0.9 + Math.random() * 0.2, 0.7));
 		for (const ly of cuts(size.Y, 4 * s, 8 * s)) {
 			for (const lx of cuts(size.X, 5 * s, 9 * s)) {
 				for (const lz of cuts(size.Z, 5 * s, 9 * s)) {
@@ -1371,7 +1376,17 @@ let shatter;
 							const spin = force / 8;
 							b.AssemblyAngularVelocity = V3((Math.random() - 0.5) * spin, (Math.random() - 0.5) * spin, (Math.random() - 0.5) * spin);
 						} else {
+							// too far from the blast to be thrown: it hangs for a blink, then the whole thing comes down.
+							// the collapse runs away from where you hit, so it crumbles instead of dropping as one
 							b._sleep = true;
+							const far = Math.abs(c.Y - at.Y);
+							task.delay(0.12 + far / 80 + Math.random() * 0.3, () => {
+								if (b._destroyed || !b.Parent) return;
+								b._pile = Math.random() * pile * Math.random();
+								b.AssemblyLinearVelocity = V3(random(-10, 10), random(-6, 0), random(-10, 10));
+								b.AssemblyAngularVelocity = V3(Math.random() - 0.5, Math.random() - 0.5, Math.random() - 0.5).mul(5);
+								b._sleep = false;
+							});
 						}
 					}
 				}
@@ -2755,7 +2770,7 @@ let fuelFill;
 	const iconScale = make("UIScale", { Parent: icon });
 	const pct = text(bar, "100", UO(64, 26), U2(1, 10, 0, 0), 24, WHITE, LEFT);
 	pct.TextStrokeTransparency = 0.5;
-	Game.nitroHint = text(bar, "HOLD " + Game.keyName("nitro") + " FOR NITRO", UO(240, 22), U2(0.5, -120, 0, -26), 18, DIM);
+	Game.nitroHint = text(bar, "HOLD " + Game.keyNames("nitro") + " FOR NITRO", UO(520, 22), U2(0.5, -260, 0, -26), 18, DIM);
 	Game.fuelBar = bar;
 
 	const RED = RGB(255, 70, 55), YELLOW = RGB(255, 200, 60);
@@ -3024,29 +3039,43 @@ let openPanel, closePanels, startRun, toMenu;
 		});
 	};
 
-	// once you've flown far enough, the first click on play opens fast travel and the second one starts from the beginning.
-	// new players just start
+	// play always starts from the beginning, one press. once you've flown far enough the fast travel row sits next
+	// to it the whole time. new players don't see it at all
 	const canTravel = () => {
 		const first = CONFIG.starts[0];
 		return !!first && Math.max(data.farthest || 0, data.best) >= (first.at ?? Infinity);
 	};
-	const playBtn = menuButton("PLAY", "play", () => {
-		if (strip.Visible || !canTravel()) Game.go("towers");
-		else Game.openStrip();
-	}, 0.1);
+	const playBtn = menuButton("PLAY", "play", () => Game.go("towers"), 0.1);
+	const stripHead = text(menu, "OR START FURTHER IN", UO(300, 18), UO(56 + 320 + 14, 179), 16, WHITE, LEFT);
+	stripHead.TextStrokeTransparency = 0.5;
+	stripHead.Visible = false;
+	// says there's more to the right, and takes you there
+	const stripMore = button(menu, "MORE  ▶", UO(96, 56), U2(1, -112, 0, 200), () => {
+		strip.el.scrollBy({ left: 480, behavior: "smooth" });
+	}, 0.05);
+	stripMore.TextSize = 17;
+	stripMore.ZIndex = 3;
+	stripMore.Visible = false;
+	RunService.RenderStepped.Connect(() => {
+		if (!strip.Visible) {
+			if (stripMore.Visible) stripMore.Visible = false;
+			return;
+		}
+		const el = strip.el;
+		const more = el.scrollWidth - el.clientWidth - el.scrollLeft > 12;
+		if (stripMore.Visible !== more) stripMore.Visible = more;
+	});
 
 	Game.openStrip = () => {
-		strip.Visible = true;
-		strip.CanvasPosition = V2(0, 0);
-		playBtn.Text = "START FROM BEGINNING";
-		playBtn.TextSize = 21;
-		Game.rebuildStrip(true);
+		const on = canTravel();
+		if (on && !strip.Visible) {
+			strip.CanvasPosition = V2(0, 0);
+			Game.rebuildStrip(true);
+		}
+		strip.Visible = stripHead.Visible = on;
 	};
-	Game.closeStrip = () => {
-		strip.Visible = false;
-		playBtn.Text = "PLAY";
-		playBtn.TextSize = 28;
-	};
+	// kept so everything that used to fold it away still works: it stays open now
+	Game.closeStrip = () => {};
 	Game.stripOpen = () => strip.Visible;
 
 	Game.raceBtn = menuButton("VERSUS", "flag", () => {
@@ -3151,7 +3180,19 @@ function panel(name, title, size) {
 	const moreL = make("Frame", { AnchorPoint: V2(0.5, 1), Position: U2(0.5, 0, 1, -10), Size: UO(190, 30), BackgroundColor3: WHITE, BackgroundTransparency: 0.1, ZIndex: 9, Parent: more });
 	make("UICorner", { CornerRadius: UDim.new(0.5, 0), Parent: moreL });
 	text(moreL, "SCROLL FOR MORE  ▼", US(1, 1), UO(0, 1), 16, BLACK).ZIndex = 9;
-	panels[name] = { frame: p, body, token: 0, more, moreL, xBtn };
+	// once you've scrolled a menu you know it scrolls. the hint never comes back for that one
+	let knows = false;
+	try {
+		knows = localStorage.getItem("dontcrash_scrolled_" + name) === "1";
+	} catch (e) {}
+	body.el.addEventListener("scroll", () => {
+		if (panels[name].knows || body.el.scrollTop < 30) return;
+		panels[name].knows = true;
+		try {
+			localStorage.setItem("dontcrash_scrolled_" + name, "1");
+		} catch (e) {}
+	}, { passive: true });
+	panels[name] = { frame: p, body, token: 0, more, moreL, xBtn, knows };
 	return panels[name];
 }
 
@@ -3216,7 +3257,9 @@ RunService.RenderStepped.Connect(() => {
 		const left = el.scrollHeight - el.clientHeight - el.scrollTop;
 		const show = left > 12;
 		if (p.more.Visible !== show) p.more.Visible = show;
-		if (show) p.moreL.Position = U2(0.5, 0, 1, -10 - Math.abs(Math.sin(clock() * 3.2)) * 6);
+		const hint = show && !p.knows;
+		if (p.moreL.Visible !== hint) p.moreL.Visible = hint;
+		if (hint) p.moreL.Position = U2(0.5, 0, 1, -10 - Math.abs(Math.sin(clock() * 3.2)) * 6);
 	}
 });
 
@@ -3387,7 +3430,7 @@ function applySettings() {
 	settingsPanel.onClose = () => {
 		Game.rebinding = null;
 		request("settings", settings);
-		Game.nitroHint.Text = "HOLD " + Game.keyName("nitro") + " FOR NITRO";
+		Game.nitroHint.Text = "HOLD " + Game.keyNames("nitro") + " FOR NITRO";
 	};
 })();
 
@@ -3419,7 +3462,7 @@ function applySettings() {
 			"Coins come from flying: distance, cleared stages, bosses and everything you destroy.",
 		]],
 		["STAGES", WHITE, [
-			"Towers, Walls, Canyon and Smash, then the first boss: an airliner that shoots lasers and missiles at you.",
+			"Blocks, Walls, Canyon and Smash, then boss 1. It shoots lasers and missiles at you. Fly into its green missiles to fire them back: three hits and it goes down.",
 			"After that you jump over to a jet and fly through Turrets, City and the second boss.",
 			"Then out over the sea: land on the carrier with the green beam, taxi to the stealth jet and launch into space.",
 			"After space it all starts over, just faster. Your distance keeps counting. How far can you get? ;)",
@@ -4538,6 +4581,7 @@ refreshUI = () => {
 	} else bestL.TextColor3 = DIM;
 	if (panels.shop.frame.Visible) rebuildShop();
 	if (Game.stripOpen()) Game.rebuildStrip();
+	Game.openStrip();
 	updateRewards();
 	if (Game.refreshLevel) Game.refreshLevel();
 };
@@ -4891,27 +4935,38 @@ function xpBar(parent, size, pos, k, color) {
 	// who is who. only the dev can read or write these, nobody else ever gets to see a real name
 	let realNames = null;
 	const ADMIN = /[?&]dev\b/.test(location.search);
-	function realName(obj, e) {
+	async function askRealName(e) {
+		const v = window.prompt("Real name of " + (e.name || "?") + " (empty to remove):", realNames[e.id] || "");
+		if (v === null) return;
+		try {
+			const r = await Online.sync({ names: { id: e.id, name: v.trim().slice(0, 60) } });
+			if (!r || !r.ok) throw new Error("no");
+			realNames = r.names || {};
+			notify(realNames[e.id] ? (e.name || "?") + " is " + realNames[e.id] : "removed", GOOD);
+			load();
+		} catch (err) {
+			notify("couldn't save that, are you logged in as the dev?", BAD);
+		}
+	}
+	// hover shows it, right click or the little pen changes it
+	function realName(obj, e, pen) {
 		if (!realNames || !e || !e.id) return;
-		const tip = () => (obj.el.title = realNames[e.id] ? realNames[e.id] : "no real name yet. right click to set one");
-		tip();
-		obj.el.addEventListener("contextmenu", async (ev) => {
+		obj.el.title = realNames[e.id] ? realNames[e.id] : "no real name yet. right click to set one";
+		obj.el.addEventListener("contextmenu", (ev) => {
 			ev.preventDefault();
-			const v = window.prompt("Real name of " + (e.name || "?") + " (empty to remove):", realNames[e.id] || "");
-			if (v === null) return;
-			const name = v.trim().slice(0, 60);
-			try {
-				if (name) await Online.put("realnames/" + e.id, name);
-				else await Online.del("realnames/" + e.id);
-				if (name) realNames[e.id] = name;
-				else delete realNames[e.id];
-				tip();
-				notify(name ? (e.name || "?") + " is " + name : "removed", GOOD);
-				load();
-			} catch (err) {
-				notify("couldn't save that, are you logged in as the dev?", BAD);
-			}
+			askRealName(e);
 		});
+		if (!pen) return;
+		const b = document.createElement("span");
+		b.textContent = "✎";
+		b.title = "set the real name";
+		b.style.cssText = "position:absolute;right:6px;top:50%;transform:translateY(-50%);font-size:20px;color:#fff9;cursor:pointer;padding:6px;z-index:5";
+		b.addEventListener("click", (ev) => {
+			ev.stopPropagation();
+			askRealName(e);
+		});
+		for (const ev of ["mousedown", "mouseup", "pointerdown", "pointerup", "touchstart", "touchend"]) b.addEventListener(ev, (x) => x.stopPropagation());
+		obj.el.appendChild(b);
 	}
 	const withReal = (e) => String(e.name || "?").toUpperCase() + (realNames && realNames[e.id] ? "   (" + realNames[e.id] + ")" : "");
 
@@ -4955,7 +5010,7 @@ function xpBar(parent, size, pos, k, color) {
 		const ps = me ? "online" : Game.presence(e);
 		if (ps !== "offline") onlineDot(av, U2(1, -3, 1, -3), ps);
 		text(r, withReal(e), U2(1, -320, 1, 0), UO(100, 0), 20, me ? GOOD : WHITE, LEFT).TextTruncate = "AtEnd";
-		realName(r, e);
+		realName(r, e, true);
 		text(r, "LVL " + (e.level || 1), UO(70, 46), U2(1, -250, 0, 0), 15, RGB(180, 165, 255), RIGHT);
 		text(r, fmt(e.best || 0), UO(160, 46), U2(1, -176, 0, 0), 22, WHITE, RIGHT);
 		const sc = r.FindFirstChildOfClass("UIScale");
@@ -5018,7 +5073,8 @@ function xpBar(parent, size, pos, k, color) {
 			list = await Online.top(500);
 			if (ADMIN && Online.account()) {
 				try {
-					realNames = (await Online.get("realnames")) || {};
+					const r = await Online.sync({ names: true });
+					realNames = r && r.ok ? r.names || {} : null;
 				} catch (e) {
 					realNames = null;
 				}
@@ -5510,7 +5566,7 @@ let startBoss, updateBoss, resetSky;
 		skyObj.StarCount = sky.stars;
 		workspace.Gravity = Game.gravity;
 	};
-	// the moon hangs straight ahead, a bit up, right behind the airliner
+	// the moon hangs straight ahead, a bit up, right behind the boss
 	const MOON_DIR = V3(0, 0.26, -1).Unit;
 
 	resetSky = () => {
@@ -5566,7 +5622,7 @@ let startBoss, updateBoss, resetSky;
 		t.Parent = p;
 	}
 
-	function airliner() {
+	function bossPlane() {
 		const m = Instance.new("Model");
 		const cyl = { Shape: "Cylinder" };
 		const body = part(m, V3(96, 14, 14), HULL, ALONG, cyl);
@@ -5574,11 +5630,14 @@ let startBoss, updateBoss, resetSky;
 		ellipsoid(m, V3(14, 14, 30), HULL, CFn(0, 0, -48));
 		ellipsoid(m, V3(11, 11, 36), HULL, CFn(0, 1.5, 50));
 		part(m, V3(6, 1.4, 3), DARK, CFn(0, 4.4, -57).mul(Ang(0.5, 0, 0)));
+		// what hangs on each wing, so it can bend and come off
+		const wings = { [-1]: [], [1]: [] };
 		for (const side of [-1, 1]) {
 			for (let i = 0; i <= 17; i++) part(m, V3(0.3, 1.2, 1.2), DARK, CFn(side * 7, 2.2, -38 + i * 4.5));
 			part(m, V3(0.3, 1, 92), LIVERY, CFn(side * 7, 0.2, 0));
-			part(m, V3(72, 2, 18), HULL, CFn(side * 40, -4, 8).mul(Ang(0, -side * 0.4, 0)));
+			wings[side].push(part(m, V3(72, 2, 18), HULL, CFn(side * 40, -4, 8).mul(Ang(0, -side * 0.4, 0))));
 			const tip = part(m, V3(1, 8, 5), LIVERY, CFn(side * 75, 0, 22).mul(Ang(0, 0, side * 0.3)));
+			wings[side].push(tip);
 			contrail(tip, new Color3(1, 1, 1), 1, 0.8);
 			part(m, V3(26, 1.2, 9), HULL, CFn(side * 15, 2, 56).mul(Ang(0, -side * 0.45, 0)));
 		}
@@ -5588,10 +5647,12 @@ let startBoss, updateBoss, resetSky;
 		for (const x of [-46, -24, 24, 46]) {
 			const wz = -6 + (Math.abs(x) - 7) * 0.424;
 			const ez = wz - 4;
-			part(m, V3(1.5, 5, 8), BELLY, CFn(x, -6.5, wz - 1));
-			part(m, V3(16, 7.5, 7.5), RGB(215, 218, 225), CFn(x, -10, ez).mul(ALONG), cyl);
-			part(m, V3(0.4, 6.4, 6.4), DARK, CFn(x, -10, ez - 8.1).mul(ALONG), cyl);
+			const w = wings[x < 0 ? -1 : 1];
+			w.push(part(m, V3(1.5, 5, 8), BELLY, CFn(x, -6.5, wz - 1)));
+			w.push(part(m, V3(16, 7.5, 7.5), RGB(215, 218, 225), CFn(x, -10, ez).mul(ALONG), cyl));
+			w.push(part(m, V3(0.4, 6.4, 6.4), DARK, CFn(x, -10, ez - 8.1).mul(ALONG), cyl));
 			const glow = part(m, V3(0.5, 5.5, 5.5), RGB(255, 120, 40), CFn(x, -10, ez + 8.2).mul(ALONG), { Shape: "Cylinder", Material: "Neon", _uniqueMat: true });
+			w.push(glow);
 			exhaust(glow, 4, 3.5);
 			const light = Instance.new("PointLight");
 			light.Color = RGB(255, 120, 40);
@@ -5602,7 +5663,7 @@ let startBoss, updateBoss, resetSky;
 		}
 		m.WorldPivot = CFn();
 		m.Parent = junk;
-		return [m, body, engines, beacon];
+		return [m, body, engines, beacon, wings];
 	}
 
 	function beamPart(color, trans) {
@@ -5737,6 +5798,8 @@ let startBoss, updateBoss, resetSky;
 		bossDone = true;
 		stats.bosses++;
 		bossBar.Visible = false;
+		if (b.green) b.green.part.Destroy();
+		if (b.shot) b.shot.part.Destroy();
 		const at = b.p;
 		flash();
 		sfx("boss_down");
@@ -5749,13 +5812,12 @@ let startBoss, updateBoss, resetSky;
 			if (p.IsA("BasePart")) {
 				p.Anchored = false;
 				p.CanCollide = true;
-				p.AssemblyLinearVelocity = b.look.mul(120).add(V3(random(-80, 80), random(20, 120), random(-80, 80)));
+				p.AssemblyLinearVelocity = V3(random(-110, 110), random(40, 160), random(-110, 110));
 				p.AssemblyAngularVelocity = V3(random(-6, 6), random(-6, 6), random(-6, 6));
 			}
 		}
 		Debris.AddItem(b.model, 12);
-		for (const band of b.bands) band.Destroy();
-		shatter(b.building, at, 2.5, true, 12);
+		crater(at);
 		shake = 0.9;
 		buff.immortal = Math.max(buff.immortal, 3);
 		for (const r of b.rings) tw(r, 2, { Transparency: 1 });
@@ -5780,6 +5842,148 @@ let startBoss, updateBoss, resetSky;
 		});
 	}
 
+	// ---------------- how you beat it: it fires a green missile now and then. fly into it and it goes back,
+	// in the direction you're flying, with a little help. three hits
+	const GREEN = RGB(70, 255, 120);
+	function glowPart(size) {
+		const p = Instance.new("Part");
+		p.Anchored = true;
+		p.CanCollide = false;
+		p.CanQuery = false;
+		p.CastShadow = false;
+		p.Material = "Neon";
+		p.Shape = "Ball";
+		p.Color = GREEN;
+		p.Size = Vector3.one.mul(size);
+		const l = Instance.new("PointLight");
+		l.Color = GREEN;
+		l.Range = 40;
+		l.Brightness = 3;
+		l.Parent = p;
+		contrail(p, new Color3(0.3, 1, 0.5), 3, 0.5);
+		p.Parent = junk;
+		return p;
+	}
+	function fireGreen(b) {
+		const from = b.cf.mul(V3(0, -12, 10));
+		b.green = { part: glowPart(7), x: from.X, y: from.Y, rz: from.Z - pos.Z, y0: from.Y, rz0: from.Z - pos.Z };
+		b.green.part.Position = from;
+		sfx("missile_launch", 1.3);
+		if (!b.toldGreen) {
+			b.toldGreen = true;
+			banner("FLY INTO THE GREEN ONE!", GREEN, 2.6);
+		}
+	}
+	function stepGreen(b, dt) {
+		const g = b.green;
+		// it comes down to your height and drifts your way, slow enough to line up with
+		g.rz += 105 * dt;
+		const k = clamp(1 - g.rz / g.rz0, 0, 1);
+		g.y = g.y0 + (pos.Y - g.y0) * Math.min(1, k * 1.6);
+		g.x += clamp(pos.X - g.x, -40 * dt, 40 * dt);
+		g.part.Position = V3(g.x, g.y, pos.Z + g.rz);
+		g.part.Size = Vector3.one.mul(7 + Math.sin(clock() * 14) * 1);
+		if (Math.abs(g.rz) < 12 && Math.abs(g.x - pos.X) < 13) {
+			// caught: it leaves the way you're flying
+			g.part.Destroy();
+			b.green = null;
+			const dist = Math.abs(b.p.Z - pos.Z);
+			b.shot = { part: glowPart(5), x: pos.X, y: pos.Y, rz: -6, vx: vx, t: 0, dur: 0.85, dist, y0: pos.Y };
+			sfx("laser_fire", 1.5);
+			sfx("nitro_on", 1.4, 0.6);
+			shake = Math.max(shake, 0.25);
+			return;
+		}
+		if (g.rz > 30) {
+			g.part.Destroy();
+			b.green = null;
+			b.nextGreen = b.t + 3;
+			popup("MISSED IT", DIM);
+		}
+	}
+	function stepShot(b, dt) {
+		const sh = b.shot;
+		sh.t += dt;
+		const k = Math.min(1, sh.t / sh.dur);
+		const left = Math.max(0.05, sh.dur - sh.t);
+		// a nudge towards the boss, not more. if you were flying away from it, it misses
+		const want = (b.p.X - sh.x) / left;
+		sh.vx += clamp(want - sh.vx, -70 * dt, 70 * dt);
+		sh.x += sh.vx * dt;
+		sh.rz = -6 - (sh.dist - 6) * k;
+		sh.y = sh.y0 + (b.p.Y - 6 - sh.y0) * k * k;
+		sh.part.Position = V3(sh.x, sh.y, pos.Z + sh.rz);
+		if (k < 1) return;
+		sh.part.Destroy();
+		b.shot = null;
+		if (Math.abs(sh.x - b.p.X) < 34) hitBoss(b, V3(sh.x, b.p.Y - 6, b.p.Z));
+		else {
+			popup("MISSED", DIM);
+			sfx("near", 0.8);
+			b.nextGreen = b.t + 3;
+		}
+	}
+	// bend a part where it sits. the boss is moved as one piece, so it keeps the dent
+	const dent = (p, a, drop) => {
+		p.CFrame = p.CFrame.mul(Ang((Math.random() - 0.5) * a, (Math.random() - 0.5) * a, (Math.random() - 0.5) * a)).add(V3(0, -(drop || 0), 0));
+	};
+	function hitBoss(b, at) {
+		b.hits++;
+		bossFill.Size = US(1 - b.hits / 3, 1);
+		flash();
+		sfx("blast");
+		shake = Math.max(shake, 0.6);
+		ball(at, 110, GREEN, 0.7);
+		ball(at, 70, new Color3(1, 1, 0.9), 0.5);
+		sparks(at, 40, 2.5, () => (Math.random() < 0.5 ? GREEN : RGB(255, 190, 80)), 150);
+		smoke(at, 8, 30, 26, 2.2);
+		b.nextGreen = b.t + 5;
+		const loose = b.model.GetChildren().filter((p) => p.IsA("BasePart") && p !== b.body && p !== b.beacon);
+		if (b.hits === 1) {
+			// smoking, and knocked out of shape here and there
+			banner("HIT!  1 / 3", GREEN, 2);
+			for (const p of loose) if (Math.random() < 0.35) dent(p, 0.12, Math.random() * 0.8);
+			b.engines[0].glow.Color = RGB(40, 40, 40);
+			b.engines[0].light.Brightness = 0;
+		} else if (b.hits === 2) {
+			// it can't hold itself straight any more and the wings hang
+			banner("HIT!  2 / 3", GREEN, 2);
+			sfx("alarm", 1, 0.7);
+			for (const side of [-1, 1]) for (const p of b.wings[side]) dent(p, 0.3, 2 + Math.random() * 3);
+			for (const p of loose) if (Math.random() < 0.3) dent(p, 0.2, Math.random());
+			b.engines[3].glow.Color = RGB(40, 40, 40);
+			b.engines[3].light.Brightness = 0;
+		} else {
+			// the wings go, and without wings it comes down
+			banner("HIT!  3 / 3", GREEN, 2);
+			for (const side of [-1, 1]) {
+				const wingAt = b.cf.mul(V3(side * 40, -4, 8));
+				ball(wingAt, 130, RGB(255, 140, 40), 1.2);
+				sparks(wingAt, 30, 3, () => RGB(255, 170, 60), 160);
+				smoke(wingAt, 8, 40, 34, 2.6);
+				for (const p of b.wings[side]) {
+					p.Parent = junk;
+					p.Anchored = false;
+					p.CanCollide = true;
+					p.AssemblyLinearVelocity = V3(side * random(40, 110), random(20, 90), -speedNow + random(-40, 40));
+					p.AssemblyAngularVelocity = V3(random(-7, 7), random(-7, 7), random(-7, 7));
+					Debris.AddItem(p, 9);
+				}
+			}
+			sfx("plane_down");
+			finale();
+		}
+	}
+	// smoke and fire trailing off it, more with every hit
+	function trailDamage(b, dt) {
+		if (!b.hits) return;
+		b.smokeT = (b.smokeT || 0) - dt;
+		if (b.smokeT > 0) return;
+		b.smokeT = b.hits >= 3 ? 0.07 : b.hits === 2 ? 0.14 : 0.24;
+		smoke(b.cf.mul(V3(random(-10, 10), 2, 20)), 1, 8, 12 + b.hits * 5, 1.6);
+		if (b.hits >= 2) sparks(b.cf.mul(V3(random(-30, 30), -4, 8)), 3, 1.5, () => RGB(255, 150, 50), 60);
+	}
+
 	function finale() {
 		const b = boss;
 		b.finale = true;
@@ -5787,48 +5991,16 @@ let startBoss, updateBoss, resetSky;
 		for (const bm of b.beams) {
 			bm.glow.Destroy();
 			if (bm.core) bm.core.Destroy();
-				if (bm.hit) bm.hit.Destroy();
+			if (bm.hit) bm.hit.Destroy();
 		}
 		b.beams = [];
 		Missiles.clear();
+		if (b.green) b.green.part.Destroy();
+		b.green = null;
 		for (const e of b.engines) e.glow.Color = RGB(40, 40, 40);
-		smoke(b.p, 3, 10, 10, 1);
-		// the tower it crashes into has been standing out there the whole fight, now it stops drifting with you
-		b.buildingPinned = true;
-	}
-
-	// the skyscraper on the horizon. it rides along with you during the fight so it's always in view
-	function makeBuilding(b) {
-		const bx = (Game.arenaX || 0) + 150, bz = pos.Z - 1100;
-		const bld = Instance.new("Part");
-		bld.Anchored = true;
-		bld.CanQuery = false;
-		bld.Size = V3(80, 280, 80);
-		bld.Color = RGB(40, 50, 65);
-		bld.Position = V3(bx, 140, bz);
-		bld.Parent = junk;
-		b.building = bld;
-		b.bands = [];
-		for (let y = 20; y <= 260; y += 20) {
-			const band = Instance.new("Part");
-			band.Anchored = true;
-			band.CanCollide = false;
-			band.CanQuery = false;
-			band.Material = "Neon";
-			band.Color = RGB(150, 210, 255);
-			band.Transparency = 0.3;
-			band.Size = V3(80.6, 1.5, 80.6);
-			band.Position = V3(bx, y, bz);
-			band.Parent = junk;
-			b.bands.push(band);
-		}
-	}
-	function driftBuilding(b) {
-		if (b.buildingPinned || !b.building) return;
-		const at = V3((Game.arenaX || 0) + 150, 140, pos.Z - 1100);
-		const d = at.sub(b.building.Position);
-		b.building.Position = at;
-		for (const band of b.bands) band.Position = band.Position.add(d);
+		// which way it tips over
+		b.fallSide = Math.random() < 0.5 ? -1 : 1;
+		b.fallV = 0;
 	}
 
 	// soft glow rings around the moon
@@ -5881,13 +6053,12 @@ let startBoss, updateBoss, resetSky;
 		TweenService.Create(skyObj, new TweenInfo(3), { MoonAngularSize: 32 }).Play();
 		skyObj.StarCount = 5000;
 		TweenService.Create(bloom, new TweenInfo(3), { Intensity: 0.5 }).Play();
-		const [m, body, engines, beacon] = airliner();
+		const [m, body, engines, beacon, wings] = bossPlane();
 		const [halo, rings] = makeHalo();
 		const start0 = V3(-450, 120, pos.Z + 260);
-		boss = { model: m, body, engines, beacon, t: 0, p: start0, x: 0, look: V3(0.6, -0.2, -1).Unit, roll: 0, beams: [], nextShot: 5, volleys: 0, finale: false };
-		makeBuilding(boss);
+		boss = { model: m, body, engines, beacon, wings, hits: 0, nextGreen: 7.5, t: 0, p: start0, x: 0, look: V3(0.6, -0.2, -1).Unit, roll: 0, beams: [], nextShot: 5, volleys: 0, finale: false };
 		m.PivotTo(CFrame.lookAt(start0, start0.add(boss.look)));
-		bossFill.Size = US(0, 1);
+		bossFill.Size = US(1, 1);
 		boss.halo = halo;
 		boss.rings = rings;
 		bossBar.Visible = true;
@@ -5898,12 +6069,14 @@ let startBoss, updateBoss, resetSky;
 		b.t += dt;
 		const t = b.t;
 		const prev = b.p;
-		driftBuilding(b);
+		trailDamage(b, dt);
 		if (b.finale) {
+			// no wings left: it tips over, spins and falls into the field ahead of you
 			b.ft += dt;
-			const target = b.building.Position.sub(V3(0, 50, 0));
-			b.p = b.p.add(target.sub(b.p).Unit.mul((speedNow + 150 + b.ft * 220) * dt));
-			if (b.p.sub(target).Magnitude < 60) {
+			b.fallV += 130 * dt;
+			b.p = b.p.add(V3(b.fallSide * 45 * dt, -b.fallV * dt, -(speedNow + 60) * dt));
+			if (b.p.Y < 14) {
+				b.p = V3(b.p.X, 8, b.p.Z);
 				boom();
 				return;
 			}
@@ -5916,12 +6089,15 @@ let startBoss, updateBoss, resetSky;
 			if (Math.abs(rel.Z) < 80) shake = Math.max(shake, 0.5);
 		} else {
 			b.x += (pos.X + Math.sin(t * 0.5) * 70 - b.x) * Math.min(1, dt * 1.5);
-			b.p = V3(b.x, 105 + Math.sin(t * 1.3) * 3, pos.Z - 260 + Math.sin(t * 0.7) * 25);
+			// after two hits it staggers
+			const wob = b.hits >= 2 ? Math.sin(t * 7) * 4 : 0;
+			b.p = V3(b.x, 105 + Math.sin(t * 1.3) * 3 + wob, pos.Z - 260 + Math.sin(t * 0.7) * 25);
 		}
 		const vel = b.p.sub(prev).div(Math.max(dt, 1e-3));
 		if (vel.Magnitude > 1) b.look = b.look.Lerp(vel.Unit, Math.min(1, dt * 4)).Unit;
-		const rollT = clamp(-b.look.X * 1.2, -0.7, 0.7);
-		b.roll += (rollT - b.roll) * Math.min(1, dt * 3);
+		const rollT = clamp(-b.look.X * 1.2, -0.7, 0.7) + (b.hits >= 2 ? Math.sin(t * 5.5) * 0.22 : b.hits === 1 ? Math.sin(t * 3) * 0.05 : 0);
+		if (b.finale) b.roll += b.fallSide * dt * (1.5 + b.ft * 2.5);
+		else b.roll += (rollT - b.roll) * Math.min(1, dt * 3);
 		const cf = CFrame.lookAt(b.p, b.p.add(b.look)).mul(Ang(0, 0, b.roll));
 		b.model.PivotTo(cf);
 		b.cf = cf;
@@ -5930,13 +6106,18 @@ let startBoss, updateBoss, resetSky;
 
 		if (b.finale) return;
 
+		if (b.shot) stepShot(b, dt);
+		if (b.finale) return;
+		if (b.green) stepGreen(b, dt);
+		else if (!b.shot && t >= b.nextGreen) fireGreen(b);
+
 		const laserEnd = HOLD + 4.5;
 		const missileEnd = laserEnd + MISSILE_TIME;
 		if (t < laserEnd) {
 			if (t >= b.nextShot) {
 				b.nextShot = t + volley();
 			}
-		} else if (t < missileEnd) {
+		} else {
 			if (!b.phase2) {
 				b.phase2 = true;
 				b.nextMissile = t + 1.5;
@@ -5945,7 +6126,7 @@ let startBoss, updateBoss, resetSky;
 				for (const e of b.engines) e.glow.Color = RGB(255, 200, 80);
 			}
 			if (t >= b.nextMissile) {
-				const k = (t - laserEnd) / MISSILE_TIME;
+				const k = Math.min(1, (t - laserEnd) / MISSILE_TIME);
 				if (k > 0.5 && Math.random() < 0.4) {
 					launch(-1, k);
 					launch(1, k);
@@ -5957,7 +6138,7 @@ let startBoss, updateBoss, resetSky;
 			if (t >= b.nextSnipe) {
 				shoot(lead(0.9), 0.9);
 				sfx("laser_charge", 1.05);
-				b.nextSnipe = t + 2.8 - (t - laserEnd) / MISSILE_TIME;
+				b.nextSnipe = t + 2.8 - Math.min(1, (t - laserEnd) / MISSILE_TIME);
 			}
 		}
 
@@ -5985,8 +6166,6 @@ let startBoss, updateBoss, resetSky;
 			}
 		}
 
-		bossFill.Size = US(Math.min(t / missileEnd, 1), 1);
-		if (t >= missileEnd && Missiles.count() === 0) finale();
 	};
 })();
 
@@ -7737,6 +7916,9 @@ toMenu = () => {
 function step(dt) {
 	if (Game.hold) return;
 	runTime += dt;
+	// the nitro tip is only there for the first few seconds
+	const tip = !Game.touch.on && runTime < 5;
+	if (Game.nitroHint.Visible !== tip) Game.nitroHint.Visible = tip;
 	for (const k in buff) buff[k] = Math.max(0, buff[k] - dt);
 	const dist = -pos.Z;
 
@@ -8166,7 +8348,6 @@ task.spawn(async () => {
 		Game.setPause(false);
 		Game.quitRun();
 	});
-	const pHint = text(pp, "P TO RESUME, YOU KEEP WHAT YOU EARNED IF YOU END IT", U2(1, -20, 0, 24), UO(10, 250), 16, DIM);
 
 	const pauseBtn = button(hud, "II", UO(50, 50), U2(1, -66, 0, 74), () => Game.setPause(true));
 	pauseBtn.TextSize = 24;
@@ -8182,8 +8363,6 @@ task.spawn(async () => {
 			pp.Visible = true;
 			pp.GroupTransparency = 1;
 			tw(pp, 0.2, { GroupTransparency: 0 });
-			pHint.Text = Game.keyName("pause") + " TO RESUME, YOU KEEP WHAT YOU EARNED IF YOU END IT";
-			pHint.Visible = !Game.touch.on;
 			sfx("open");
 		} else {
 			if (!Game.paused) return;
@@ -8348,7 +8527,7 @@ applySettings();
 toMenu();
 start();
 document.getElementById("boot").remove();
-if (DEV) window.__dev = { fin: () => STAGE_BY_ID.canyon.finish, cp: (d) => canyonPath(d), hg: (d) => canyonHalfGap(d)[0], d: () => -pos.Z, setx: (x) => { pos = V3(x, pos.Y, pos.Z); vx = 0; }, tp: (back, side) => { const d = STAGE_BY_ID.canyon.finish - back; pos = V3(canyonPath(d) + (side || 0), ALT, -d); Game.cam.last = null; return [Game.fork, Math.round(d)]; }, steer: (v) => { Game.steerFake = v; }, note: (m) => notify(m, GOOD), del: () => Online.deleteAccount(), lb: () => openPanel("leaderboard"), hello: () => Game.cloudLoad(true), crash: () => task.spawn(crash, []), data: () => data, stats: () => stats, vs: () => Game.versusToggle(), heart: () => Game.heartFx(), pad: (k) => Game.makePad(k, pos.X, pos.Z - 45, pickups), reg: async (n, p) => { await Online.register(n, p); request("set_name", n); return Online.account(); }, win: () => Game._vsWin(), vsd: () => Game._vsDebug(), dbg: () => [mode, dead, !!stats, !!planeMain, planeMain && !!planeMain.Parent, Game.raceState.mid], race: () => [Game.race, Game.raceState.inQueue, Game.queueText(), JSON.stringify(Game.raceState.final)], shot: () => Game.flow.startApproach(), uid: () => Online.myId(), achp: () => openPanel("achievements"), achgo: (id) => Game.ach(id), bp: (s) => Game.openBackpack(s), pf: () => [1, 2, 3].map(Game.planeFor), req: (a, b) => request(a, b), gift: () => openPanel("gift"), push: () => Game.pushProfile(), gems: () => { Game.openShop(); shopTab = "GEMS"; rebuildShop(); }, run: (id) => startRun(id || "towers"), skip: () => Game.skip(), ahead: () => { const r = Math.floor(-pos.Z / CHUNK); return [r, beyondStart, stageFor(-pos.Z)[0], stageFor((r + 5) * CHUNK + 1)[0], stageFor((r + 40) * CHUNK + 1)[0]]; }, state: () => [mode, curStage, Game.flow.cine && Game.flow.cine.kind, Math.round(-pos.Z)] };
+if (DEV) window.__dev = { bossS: () => boss && { hits: boss.hits, green: boss.green ? [Math.round(boss.green.x), Math.round(boss.green.rz)] : null, shot: !!boss.shot, t: Math.round(boss.t), fin: boss.finale, p: [Math.round(boss.p.X - pos.X), Math.round(boss.p.Y)] }, gx: () => (boss && boss.green ? boss.green.x : null), boom: () => { const c = workspace.GetPartBoundsInRadius(pos.add(V3(0, 0, -330)), 300, params).filter((t) => t.GetAttribute("Break") && t.Size.Y > 80 && t.Parent).sort((x, y) => Math.abs(x.Position.X - pos.X) - Math.abs(y.Position.X - pos.X))[0]; if (!c) return null; Game.hold = true; shatter(c, V3(c.Position.X, pos.Y, c.Position.Z + c.Size.Z / 2), 1); return Math.round(c.Position.X - pos.X); }, fin: () => STAGE_BY_ID.canyon.finish, cp: (d) => canyonPath(d), hg: (d) => canyonHalfGap(d)[0], d: () => -pos.Z, setx: (x) => { pos = V3(x, pos.Y, pos.Z); vx = 0; }, tp: (back, side) => { const d = STAGE_BY_ID.canyon.finish - back; pos = V3(canyonPath(d) + (side || 0), ALT, -d); Game.cam.last = null; return [Game.fork, Math.round(d)]; }, steer: (v) => { Game.steerFake = v; }, note: (m) => notify(m, GOOD), del: () => Online.deleteAccount(), lb: () => openPanel("leaderboard"), hello: () => Game.cloudLoad(true), crash: () => task.spawn(crash, []), data: () => data, stats: () => stats, vs: () => Game.versusToggle(), heart: () => Game.heartFx(), pad: (k) => Game.makePad(k, pos.X, pos.Z - 45, pickups), reg: async (n, p) => { await Online.register(n, p); request("set_name", n); return Online.account(); }, win: () => Game._vsWin(), vsd: () => Game._vsDebug(), dbg: () => [mode, dead, !!stats, !!planeMain, planeMain && !!planeMain.Parent, Game.raceState.mid], race: () => [Game.race, Game.raceState.inQueue, Game.queueText(), JSON.stringify(Game.raceState.final)], shot: () => Game.flow.startApproach(), uid: () => Online.myId(), achp: () => openPanel("achievements"), achgo: (id) => Game.ach(id), bp: (s) => Game.openBackpack(s), pf: () => [1, 2, 3].map(Game.planeFor), req: (a, b) => request(a, b), gift: () => openPanel("gift"), push: () => Game.pushProfile(), gems: () => { Game.openShop(); shopTab = "GEMS"; rebuildShop(); }, run: (id) => startRun(id || "towers"), skip: () => Game.skip(), ahead: () => { const r = Math.floor(-pos.Z / CHUNK); return [r, beyondStart, stageFor(-pos.Z)[0], stageFor((r + 5) * CHUNK + 1)[0], stageFor((r + 40) * CHUNK + 1)[0]]; }, state: () => [mode, curStage, Game.flow.cine && Game.flow.cine.kind, Math.round(-pos.Z)] };
 
 // ------------------------------------------------------------------ versus
 // same idea as roblox: queue up, everyone starts on the same map, farthest wins.
@@ -8970,6 +9149,8 @@ if (DEV) window.__dev = { fin: () => STAGE_BY_ID.canyon.finish, cp: (d) => canyo
 			return;
 		}
 		openPanel("versus");
+		// pressing versus means you want in, no second button
+		if (!R.inQueue) Game.versusToggle();
 	};
 	Game.versusToggle = async () => {
 		if (R.inQueue) {
@@ -9002,7 +9183,7 @@ if (DEV) window.__dev = { fin: () => STAGE_BY_ID.canyon.finish, cp: (d) => canyo
 		else if (n > 0 && stopLobby) t = "VERSUS (" + n + " WAITING)";
 		else t = "VERSUS";
 		if (b.Text !== t) b.Text = t;
-		b.TextColor3 = open ? WHITE : DIM;
+		b.TextColor3 = !open ? DIM : n > 0 && !R.inQueue ? GOOD : WHITE;
 		b.TextSize = t.length > 12 ? 21 : 28;
 	};
 
@@ -9064,9 +9245,22 @@ if (DEV) window.__dev = { fin: () => STAGE_BY_ID.canyon.finish, cp: (d) => canyo
 		l.TextWrapped = true;
 	});
 	vp.onOpen = () => watch(true);
-	vp.onClose = () => {
-		if (!R.inQueue) watch(false);
-	};
+	vp.onClose = () => {};
+	// in the menu you always see who's waiting, and you get told when someone new shows up
+	const heard = new Set();
+	function lobbyNews() {
+		if (mode !== "menu" || !unlocked() || !Online.account() || !Online.enabled()) return;
+		watch(true);
+		const list = fresh();
+		for (const e of list) {
+			if (heard.has(e.id)) continue;
+			heard.add(e.id);
+			if (e.id === me() || R.inQueue) continue;
+			notify(String(e.name || "someone").toUpperCase() + " wants to race! press VERSUS to join", GOOD);
+			sfx("good");
+		}
+		for (const id of heard) if (!list.some((e) => e.id === id)) heard.delete(id);
+	}
 
 	let foundMid = null, lastTick = -1;
 	function lobbyFx() {
@@ -9257,6 +9451,7 @@ if (DEV) window.__dev = { fin: () => STAGE_BY_ID.canyon.finish, cp: (d) => canyo
 	// ---------------- slow loop: host duty, countdown, lead and falling behind
 	let leadT = 0;
 	setInterval(() => {
+		lobbyNews();
 		if (mode === "menu") Game.raceButton();
 		if (vp.frame.Visible) refreshPanel();
 		lobbyFx();
@@ -9448,7 +9643,7 @@ if (DEV) window.__dev = { fin: () => STAGE_BY_ID.canyon.finish, cp: (d) => canyo
 // ------------------------------------------------------------------ old version warning
 // every build has its own number, the page checks now and then whether a newer one is online
 (() => {
-	const BUILD = "1791126657";
+	const BUILD = "1791128189";
 	if (BUILD.startsWith("__")) return;
 	const bar = make("TextButton", {
 		AnchorPoint: V2(0.5, 0),
@@ -9487,17 +9682,17 @@ if (DEV) window.__dev = { fin: () => STAGE_BY_ID.canyon.finish, cp: (d) => canyo
 (() => {
 	const LIST = [
 		// the roblox badges
-		{ id: "towers", name: "SKYLINE", desc: "Finish Towers", color: WHITE },
+		{ id: "towers", name: "SKYLINE", desc: "Finish Blocks", color: WHITE },
 		{ id: "moving", name: "WALL RUNNER", desc: "Finish Walls", color: RGB(230, 140, 70) },
 		{ id: "canyon", name: "CANYON CRAWLER", desc: "Finish Canyon", color: RGB(210, 110, 70) },
 		{ id: "smash", name: "BULL IN A CHINA SHOP", desc: "Finish Smash", color: GEM },
-		{ id: "boss", name: "AIRLINER DOWN", desc: "Beat the first boss", color: BAD },
+		{ id: "boss", name: "BOSS 1 DOWN", desc: "Beat the first boss", color: BAD },
 		{ id: "turrets", name: "DODGEBALL", desc: "Finish Turrets", color: RGB(255, 90, 90) },
 		{ id: "city", name: "NIGHT SHIFT", desc: "Finish the City", color: RGB(150, 150, 255) },
 		{ id: "sea", name: "SEA LEGS", desc: "Get through the Sea", color: RGB(80, 170, 255) },
 		{ id: "space", name: "HOUSTON", desc: "Make it through Space and fall back to earth", color: RGB(170, 110, 255) },
 		// the big one
-		{ id: "fullcircle", name: "FULL CIRCLE", desc: "Towers to Space and back to Towers in one run. No dying, no fast travel", color: COIN },
+		{ id: "fullcircle", name: "FULL CIRCLE", desc: "Blocks to Space and back to Blocks in one run. No dying, no fast travel", color: COIN },
 		// runs
 		{ id: "run5k", name: "WARMED UP", desc: "Fly 5,000 studs in one run", color: WHITE },
 		{ id: "run25k", name: "LONG HAUL", desc: "Fly 25,000 studs in one run", color: COIN },
@@ -9505,7 +9700,7 @@ if (DEV) window.__dev = { fin: () => STAGE_BY_ID.canyon.finish, cp: (d) => canyo
 		{ id: "close10", name: "TOO CLOSE", desc: "Get 10 CLOSE! in one run", color: WHITE },
 		{ id: "kills50", name: "DEMOLITION CREW", desc: "Destroy 50 things in one run", color: RGB(255, 150, 70) },
 		{ id: "saved", name: "SAVED BY THE GLASS", desc: "Smash a glass tower with an empty tank", color: GOOD },
-		{ id: "nodamage", name: "SPEEDRUN", desc: "Finish Towers in under 30 seconds", color: COIN },
+		{ id: "nodamage", name: "SPEEDRUN", desc: "Finish Blocks in under 30 seconds", color: COIN },
 		// collecting
 		{ id: "heart", name: "HEARTBREAKER", desc: "Find a heart", color: RGB(255, 100, 130) },
 		{ id: "revive", name: "PHOENIX", desc: "Come back with a revive", color: RGB(255, 100, 130) },
@@ -9640,34 +9835,49 @@ if (DEV) window.__dev = { fin: () => STAGE_BY_ID.canyon.finish, cp: (d) => canyo
 	}, 500);
 
 	// ---------------- the list
-	const ap = panel("achievements", "ACHIEVEMENTS", UO(700, 580));
+	const ap = panel("achievements", "ACHIEVEMENTS", UO(760, 600));
 	function draw() {
 		for (const c of ap.body.GetChildren()) if (!c.IsA("UIListLayout")) c.Destroy();
 		const got = LIST.filter((a) => has(a.id)).length;
-		const head = row(ap.body, 50, 1);
-		text(head, got + " / " + LIST.length + " UNLOCKED", U2(0.5, 0, 1, 0), UO(8, 0), 22, COIN, LEFT);
-		const [, fill] = xpBar(head, U2(0.5, -20, 0, 12), U2(0.5, 0, 0.5, -6), got / LIST.length, COIN);
-		fill.BackgroundColor3 = COIN;
-		const grid = make("Frame", { Size: U2(1, -10, 0, 0), AutomaticSize: "Y", BackgroundTransparency: 1, LayoutOrder: nextOrder(), Parent: ap.body });
-		make("UIGridLayout", { CellSize: UO(318, 94), CellPadding: UO(8, 8), SortOrder: "LayoutOrder", Parent: grid });
-		// unlocked first, newest on top
+		// how far you are, big, with a bar across the whole thing
+		const head = row(ap.body, 78, 0.5);
+		make("UICorner", { CornerRadius: UDim.new(0, 12), Parent: head });
+		text(head, got + " / " + LIST.length, UO(200, 40), UO(16, 8), 36, COIN, LEFT);
+		text(head, got === LIST.length ? "ALL OF THEM. RESPECT." : LIST.length - got + " TO GO", U2(1, -232, 0, 24), UO(216, 18), 17, DIM, RIGHT);
+		const bar = make("Frame", { Position: UO(16, 54), Size: U2(1, -32, 0, 10), BackgroundColor3: WHITE, BackgroundTransparency: 0.88, Parent: head });
+		make("UICorner", { CornerRadius: UDim.new(0, 5), Parent: bar });
+		const fill = make("Frame", { Size: US(0, 1), BackgroundColor3: COIN, Parent: bar });
+		make("UICorner", { CornerRadius: UDim.new(0, 5), Parent: fill });
+		tw(fill, 0.6, { Size: US(got / LIST.length, 1) });
+
+		// unlocked first, newest on top. two next to each other
 		const sorted = [...LIST].sort((a, b) => (data.ach[b.id] || 0) - (data.ach[a.id] || 0));
-		sorted.forEach((a, i) => {
-			const on = has(a.id);
-			const c = make("Frame", { BackgroundColor3: BLACK, BackgroundTransparency: on ? 0.3 : 0.6, LayoutOrder: i, Parent: grid });
-			make("UICorner", { CornerRadius: UDim.new(0, 10), Parent: c });
-			if (on) make("UIStroke", { Color: a.color, Thickness: 2, Transparency: 0.35, ApplyStrokeMode: "Border", Parent: c });
-			const ic = make("Frame", { AnchorPoint: V2(0, 0.5), Position: U2(0, 12, 0.5, 0), Size: UO(46, 46), BackgroundColor3: on ? a.color : RGB(60, 62, 72), Parent: c });
-			make("UICorner", { CornerRadius: UDim.new(0.5, 0), Parent: ic });
-			if (on) make("UIGradient", { Color: new ColorSequence(WHITE, RGB(140, 140, 140)), Rotation: 90, Parent: ic });
-			text(ic, on ? "★" : "?", US(1, 1), UO(0, 1), 26, on ? BLACK : DIM);
-			text(c, a.name, U2(1, -76, 0, 26), UO(68, 8), 19, on ? WHITE : DIM, LEFT).TextTruncate = "AtEnd";
-			// what it pays, greyed out once you've got it
-			const rl = Icons.text(c, U2(1, -76, 0, 16), UO(68, 70), 13, on ? DIM : GEM, LEFT);
-			rl.Text = on ? "GOT " + rewardOf(a.id) : rewardOf(a.id);
-			const d = text(c, a.desc.toUpperCase(), U2(1, -76, 0, 28), UO(68, 30), 12, on ? RGB(200, 200, 200) : RGB(110, 110, 120), LEFT);
-			d.TextWrapped = true;
-		});
+		for (let i = 0; i < sorted.length; i += 2) {
+			const line = row(ap.body, 84, 1);
+			sorted.slice(i, i + 2).forEach((a, k) => {
+				const on = has(a.id);
+				const c = make("Frame", { Position: U2(k * 0.5, k ? 3 : 0, 0, 0), Size: U2(0.5, -3, 1, 0), BackgroundColor3: BLACK, BackgroundTransparency: on ? 0.3 : 0.62, Parent: line });
+				make("UICorner", { CornerRadius: UDim.new(0, 10), Parent: c });
+				if (on) {
+					// a stripe in its colour down the left side
+					const edge = make("Frame", { Position: UO(0, 12), Size: U2(0, 4, 1, -24), BackgroundColor3: a.color, Parent: c });
+					make("UICorner", { CornerRadius: UDim.new(0, 2), Parent: edge });
+				}
+				const ic = make("Frame", { AnchorPoint: V2(0, 0.5), Position: U2(0, 16, 0.5, 0), Size: UO(46, 46), BackgroundColor3: on ? a.color : RGB(48, 50, 60), Parent: c });
+				make("UICorner", { CornerRadius: UDim.new(0.5, 0), Parent: ic });
+				if (on) make("UIGradient", { Color: new ColorSequence(WHITE, RGB(150, 150, 150)), Rotation: 90, Parent: ic });
+				text(ic, on ? "★" : "?", US(1, 1), UO(0, 1), 26, on ? BLACK : DIM);
+				text(c, a.name, U2(1, -84, 0, 24), UO(74, 10), 19, on ? WHITE : DIM, LEFT).TextTruncate = "AtEnd";
+				const d = text(c, a.desc.toUpperCase(), U2(1, -84, 0, 16), UO(74, 34), 12, on ? RGB(200, 200, 200) : RGB(110, 110, 120), LEFT);
+				d.TextWrapped = false;
+				d.TextTruncate = "AtEnd";
+				d.el.title = a.desc;
+				// what it pays. a tick once it's yours
+				const rl = Icons.text(c, U2(1, -84, 0, 18), UO(74, 56), 14, on ? GOOD : GEM, LEFT);
+				rl.Text = (on ? "✓  " : "") + rewardOf(a.id);
+				rl.TextTransparency = on ? 0.25 : 0;
+			});
+		}
 	}
 	ap.onOpen = draw;
 
