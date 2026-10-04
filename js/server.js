@@ -805,7 +805,7 @@ function earned(d, id) {
 		case "revive": return (st.revives || 0) >= 1;
 		case "pickups100": return (st.pickups || 0) >= 100;
 		case "rich": return d.coins >= 10000;
-		case "skins3": return Object.keys(d.skins || {}).length >= 3;
+		case "skins3": return Object.keys(d.skins || {}).length >= 5;
 		case "codes5": return Object.keys(d.codes || {}).length >= 5;
 		case "dist100k": return (st.dist || 0) >= 100000;
 		case "runs100": return (st.runs || 0) >= 100;

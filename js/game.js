@@ -3,9 +3,9 @@ import {
 	camera, Lighting, Instance, workspace, markQueryRoot, Enum, OverlapParams, TweenService, TweenInfo, Debris, UIS, playSfx, loopSound, loadSounds, setSfxVolume,
 	NumberSequence, NumberSequenceKeypoint, NumberRange, ColorSequence, ColorSequenceKeypoint, guiRootInst, setUiScale, setLowGraphics, physicsGround,
 	mergeFloor, start, perf,
-} from "./engine.js?v=1791130984";
-import * as Server from "./server.js?v=1791130984";
-import * as Online from "./online.js?v=1791130984";
+} from "./engine.js?v=1791149548";
+import * as Server from "./server.js?v=1791149548";
+import * as Online from "./online.js?v=1791149548";
 
 const V3 = (x, y, z) => new Vector3(x, y, z);
 const RGB = Color3.fromRGB;
@@ -3898,6 +3898,144 @@ function planeView(parent, id, size, pos, opts) {
 	return vp;
 }
 
+// the big moment after you buy something: lights go down, the thing drops in and you get a proper look at it.
+// o = { head, name, tag, color, sub, skin | death | icon + count | label, action: [text, fn] }
+{
+	const queue = [];
+	let showing = false;
+	const show = () => {
+		const o = queue.shift();
+		if (!o) {
+			showing = false;
+			return;
+		}
+		showing = true;
+		const col = o.color || WHITE;
+		const root = make("TextButton", { Size: US(1, 1), BackgroundColor3: BLACK, BackgroundTransparency: 1, Text: "", AutoButtonColor: false, ZIndex: 48, Parent: gui });
+		tw(root, 0.25, { BackgroundTransparency: 0.03 });
+		sfx("whoosh", 0.7);
+		let closed = false;
+
+		// light rays turning behind it
+		const mid = US(0.5, 0.4);
+		const rays = make("Frame", { AnchorPoint: V2(0.5, 0.5), Position: mid, Size: UO(2, 2), BackgroundTransparency: 1, Parent: root });
+		const rayScale = make("UIScale", { Scale: 0, Parent: rays });
+		for (let i = 1; i <= 8; i++) {
+			const r = make("Frame", { AnchorPoint: V2(0.5, 0.5), Position: US(0.5, 0.5), Size: UO(i % 2 === 0 ? 90 : 44, 1100), Rotation: i * 22.5, BackgroundColor3: col, BackgroundTransparency: 0.88, Parent: rays });
+			make("UIGradient", { Rotation: 90, Transparency: new NumberSequence([NumberSequenceKeypoint.new(0, 1), NumberSequenceKeypoint.new(0.5, 0), NumberSequenceKeypoint.new(1, 1)]), Parent: r });
+		}
+
+		// the thing itself
+		const stage = make("Frame", { AnchorPoint: V2(0.5, 0.5), Position: mid, Size: UO(620, 320), BackgroundTransparency: 1, Parent: root });
+		const stageScale = make("UIScale", { Scale: 0, Parent: stage });
+		let countL;
+		if (o.skin || o.death) {
+			const vp = planeView(stage, o.skin, US(1, 1), null, { bgT: 1, spin: 1.3, wind: o.death ? V3(-28, 0, -12) : true });
+			if (o.death) deathView(vp, o.death, 0.9);
+		} else if (o.icon) {
+			const ic = Icons.make(o.icon, stage, 190);
+			ic.AnchorPoint = V2(0.5, 0.5);
+			ic.Position = US(o.count ? 0.22 : 0.5, 0.5);
+			if (o.count) countL = text(stage, "+0", UO(380, 130), U2(0.5, -40, 0.5, -65), 110, WHITE, LEFT);
+		} else {
+			const str = String(o.label || o.name);
+			text(stage, str, US(1, 1), null, str.length > 12 ? 60 : 96, col);
+		}
+
+		const head = text(root, o.head || "UNLOCKED", U2(1, 0, 0, 30), U2(0, 0, 0.4, -230), 26, col);
+		head.TextTransparency = 1;
+		const name = text(root, o.name, U2(1, -80, 0, 80), U2(0, 40, 0.4, 196), String(o.name).length > 16 ? 44 : 70, WHITE);
+		name.TextTransparency = 1;
+		let tag, tagL;
+		if (o.tag) {
+			tag = make("Frame", { AnchorPoint: V2(0.5, 0), Position: U2(0.5, 0, 0.4, 254), Size: UO(200, 30), BackgroundColor3: col, BackgroundTransparency: 1, Parent: root });
+			make("UICorner", { CornerRadius: UDim.new(0, 15), Parent: tag });
+			tagL = text(tag, o.tag, US(1, 1), null, 20, BLACK);
+			tagL.TextTransparency = 1;
+		}
+		const sub = o.sub ? text(root, o.sub, U2(1, -80, 0, 26), U2(0, 40, 0.4, o.tag ? 292 : 254), 20, DIM) : null;
+		if (sub) sub.TextTransparency = 1;
+
+		const close = (fn) => {
+			if (closed) return;
+			closed = true;
+			sfx("close");
+			tw(stageScale, 0.18, { Scale: 0 }, "Quad", "In");
+			tw(root, 0.2, { BackgroundTransparency: 1 });
+			task.delay(0.2, () => {
+				conn.Disconnect();
+				root.Destroy();
+				if (fn) fn();
+				show();
+			});
+		};
+		const conn = RunService.RenderStepped.Connect((dt) => {
+			rays.Rotation += dt * 14;
+		});
+		const later = (t, fn) => task.delay(t, () => !closed && fn());
+
+		later(0.38, () => {
+			// the hit
+			const fl = make("Frame", { Size: US(1, 1), BackgroundColor3: col.Lerp(WHITE, 0.6), BackgroundTransparency: 0.25, ZIndex: 5, Parent: root });
+			tw(fl, 0.5, { BackgroundTransparency: 1 });
+			task.delay(0.6, () => fl.Destroy());
+			sfx("record");
+			sfx("stage", 1.1, 0.8);
+			if (mode === "menu") shake = Math.max(shake, 0.2);
+			tw(rayScale, 0.6, { Scale: 1 }, "Back");
+			stageScale.Scale = 0.3;
+			tw(stageScale, 0.55, { Scale: 1 }, "Back");
+			// sparks flying out of it
+			for (let i = 0; i < 34; i++) {
+				const a = Math.random() * Math.PI * 2, far = 260 + Math.random() * 420;
+				const sz = 5 + Math.floor(Math.random() * 10);
+				const sp = make("Frame", { AnchorPoint: V2(0.5, 0.5), Position: mid, Size: UO(sz, sz), Rotation: Math.random() * 90, BackgroundColor3: Math.random() < 0.3 ? WHITE : col, ZIndex: 2, Parent: root });
+				const tt = 0.7 + Math.random() * 0.7;
+				tw(sp, tt, { Position: U2(0.5, Math.cos(a) * far, 0.4, Math.sin(a) * far * 0.7 + 90), BackgroundTransparency: 1, Rotation: Math.random() * 400 - 200 }, "Quad");
+				task.delay(tt + 0.1, () => sp.Destroy());
+			}
+		});
+		later(0.6, () => {
+			tw(head, 0.3, { TextTransparency: 0 });
+			tw(name, 0.4, { TextTransparency: 0, Position: U2(0, 40, 0.4, 170) }, "Back");
+			sfx("whoosh");
+			if (countL) {
+				for (let i = 1; i <= 22; i++) {
+					later(i * 0.03, () => {
+						countL.Text = "+" + fmt(Math.round(o.count * (1 - (1 - i / 22) ** 3)));
+						if (i % 3 === 0) sfx("tick", 0.9 + i * 0.03);
+					});
+				}
+			}
+		});
+		later(0.82, () => {
+			if (tag) {
+				tw(tag, 0.3, { BackgroundTransparency: 0 });
+				tw(tagL, 0.3, { TextTransparency: 0 });
+				sfx("tick", 1.4);
+			}
+			if (sub) tw(sub, 0.3, { TextTransparency: 0 });
+		});
+		// only now can you leave, so nobody clicks it away by accident mid buy
+		later(1.12, () => {
+			const w = o.action ? 470 : 220;
+			const bar = make("Frame", { AnchorPoint: V2(0.5, 0), Position: U2(0.5, 0, 0.4, 340), Size: UO(w, 56), BackgroundTransparency: 1, Parent: root });
+			if (o.action) {
+				const a = button(bar, "", UO(240, 56), null, () => close(o.action[1]), 0.1);
+				a.BackgroundColor3 = col;
+				Icons.text(a, US(1, 1), null, 26, BLACK).Text = o.action[0];
+			}
+			const c = button(bar, "", UO(220, 56), U2(1, -220, 0, 0), () => close(), 0.35);
+			Icons.text(c, US(1, 1), null, 24, WHITE).Text = "CONTINUE";
+			root.MouseButton1Click.Connect(() => close());
+		});
+	};
+	Game.reveal = (o) => {
+		queue.push(o);
+		if (!showing) show();
+	};
+}
+
 // the death effect playing on a loop in a window: plane pops, effect, plane comes back
 // delay: seconds before the first pop, so a whole grid of them doesn't go off at the same moment
 function deathView(vp, kind, delay, fov) {
@@ -4113,11 +4251,17 @@ function deathView(vp, kind, delay, fov) {
 			}
 			if (!owned[item.id] && Game.topUp(isSkin ? "gems" : "keys", item.price)) return;
 			const [ok, msg] = request(isSkin ? "skin" : "death", item.id);
-			result(ok, msg);
-			if (ok) {
+			if (ok && !had) {
 				Game.pushProfile();
-				if (!had) sfx("record");
-				if (!had && isSkin) Game.openBackpack(item.id);
+				const [rn, rc] = rarity(item.price, isSkin);
+				Game.reveal({
+					head: isSkin ? "NEW SKIN" : "NEW CRASH EFFECT", name: niceName(item.id), tag: rn, color: rc,
+					skin: isSkin ? item.id : null, death: isSkin ? null : item.id,
+					action: isSkin ? ["EQUIP", () => Game.openBackpack(item.id)] : null,
+				});
+			} else {
+				result(ok, msg);
+				if (ok) Game.pushProfile();
 			}
 		}, base);
 		b.TextSize = 24;
@@ -4231,8 +4375,8 @@ function deathView(vp, kind, delay, fov) {
 						sfx("bad");
 						return;
 					}
-					sfx(mine ? "select" : "buy");
-					if (!mine) banner(kind === "title" ? it.name : head, col, 2);
+					if (mine) sfx("select");
+					else Game.reveal({ head: "NEW " + head, name: String(it.name).toUpperCase(), color: col, skin: kind === "trail" ? data.skin : null, label: kind === "color" ? String((Online.account() || {}).name || "YOU").toUpperCase() : null });
 					Game.pushProfile();
 					if (kind === "trail" && mode === "menu") buildPlane(data.skin);
 					rebuildShop();
@@ -4287,7 +4431,8 @@ function deathView(vp, kind, delay, fov) {
 				if (maxed) sfx("bad");
 				else if (!Game.topUp("coins", price)) {
 					const [ok, msg] = request("buy_power", p.id);
-					result(ok, msg);
+					if (ok) Game.reveal({ head: "UPGRADED", name: p.name.toUpperCase(), label: "x" + next, color: COIN, sub: "LEVEL " + (lvl + 1) + " OF " + p.max });
+					else result(ok, msg);
 				}
 			}, 0.1);
 			Icons.text(b, US(1, 1), null, 24, maxed ? DIM : data.coins >= price ? COIN : DIM).Text = maxed ? "MAX" : fmt(price) + " ●";
@@ -4308,8 +4453,11 @@ function deathView(vp, kind, delay, fov) {
 			const pb = button(pr, "", UO(180, 44), U2(1, -194, 0.5, -22), () => {
 				if (Game.topUp("gems", price)) return;
 				const [ok, msg] = request("buy_revive", n);
-				notify(msg, ok ? GOOD : BAD);
-				sfx(ok ? "buy" : "bad");
+				if (ok) Game.reveal({ head: "IN YOUR POCKET", name: n === 1 ? "REVIVE" : "REVIVES", icon: "heart", count: n, color: RGB(255, 100, 130), sub: "USE ONE WHEN YOU CRASH" });
+				else {
+					notify(msg, BAD);
+					sfx("bad");
+				}
 				rebuildShop();
 			}, 0.3);
 			Icons.text(pb, US(1, 1), null, 22, data.gems >= price ? GEM : DIM).Text = fmt(price) + " ◆";
@@ -4327,8 +4475,11 @@ function deathView(vp, kind, delay, fov) {
 			if (left <= 0) sfx("bad");
 			else if (!Game.topUp("keys", 1)) {
 				const [ok, msg] = request("buy_code");
-				notify(msg, ok ? KEY : BAD);
-				sfx(ok ? "buy" : "bad");
+				if (ok) Game.reveal({ head: "MYSTERY CODE", name: String(msg).replace("your code: ", "").toUpperCase(), icon: "key", color: KEY, sub: "TYPE IT IN UNDER FREE REWARDS" });
+				else {
+					notify(msg, BAD);
+					sfx("bad");
+				}
 				rebuildShop();
 			}
 		}, 0.3);
@@ -9917,7 +10068,7 @@ if (DEV) window.__dev = { bt: (v) => { if (boss) { boss.t = v; boss.nextShot = v
 // ------------------------------------------------------------------ old version warning
 // every build has its own number, the page checks now and then whether a newer one is online
 (() => {
-	const BUILD = "1791130984";
+	const BUILD = "1791149548";
 	if (BUILD.startsWith("__")) return;
 	const bar = make("TextButton", {
 		AnchorPoint: V2(0.5, 0),
@@ -9980,7 +10131,7 @@ if (DEV) window.__dev = { bt: (v) => { if (boss) { boss.t = v; boss.nextShot = v
 		{ id: "revive", name: "PHOENIX", desc: "Come back with a revive", color: RGB(255, 100, 130) },
 		{ id: "pickups100", name: "HOARDER", desc: "Pick up 100 gems and keys", color: GEM },
 		{ id: "rich", name: "MONEY BAGS", desc: "Have 10,000 coins at once", color: COIN },
-		{ id: "skins3", name: "FASHION WEEK", desc: "Own 3 skins", color: KEY },
+		{ id: "skins3", name: "FASHION WEEK", desc: "Own 5 skins", color: KEY },
 		{ id: "codes5", name: "HACKERMAN", desc: "Redeem 5 codes", color: GOOD },
 		// long term
 		{ id: "dist100k", name: "FREQUENT FLYER", desc: "Fly 100,000 studs in total", color: WHITE },
@@ -10092,7 +10243,7 @@ if (DEV) window.__dev = { bt: (v) => { if (boss) { boss.t = v; boss.nextShot = v
 		const st = data.stats;
 		if ((st.pickups || 0) >= 100) Game.ach("pickups100");
 		if (data.coins >= 10000) Game.ach("rich");
-		if (Object.keys(data.skins || {}).length >= 3) Game.ach("skins3");
+		if (Object.keys(data.skins || {}).length >= 5) Game.ach("skins3");
 		if (Object.keys(data.codes || {}).length >= 5) Game.ach("codes5");
 		if ((st.dist || 0) >= 100000) Game.ach("dist100k");
 		if ((st.runs || 0) >= 100) Game.ach("runs100");
@@ -10194,8 +10345,7 @@ const PINK = RGB(255, 70, 170);
 					sfx("bad");
 					return;
 				}
-				sfx("levelup");
-				banner("+" + fmt(p.gems) + " GEMS", GEM, 2);
+				Game.reveal({ head: "TRADED " + p.keys + (p.keys === 1 ? " KEY" : " KEYS"), name: "GEMS", icon: "gem", count: p.gems, color: GEM });
 				rebuildShop();
 			}, 0.1);
 			b.TextSize = 26;
@@ -10337,6 +10487,91 @@ const PINK = RGB(255, 70, 170);
 	const b = button(menu, "GIVE STUFF", UO(200, 40), U2(1, -216, 1, -138), () => openPanel("gift"), 0.3);
 	b.TextSize = 18;
 	b.TextColor3 = GEM;
+})();
+// best runs standing in the world where they ended: yours and the top 100
+(() => {
+	let list = [];
+	const marks = new Map();
+	const load = async () => {
+		try {
+			list = (await Online.top(100)).filter((p) => p.best > 0);
+		} catch (e) {}
+	};
+	setTimeout(load, 4000);
+	setInterval(load, 300000);
+
+	function build(id, col, letter) {
+		const neon = (size) => {
+			const p = Instance.new("Part");
+			p.Anchored = true;
+			p.CanCollide = false;
+			p.CanQuery = false;
+			p.CanTouch = false;
+			p.CastShadow = false;
+			p.Material = "Neon";
+			p.Color = col;
+			p.Transparency = 0.35;
+			p.Size = size;
+			return p;
+		};
+		// a line right across where it ended and a pole up to the sign, so you can tell how far away it is
+		const m = { line: neon(V3(700, 0.6, 0.6)), pole: neon(V3(0.6, 22, 0.6)), best: -1 };
+		m.tag = make("Frame", { AnchorPoint: V2(0.5, 1), Size: UO(220, 150), BackgroundTransparency: 1, Visible: false, ZIndex: 2, Parent: gui });
+		m.scale = make("UIScale", { Parent: m.tag });
+		const face = make("Frame", { AnchorPoint: V2(0.5, 0), Position: U2(0.5, 0, 0, 0), Size: UO(72, 72), BackgroundColor3: RGB(30, 32, 44), Parent: m.tag });
+		make("UICorner", { CornerRadius: UDim.new(0.5, 0), Parent: face });
+		make("UIStroke", { Color: col, Thickness: 3, Parent: face });
+		text(face, letter, US(1, 1), null, 40, col);
+		m.num = text(m.tag, "", U2(1, 0, 0, 44), UO(0, 76), 40, WHITE);
+		m.who = text(m.tag, "", U2(1, 0, 0, 24), UO(0, 122), 20, col);
+		marks.set(id, m);
+		return m;
+	}
+
+	RunService.RenderStepped.Connect(() => {
+		const cam = camera.CFrame;
+		const seen = new Set();
+		let n = 0;
+		const put = (id, label, best, col) => {
+			if (seen.has(id) || !(best > 0)) return;
+			seen.add(id);
+			const m = marks.get(id) || build(id, col, label.charAt(0).toUpperCase());
+			if (m.best !== best || m.label !== label) {
+				m.best = best;
+				m.label = label;
+				m.num.Text = fmt(Math.floor(best));
+				m.who.Text = label;
+			}
+			// where that distance is in the world right now
+			const z = -(best - Game.loopBase + (Game.from || 0));
+			const near = mode === "run" && z < cam.Z + 30 && z > cam.Z - 650;
+			let on = false;
+			if (near) {
+				n++;
+				// a few on the same spot stand next to each other
+				const x = cam.X + Math.ceil((n - 1) / 2) * 30 * (n % 2 === 0 ? 1 : -1);
+				m.line.CFrame = CFrame.new(cam.X, ALT - 7, z);
+				m.pole.CFrame = CFrame.new(x, ALT + 4, z);
+				const [v, vis] = camera.WorldToViewportPoint(V3(x, ALT + 16, z));
+				on = vis;
+				if (vis) {
+					const k = Game._uis || 1;
+					m.tag.Position = UO(v.X / k, v.Y / k);
+					m.scale.Scale = Math.min(1.6, Math.max(0.25, 120 / v.Z));
+				}
+			}
+			m.line.Parent = m.pole.Parent = near ? workspace : null;
+			m.tag.Visible = on;
+		};
+		const me = Online.account() ? Online.myId() : null;
+		put("me", "Your Best", data.best, GOOD);
+		for (const p of list) if (p.id !== me) put(p.id, p.name + "'s Best", p.best, COIN);
+		for (const [id, m] of marks) {
+			if (seen.has(id)) continue;
+			m.line.Parent = m.pole.Parent = null;
+			m.tag.Visible = false;
+		}
+	});
 })();
 
 // ------------------------------------------------------------------ the casino
