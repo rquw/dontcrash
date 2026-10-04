@@ -3,9 +3,9 @@ import {
 	camera, Lighting, Instance, workspace, markQueryRoot, Enum, OverlapParams, TweenService, TweenInfo, Debris, UIS, playSfx, loopSound, loadSounds, setSfxVolume,
 	NumberSequence, NumberSequenceKeypoint, NumberRange, ColorSequence, ColorSequenceKeypoint, guiRootInst, setUiScale, setLowGraphics, physicsGround,
 	mergeFloor, start, perf,
-} from "./engine.js?v=1791128942";
-import * as Server from "./server.js?v=1791128942";
-import * as Online from "./online.js?v=1791128942";
+} from "./engine.js?v=1791129670";
+import * as Server from "./server.js?v=1791129670";
+import * as Online from "./online.js?v=1791129670";
 
 const V3 = (x, y, z) => new Vector3(x, y, z);
 const RGB = Color3.fromRGB;
@@ -30,7 +30,7 @@ const SFX = {
 	cas_big: ["cas_big", 1, 0.9, 0], cas_lose: ["cas_lose", 1, 0.6, 0], cas_in: ["cas_in", 1, 0.7, 0],
 	crash_confetti: ["crash_confetti", 1, 1, 0], crash_pixel: ["crash_pixel", 1, 1, 0], crash_nuke: ["crash_nuke", 1, 1, 0],
 	coin_land: ["coin_land", 1, 0.3, 0.04], pick_fuel: ["pick_fuel", 1, 0.8, 0.06], pick_gem: ["pick_gem", 1, 0.8, 0.04], pick_key: ["pick_key", 1, 0.9, 0], pick_heart: ["pick_heart", 1, 1, 0],
-	nitro_on: ["nitro_on", 1, 0.45, 0.05], roll: ["roll", 1, 0.45, 0.08], near: ["near", 1, 0.45, 0.08],
+	roll: ["roll", 1, 0.45, 0.08], near: ["near", 1, 0.45, 0.08],
 	stage: ["stage", 1, 0.45, 0], map_clear: ["map_clear", 1, 0.7, 0], loop_banner: ["loop_banner", 1, 0.9, 0],
 	glass: ["glass", 1, 0.85, 0.1], shatter: ["shatter", 1, 0.5, 0.12], hit: ["hit", 1, 0.2, 0.15], shield: ["shield", 1, 0.5, 0.1],
 	gun: ["gun", 1, 0.12, 0.08], gun_plasma: ["gun_plasma", 1, 0.12, 0.08],
@@ -5935,7 +5935,6 @@ let startBoss, updateBoss, resetSky;
 			const dist = Math.abs(b.p.Z - pos.Z);
 			b.shot = { part: glowPart(5), x: pos.X, y: pos.Y, rz: -6, vx: vx, t: 0, dur: 0.85, dist, y0: pos.Y };
 			sfx("laser_fire", 1.5);
-			sfx("nitro_on", 1.4, 0.6);
 			shake = Math.max(shake, 0.25);
 			return;
 		}
@@ -8482,7 +8481,6 @@ task.spawn(async () => {
 		// kicking in the nitro
 		if (!nitroOn && run && nitroK > 0.3) {
 			nitroOn = true;
-			sfx("nitro_on");
 		} else if (nitroOn && (!run || nitroK < 0.1)) nitroOn = false;
 		// low fuel beeps, faster the emptier
 		if (run && !c && !Game.hold && fuel > 0 && fuel < 15 && !boss && !Game.boss2.active) {
@@ -9691,7 +9689,7 @@ if (DEV) window.__dev = { bt: (v) => { if (boss) { boss.t = v; boss.nextShot = v
 // ------------------------------------------------------------------ old version warning
 // every build has its own number, the page checks now and then whether a newer one is online
 (() => {
-	const BUILD = "1791128942";
+	const BUILD = "1791129670";
 	if (BUILD.startsWith("__")) return;
 	const bar = make("TextButton", {
 		AnchorPoint: V2(0.5, 0),
