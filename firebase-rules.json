@@ -1,0 +1,71 @@
+{
+  "rules": {
+    "players": {
+      ".read": true,
+      ".indexOn": [
+        "best"
+      ],
+      "$uid": {
+        "seen": {
+          ".write": "auth != null && auth.uid === $uid",
+          ".validate": "newData.isNumber()"
+        },
+        "active": {
+          ".write": "auth != null && auth.uid === $uid",
+          ".validate": "newData.isNumber()"
+        }
+      }
+    },
+    "saves": {
+      "$uid": {
+        ".read": "auth != null && auth.uid === $uid"
+      }
+    },
+    "clock": {
+      "$uid": {
+        ".write": "auth != null && auth.uid === $uid"
+      }
+    },
+    "queue": {
+      ".read": "auth != null",
+      "$uid": {
+        ".write": "auth != null && (auth.uid === $uid || (!newData.exists() && data.child('at').val() < now - 60000))"
+      }
+    },
+    "matches": {
+      ".read": "auth != null",
+      ".indexOn": [
+        "created"
+      ],
+      "$mid": {
+        ".write": "auth != null && ((!data.exists() && newData.child('host').val() === auth.uid) || data.child('host').val() === auth.uid || (!newData.exists() && data.child('created').val() < now - 3600000))",
+        "live": {
+          "$uid": {
+            ".write": "auth != null && auth.uid === $uid"
+          }
+        }
+      }
+    },
+    "broadcast": {
+      ".read": true,
+      ".write": "auth != null && auth.uid === 'Jj2BGaR4ZBSqqQxmWtX8Vym95Ji1'"
+    },
+    "grants": {
+      "$uid": {
+        ".read": "auth != null && auth.uid === $uid",
+        ".write": "auth != null && auth.uid === 'Jj2BGaR4ZBSqqQxmWtX8Vym95Ji1'"
+      }
+    },
+    "vault": {
+      ".read": false,
+      ".write": false
+    },
+    "meta": {
+      ".read": true
+    },
+    "realnames": {
+      ".read": "auth != null && auth.uid === 'Jj2BGaR4ZBSqqQxmWtX8Vym95Ji1'",
+      ".write": "auth != null && auth.uid === 'Jj2BGaR4ZBSqqQxmWtX8Vym95Ji1'"
+    }
+  }
+}
