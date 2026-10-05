@@ -3,9 +3,9 @@ import {
 	camera, Lighting, Instance, workspace, markQueryRoot, Enum, OverlapParams, TweenService, TweenInfo, Debris, UIS, playSfx, loopSound, loadSounds, setSfxVolume,
 	NumberSequence, NumberSequenceKeypoint, NumberRange, ColorSequence, ColorSequenceKeypoint, guiRootInst, setUiScale, setLowGraphics, physicsGround,
 	mergeFloor, start, perf,
-} from "./engine.js?v=1791179614";
-import * as Server from "./server.js?v=1791179614";
-import * as Online from "./online.js?v=1791179614";
+} from "./engine.js?v=1791181910";
+import * as Server from "./server.js?v=1791181910";
+import * as Online from "./online.js?v=1791181910";
 
 const V3 = (x, y, z) => new Vector3(x, y, z);
 const RGB = Color3.fromRGB;
@@ -1196,7 +1196,7 @@ let trackChunks, updateMovers, regenerate, canyonPath, canyonHalfGap, updatePads
 			canyonOffset = Math.random() * 1000;
 		}
 		// one run in a thousand has a casino in the canyon. with ?dev it's always there
-		Game.fork = !Game.race && (/[?&]dev\b/.test(location.search) || Math.random() < 0.001);
+		Game.fork = !Game.race && (/[?&]dev\b/.test(location.search) || data.casinoNext === true || Math.random() < 0.001);
 		maxRow = -1;
 		lastKey = null;
 		updateChunks(x || 0, z || 0);
@@ -10071,7 +10071,7 @@ if (DEV) window.__dev = { bt: (v) => { if (boss) { boss.t = v; boss.nextShot = v
 // ------------------------------------------------------------------ old version warning
 // every build has its own number, the page checks now and then whether a newer one is online
 (() => {
-	const BUILD = "1791179614";
+	const BUILD = "1791181910";
 	if (BUILD.startsWith("__")) return;
 	const bar = make("TextButton", {
 		AnchorPoint: V2(0.5, 0),
@@ -10369,6 +10369,7 @@ const PINK = RGB(255, 70, 170);
 		if (g.coins) bits.push("+" + fmt(g.coins) + " COINS");
 		if (!bits.length && g.keys) bits.push("+" + g.keys + " KEYS");
 		if (!bits.length && g.revives) bits.push("+" + g.revives + " REVIVES");
+		if (!bits.length && g.casino) bits.push("TAKE THE RIGHT WAY IN THE CANYON");
 		banner(bits.slice(0, 2).join("  "), g.skin ? PINK : GEM, 3.5);
 		notify(g.pack === "lb" ? "leaderboard prize: you were " + String(g.note || "in the top 3").toUpperCase() : g.pack === "gift" ? "a gift from " + String(g.from || "the dev").toUpperCase() + (g.note ? ": " + String(g.note).slice(0, 80) : "") : "thanks for supporting the game!", GOOD);
 		sfx("levelup");
@@ -10424,7 +10425,7 @@ const PINK = RGB(255, 70, 170);
 // drops a grant for someone, their game picks it up like a purchase. the database only lets the dev account write these
 (() => {
 	if (!DEV) return;
-	const gp = panel("gift", "GIVE SOMEONE STUFF", UO(640, 560));
+	const gp = panel("gift", "GIVE SOMEONE STUFF", UO(640, 630));
 	function box(parent, ph, size, pos) {
 		const b = make("TextBox", { Size: size, Position: pos, BackgroundColor3: BLACK, BackgroundTransparency: 0.2, PlaceholderText: ph, Text: "", Font: FONT, TextSize: 22, TextColor3: WHITE, Parent: parent });
 		return b;
@@ -10453,6 +10454,15 @@ const PINK = RGB(255, 70, 170);
 	const r5 = row(gp.body, 64, 1);
 	const note = box(r5, "MESSAGE (OPTIONAL)", U2(1, -10, 0, 54), UO(0, 5));
 	note.el.maxLength = 80;
+	// the casino is in their canyon until they've been inside once
+	const r7 = row(gp.body, 64, 1);
+	let casino = false;
+	const cb = button(r7, "CASINO ON THEIR NEXT RUN: NO", U2(1, -10, 0, 54), UO(0, 5), () => {
+		casino = !casino;
+		cb.Text = "CASINO ON THEIR NEXT RUN: " + (casino ? "YES" : "NO");
+		cb.TextColor3 = casino ? COIN : WHITE;
+	}, 0.3);
+	cb.TextSize = 22;
 	const r6 = row(gp.body, 70, 1);
 	const send = async () => {
 		const name = who.Text.trim().toLowerCase();
@@ -10472,6 +10482,7 @@ const PINK = RGB(255, 70, 170);
 		}
 		if (skin()) g.skin = skin();
 		if (death()) g.death = death();
+		if (casino) g.casino = true;
 		if (note.Text.trim()) g.note = note.Text.trim();
 		if (Object.keys(g).length <= 3) return notify("pick something to give", BAD);
 		try {

@@ -639,6 +639,8 @@ handlers.paid = (g) => {
 		s.data.deaths[g.death] = true;
 		s.data.death = g.death;
 	}
+	// a gift can open the casino: it's in the canyon on every run until they've been in
+	if (g.casino === true) s.data.casinoNext = true;
 	return [true, "thanks!"];
 };
 handlers.buy_revive = (n) => {
@@ -1119,6 +1121,7 @@ handlers.cas_enter = () => {
 		if (far < AT.smash - 1000 || (s.runFrom || 0) >= AT.smash - 1000) return [false, "the casino is closed"];
 	}
 	s.casUsed = true;
+	s.data.casinoNext = false;
 	s.mines = null;
 	s.bj = null;
 	s.data.points = CASINO.gift;
