@@ -3,9 +3,9 @@ import {
 	camera, Lighting, Instance, workspace, markQueryRoot, Enum, OverlapParams, TweenService, TweenInfo, Debris, UIS, playSfx, loopSound, loadSounds, setSfxVolume,
 	NumberSequence, NumberSequenceKeypoint, NumberRange, ColorSequence, ColorSequenceKeypoint, guiRootInst, setUiScale, setLowGraphics, physicsGround,
 	mergeFloor, start, perf,
-} from "./engine.js?v=1791183465";
-import * as Server from "./server.js?v=1791183465";
-import * as Online from "./online.js?v=1791183465";
+} from "./engine.js?v=1791184305";
+import * as Server from "./server.js?v=1791184305";
+import * as Online from "./online.js?v=1791184305";
 
 const V3 = (x, y, z) => new Vector3(x, y, z);
 const RGB = Color3.fromRGB;
@@ -3748,9 +3748,13 @@ const rewardRefs = { play: [] };
 			const ic = Icons.make("gift", c, 54);
 			ic.Position = UO(16, 16);
 			text(c, title, U2(1, -90, 0, 28), UO(84, 16), 24, WHITE, LEFT);
-			text(c, sub, U2(1, -90, 0, 20), UO(84, 44), 15, DIM, LEFT);
-			Icons.text(c, U2(1, -24, 0, 30), UO(16, 86), 22, color, LEFT).Text = reward;
-			return button(c, "", U2(1, -24, 0, 50), U2(0, 12, 1, -62), fn, 0.2);
+			const subL = text(c, sub, U2(1, -90, 0, 20), UO(84, 44), 15, DIM, LEFT);
+			const rwL = Icons.text(c, U2(1, -24, 0, 30), UO(16, 86), 22, color, LEFT);
+			rwL.Text = reward;
+			const b = button(c, "", U2(1, -24, 0, 50), U2(0, 12, 1, -62), fn, 0.2);
+			b._sub = subL;
+			b._rw = rwL;
+			return b;
 		};
 		rewardRefs.daily = chest(0, "DAILY CHEST", "once every 24 hours", describe(CONFIG.daily), COIN, (b) => {
 			if (serverNow() - data.lastDaily >= 86400) result(Game.claim(b, "claim_daily"));
@@ -3841,6 +3845,19 @@ function updateRewards() {
 	const now = serverNow();
 	let ready = drawMissions();
 	let left = 86400 - (now - data.lastDaily);
+	{
+		// the streak: which day the next chest is, and what's in it
+		const alive = data.lastDaily > 0 && now - data.lastDaily < 172800;
+		const day = alive ? Math.min(7, (data.streak || 0) + 1) : 1;
+		const k = 1 + 0.1 * (day - 1);
+		const key = "d" + day + (alive ? 1 : 0);
+		if (rewardRefs.daily._key !== key) {
+			rewardRefs.daily._key = key;
+			rewardRefs.daily._sub.Text = "DAY " + day + " OF 7" + (day < 7 ? "   COME BACK TOMORROW FOR MORE" : "   BIGGEST CHEST, KEEP IT GOING");
+			rewardRefs.daily._sub.TextColor3 = day > 1 ? COIN : DIM;
+			rewardRefs.daily._rw.Text = describe({ coins: Math.floor(CONFIG.daily.coins * k), gems: Math.floor(CONFIG.daily.gems * k), keys: CONFIG.daily.keys + (day >= 7 ? 1 : 0) });
+		}
+	}
 	if (left <= 0) {
 		ready++;
 		setState(rewardRefs.daily, "ready", "CLAIM");
@@ -10087,7 +10104,7 @@ if (DEV) window.__dev = { bt: (v) => { if (boss) { boss.t = v; boss.nextShot = v
 // ------------------------------------------------------------------ old version warning
 // every build has its own number, the page checks now and then whether a newer one is online
 (() => {
-	const BUILD = "1791183465";
+	const BUILD = "1791184305";
 	if (BUILD.startsWith("__")) return;
 	const bar = make("TextButton", {
 		AnchorPoint: V2(0.5, 0),

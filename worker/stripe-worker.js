@@ -462,9 +462,13 @@ handlers.mission_bonus = () => {
 handlers.claim_daily = () => {
 	const d = s.data;
 	if (now() - d.lastDaily < 86400) return [false, "not ready yet"];
+	// come back the day after and the chest grows: +10% a day up to day 7, and from day 7 an extra key
+	d.streak = d.lastDaily > 0 && now() - d.lastDaily < 172800 ? Math.min(7, (d.streak || 0) + 1) : 1;
 	d.lastDaily = now();
-	grant(d, CONFIG.daily);
-	return [true, "gold chest: " + describe(CONFIG.daily)];
+	const k = 1 + 0.1 * (d.streak - 1);
+	const rw = { coins: Math.floor(CONFIG.daily.coins * k), gems: Math.floor(CONFIG.daily.gems * k), keys: CONFIG.daily.keys + (d.streak >= 7 ? 1 : 0) };
+	grant(d, rw);
+	return [true, "day " + d.streak + " chest: " + describe(rw)];
 };
 handlers.claim_hourly = () => {
 	const d = s.data;
