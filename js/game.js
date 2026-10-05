@@ -3,9 +3,9 @@ import {
 	camera, Lighting, Instance, workspace, markQueryRoot, Enum, OverlapParams, TweenService, TweenInfo, Debris, UIS, playSfx, loopSound, loadSounds, setSfxVolume,
 	NumberSequence, NumberSequenceKeypoint, NumberRange, ColorSequence, ColorSequenceKeypoint, guiRootInst, setUiScale, setLowGraphics, physicsGround,
 	mergeFloor, start, perf,
-} from "./engine.js?v=1791184452";
-import * as Server from "./server.js?v=1791184452";
-import * as Online from "./online.js?v=1791184452";
+} from "./engine.js?v=1791189504";
+import * as Server from "./server.js?v=1791189504";
+import * as Online from "./online.js?v=1791189504";
 
 const V3 = (x, y, z) => new Vector3(x, y, z);
 const RGB = Color3.fromRGB;
@@ -284,6 +284,7 @@ let devK = 0;
 		dashR: ["E", "MouseButton2"],
 		shoot: ["LeftShift", "RightShift"],
 		pause: ["P", ""],
+		duck: ["S", "Down"],
 	};
 	const NICE = {
 		LeftShift: "SHIFT", RightShift: "R-SHIFT", LeftControl: "CTRL", RightControl: "R-CTRL", LeftAlt: "ALT", RightAlt: "R-ALT",
@@ -291,8 +292,8 @@ let devK = 0;
 		Space: "SPACE", Return: "ENTER", Left: "LEFT", Right: "RIGHT", Up: "UP", Down: "DOWN", Tab: "TAB",
 	};
 	Game.BIND_DEFAULT = DEFAULT;
-	Game.BIND_ORDER = ["left", "right", "nitro", "dashL", "dashR", "shoot", "pause"];
-	Game.BIND_NAMES = { left: "STEER LEFT", right: "STEER RIGHT", nitro: "NITRO", dashL: "DASH LEFT", dashR: "DASH RIGHT", shoot: "SHOOT", pause: "PAUSE" };
+	Game.BIND_ORDER = ["left", "right", "nitro", "dashL", "dashR", "shoot", "duck", "pause"];
+	Game.BIND_NAMES = { left: "STEER LEFT", right: "STEER RIGHT", nitro: "NITRO", dashL: "DASH LEFT", dashR: "DASH RIGHT", shoot: "SHOOT", duck: "DUCK (JUNGLE)", pause: "PAUSE" };
 
 	Game.binds = () => {
 		settings.binds = typeof settings.binds === "object" && settings.binds && !Array.isArray(settings.binds) ? settings.binds : {};
@@ -466,15 +467,25 @@ const LANG_PATTERNS = [["^FLY ([\\d,]+) STUDS$", "FLIEG $1 STUDS", "VUELA $1 STU
 
 // ------------------------------------------------------------------ world
 
+// traffic is the last stretch of what used to be all turrets, so nothing behind it moves.
+// the desert is where you come down after space, it sits in front of the first map on every loop after the first
+const TRAFFIC_LEN = 5000;
+const DESERT_LEN = 6000;
+// behind the desert: the jungle, the one place where you can duck
+const JUNGLE_LEN = 6000;
+
 function stageFor(d) {
 	if (Game.introEnd && d < Game.introEnd) return ["intro", 0];
+	if (Game.desertEnd && d < Game.desertEnd) return ["desert", d / Game.desertEnd];
+	if (Game.jungleEnd && d < Game.jungleEnd) return ["jungle", (d - Game.desertEnd) / JUNGLE_LEN];
 	for (const s of CONFIG.stages) {
 		if (d < s.finish) return [s.id, clamp((d - s.start) / s.len, 0, 1)];
 	}
 	if (beyondStart != null && d >= beyondStart) {
 		const k = d - beyondStart;
 		const tl = CONFIG.turretsLen || 4000, cl = CONFIG.cityLen || 4000;
-		if (k < tl) return ["turrets", k / tl];
+		if (k < tl - TRAFFIC_LEN) return ["turrets", k / (tl - TRAFFIC_LEN)];
+		if (k < tl) return ["traffic", (k - (tl - TRAFFIC_LEN)) / TRAFFIC_LEN];
 		if (k < tl + cl) return ["city", (k - tl) / cl];
 		const m = Game.marks;
 		// boss 2 switched off: a short beach after the city, then the sea
@@ -490,7 +501,7 @@ function stageFor(d) {
 }
 
 function stageName(id) {
-	const n = STAGE_BY_ID[id] ? STAGE_BY_ID[id].name : { boss: "BOSS", turrets: "TURRETS", city: "CITY", boss2: CONFIG.boss2 === false ? "SEA" : "BOSS", sea: "SEA", beyond: "SPACE", intro: "" }[id];
+	const n = STAGE_BY_ID[id] ? STAGE_BY_ID[id].name : { boss: "BOSS", turrets: "TURRETS", traffic: "TRAFFIC", desert: "DESERT", jungle: "JUNGLE", city: "CITY", boss2: CONFIG.boss2 === false ? "SEA" : "BOSS", sea: "SEA", beyond: "SPACE", intro: "" }[id];
 	return (n === undefined ? String(id) : n).replace(/^\d+\s*/, "");
 }
 
@@ -519,6 +530,8 @@ let trackChunks, updateMovers, regenerate, canyonPath, canyonHalfGap, updatePads
 		if (stage === "beyond") return RGB(20, 25 + h * 3, 45 + h * 4);
 		if (stage === "turrets") return RGB(s * 0.55, s * 0.75, s * 0.45);
 		if (stage === "city") return RGB(35 + h * 2, 35 + h * 2, 42 + h * 2);
+		if (stage === "desert") return RGB(s * 1.25, s * 1.05, s * 0.68);
+		if (stage === "jungle") return RGB(s * 0.32, s * 0.62, s * 0.3);
 		if (stage === "boss2" && CONFIG.boss2 === false) return RGB(s * 0.95, s * 0.85, s * 0.6);
 		if (stage === "boss2") return RGB(s * 0.6, s * 0.45, s * 0.35);
 		if (stage === "sea") return RGB(20 + h * 8, 70 + h * 14, 140 + h * 12);
@@ -669,6 +682,119 @@ let trackChunks, updateMovers, regenerate, canyonPath, canyonHalfGap, updatePads
 			const t = block(V3(w, h, d), V3(x, h / 2, z), color || TOWER, folder);
 			t.SetAttribute("Break", true);
 			if (smash) smashSpots.push({ part: t, glass: false, x, z, hw: w / 2, hd: d / 2 });
+		}
+	}
+
+	// ---------------- traffic: a highway at dusk. trucks come at you in every other lane, the rest you overtake
+	const LANE = 44;
+	function traffic(folder, movers, rng, x0, z0, count, t) {
+		const d0 = -z0;
+		const from = beyondStart + (CONFIG.turretsLen || 4000) - TRAFFIC_LEN, to = from + TRAFFIC_LEN;
+		const lanes = [];
+		for (let k = Math.ceil(x0 / LANE); k * LANE < x0 + CHUNK; k++) lanes.push(k);
+		// lane markings
+		for (const k of lanes) {
+			for (const zz of [50, 150]) {
+				const dash = block(V3(1.2, 0.4, 34), V3(k * LANE + LANE / 2, 2.2, z0 - zz), RGB(235, 235, 220), folder);
+				dash.CanQuery = false;
+				dash.CanCollide = false;
+				dash.CastShadow = false;
+			}
+		}
+		const COLORS = [RGB(220, 70, 60), RGB(60, 120, 220), RGB(240, 190, 60), RGB(235, 235, 235), RGB(70, 170, 110), RGB(150, 90, 200)];
+		const drive = (part, vel) => movers.push({ part, base: part.Position, vel, t0: runTime, dMin: from, dMax: to });
+		for (let i = 0; i < count; i++) {
+			const k = lanes[rng.NextInteger(0, lanes.length - 1)];
+			const oncoming = mod(k, 2) === 0;
+			const x = k * LANE, z = z0 - rng.NextNumber(40, CHUNK - 40);
+			const vel = V3(0, 0, oncoming ? 30 + t * 20 : -25);
+			const len = rng.NextInteger(46, 70), h = rng.NextInteger(32, 40);
+			const trailer = block(V3(16, h, len), V3(x, 4 + h / 2, z), COLORS[rng.NextInteger(0, COLORS.length - 1)], folder);
+			trailer.SetAttribute("Break", true);
+			drive(trailer, vel);
+			// the cab sits on the end it's driving towards
+			const cab = block(V3(15, 22, 14), V3(x, 4 + 11, z + (oncoming ? 1 : -1) * (len / 2 + 8)), RGB(40, 42, 50), folder);
+			cab.SetAttribute("Break", true);
+			drive(cab, vel);
+			const lights = block(V3(13, 2.5, 1), V3(x, 9, z + (oncoming ? 1 : -1) * (len / 2 + 15.4)), oncoming ? RGB(255, 245, 200) : RGB(255, 40, 40), folder);
+			lights.Material = "Neon";
+			lights.CanQuery = false;
+			lights.CanCollide = false;
+			drive(lights, vel);
+		}
+		// cars are too low to hit, they're just there so the road is busy
+		const cars = amount(rng, 1.4);
+		for (let i = 0; i < cars; i++) {
+			const k = lanes[rng.NextInteger(0, lanes.length - 1)];
+			const oncoming = mod(k, 2) === 0;
+			const car = block(V3(9, 6, 19), V3(k * LANE + rng.NextNumber(-3, 3), 5.2, z0 - rng.NextNumber(20, CHUNK - 20)), COLORS[rng.NextInteger(0, COLORS.length - 1)], folder);
+			car.CanQuery = false;
+			car.CanCollide = false;
+			drive(car, V3(0, 0, oncoming ? 55 : -45));
+		}
+	}
+
+	// ---------------- desert: cacti, rock, and twisters that wander across the sand
+	function desert(folder, movers, rng, x0, z0, t) {
+		const green = RGB(58, 138, 72);
+		const n = amount(rng, 1.4 + t * 2.2);
+		for (let i = 0; i < n; i++) {
+			const w = rng.NextInteger(11, 16), h = rng.NextInteger(70, 112);
+			const x = x0 + rng.NextNumber(20, CHUNK - 20), z = z0 - rng.NextNumber(20, CHUNK - 20);
+			const tint = green.Lerp(new Color3(0, 0, 0), rng.NextNumber(0, 0.2));
+			block(V3(w, h, w), V3(x, h / 2, z), tint, folder).SetAttribute("Break", true);
+			const arms = rng.NextInteger(0, 2);
+			for (let a = 0; a < arms; a++) {
+				const side = a === 0 ? 1 : -1, ay = rng.NextNumber(18, 34), up = rng.NextNumber(22, 40);
+				block(V3(14, w * 0.7, w * 0.7), V3(x + side * (w / 2 + 7), ay, z), tint, folder).SetAttribute("Break", true);
+				block(V3(w * 0.7, up, w * 0.7), V3(x + side * (w / 2 + 14 - w * 0.35), ay + up / 2, z), tint, folder).SetAttribute("Break", true);
+			}
+		}
+		if (rng.NextNumber() < 0.22) {
+			const w = rng.NextInteger(60, 120), h = rng.NextInteger(45, 80);
+			block(V3(w, h, rng.NextInteger(50, 90)), V3(x0 + rng.NextNumber(0, CHUNK), h / 2, z0 - rng.NextNumber(0, CHUNK)), RGB(170, 105, 70).Lerp(new Color3(0, 0, 0), rng.NextNumber(0, 0.2)), folder).SetAttribute("Break", true);
+		}
+		// a twister is a stack of slabs that each sway a little later than the one below
+		if (rng.NextNumber() < 0.22 + t * 0.25) {
+			const x = x0 + rng.NextNumber(0, CHUNK), z = z0 - rng.NextNumber(30, CHUNK - 30);
+			const reach = rng.NextNumber(70, 120), f = rng.NextNumber(0.45, 0.75), ph = rng.NextNumber(0, 6.28);
+			for (let i = 0; i < 9; i++) {
+				const s = 10 + i * 5.5;
+				const ring = block(V3(s, 12, s), V3(x, 7 + i * 12.5, z), RGB(214, 190, 150).Lerp(RGB(150, 130, 105), i / 9), folder);
+				ring.CFrame = CFrame.fromPos(ring.Position).mul(Ang(0, i * 0.55, 0));
+				ring.Transparency = 0.2;
+				ring.CastShadow = false;
+				movers.push({ part: ring, base: ring.Position, a: Vector3.xAxis.mul(reach), f, ph: ph - i * 0.16, a2: Vector3.zAxis.mul(18), f2: f * 1.7 });
+			}
+		}
+	}
+
+	// ---------------- jungle: trunks to fly around, roots across the whole way to duck under, logs you mustn't duck into
+	function jungle(folder, rng, x0, z0, cz, t, safe) {
+		const bark = RGB(96, 66, 44), leaf = RGB(40, 120, 58);
+		const n = safe ? 0 : amount(rng, 1 + t * 1.4);
+		for (let i = 0; i < n; i++) {
+			const w = rng.NextInteger(12, 20), h = rng.NextInteger(120, 150);
+			const x = x0 + rng.NextNumber(20, CHUNK - 20), z = z0 - rng.NextNumber(140, CHUNK - 10);
+			block(V3(w, h, w), V3(x, h / 2, z), bark.Lerp(new Color3(0, 0, 0), rng.NextNumber(0, 0.25)), folder).SetAttribute("Break", true);
+			const top = block(V3(rng.NextInteger(50, 80), 22, rng.NextInteger(50, 80)), V3(x, h + 6, z), leaf.Lerp(new Color3(0, 0, 0), rng.NextNumber(0, 0.3)), folder);
+			top.CanQuery = false;
+			top.CanCollide = false;
+		}
+		if (safe) return;
+		// the same for the whole row, so there's no way around: under the roots, over the logs
+		const roll = mod(Math.sin(cz * 12.9898 + seed * 0.37) * 43758.5453, 1);
+		const z = z0 - 70;
+		if (roll < 0.34 + t * 0.12) {
+			const root = block(V3(CHUNK, 11, 9), V3(x0 + CHUNK / 2, 27.5, z), RGB(74, 50, 34), folder);
+			root.SetAttribute("Jungle", "root");
+			for (let i = 0; i < 4; i++) {
+				const vine = block(V3(1.4, rng.NextNumber(4, 8), 1.4), V3(x0 + rng.NextNumber(10, CHUNK - 10), 20, z), leaf, folder);
+				vine.CanQuery = false;
+				vine.CanCollide = false;
+			}
+		} else if (roll > 0.74 - t * 0.1) {
+			block(V3(CHUNK, 15, 12), V3(x0 + CHUNK / 2, 7.5, z), RGB(70, 92, 48), folder).SetAttribute("Jungle", "log");
 		}
 	}
 
@@ -994,8 +1120,8 @@ let trackChunks, updateMovers, regenerate, canyonPath, canyonHalfGap, updatePads
 
 		const tile = x0 >= -400 && x1 <= 400 && !settings.low ? 20 : 40;
 		const tiles = [];
-		if (stage === "city") {
-			const slab = block(V3(CHUNK, 2, CHUNK), V3(x0 + CHUNK / 2, 1, z0 - CHUNK / 2), RGB(34, 34, 42), folder);
+		if (stage === "city" || stage === "traffic") {
+			const slab = block(V3(CHUNK, 2, CHUNK), V3(x0 + CHUNK / 2, 1, z0 - CHUNK / 2), stage === "traffic" ? RGB(48, 48, 54) : RGB(34, 34, 42), folder);
 			slab.SetAttribute("Floor", true);
 			slab.CastShadow = false;
 		} else if (stage !== "beyond") {
@@ -1067,6 +1193,12 @@ let trackChunks, updateMovers, regenerate, canyonPath, canyonHalfGap, updatePads
 			} else if (stage === "turrets") {
 				towers(folder, rng, x0, z0, amount(rng, (1.2 + t * 1.8) * mult));
 				turretTowers(folder, rng, x0, z0, amount(rng, 0.15 + t * 0.2));
+			} else if (stage === "traffic") {
+				traffic(folder, movers, rng, x0, z0, amount(rng, 0.9 + t * 1.1), t);
+			} else if (stage === "desert") {
+				desert(folder, movers, rng, x0, z0, t);
+			} else if (stage === "jungle") {
+				jungle(folder, rng, x0, z0, cz, t, false);
 			} else if (stage === "city") {
 				const far = Math.abs(x0 + CHUNK / 2 - pos.X) > 900;
 				cityBlocks(folder, rng, x0, z0, far ? Math.min(1, amount(rng, 0.7)) : amount(rng, (0.6 + t * 0.8) * mult), far);
@@ -1162,7 +1294,12 @@ let trackChunks, updateMovers, regenerate, canyonPath, canyonHalfGap, updatePads
 	updateMovers = () => {
 		for (const c of chunks.values()) {
 			for (const m of c.movers) {
-				if (m.part.Parent) {
+				if (m.part.Parent && m.vel) {
+					// traffic drives in a straight line, and is gone once it leaves its stretch of road
+					const p = m.base.add(m.vel.mul(runTime - m.t0));
+					if (-p.Z < m.dMin || -p.Z > m.dMax) m.part.Parent = null;
+					else m.part.Position = p;
+				} else if (m.part.Parent) {
 					let off = m.a.mul(Math.sin(runTime * m.f + m.ph));
 					if (m.a2) off = off.add(m.a2.mul(Math.sin(runTime * m.f2 + m.ph)));
 					m.part.Position = m.base.add(off);
@@ -7322,6 +7459,10 @@ let startBoss, updateBoss, resetSky;
 
 	F.reset = () => {
 		if (F.cine && F.cine.shell) F.cine.shell.Destroy();
+		for (const r of (F.cine && F.cine.rocks) || []) {
+			r.p.Destroy();
+			r.glow.Destroy();
+		}
 		F.holdCam = false;
 		F.approach = false;
 		F.bars(false);
@@ -7635,7 +7776,73 @@ let startBoss, updateBoss, resetSky;
 		const dir = V3(0, -Math.sin(c.pitch), -Math.cos(c.pitch));
 		pos = pos.add(dir.mul(c.v * dt));
 		speedNow = c.v;
-		planeMain.CFrame = CFrame.lookAt(pos, pos.add(dir)).mul(Ang(0, 0, Math.sin(t * 9) * 0.04 * Math.min(t, 2)));
+		// this part is yours: left and right through the debris that's coming down with you. a hit costs fuel, it doesn't kill
+		if (c.x0 === undefined) {
+			c.x0 = pos.X;
+			c.vx = 0;
+			c.rocks = [];
+			c.next = 2.4;
+			c.hits = 0;
+		}
+		let input = 0;
+		if (Game.down("left") || Game.touch.left) input -= 1;
+		if (Game.down("right") || Game.touch.right) input += 1;
+		c.vx += (input * 95 - c.vx) * Math.min(1, dt * 5);
+		pos = V3(clamp(pos.X + c.vx * dt, c.x0 - 110, c.x0 + 110), pos.Y, pos.Z);
+		planeMain.CFrame = CFrame.lookAt(pos, pos.add(dir)).mul(Ang(0, 0, -c.vx / 95 * 0.6 + Math.sin(t * 9) * 0.04 * Math.min(t, 2)));
+		if (t >= c.next && t < 9) {
+			c.next = t + 0.95;
+			// every other one comes straight at you, the rest are just somewhere in the way
+			const x = c.rocks.n % 2 === 0 ? pos.X : c.x0 + random(-100, 100);
+			c.rocks.n = (c.rocks.n || 0) + 1;
+			const size = random(12, 18);
+			const p = neonPart(Vector3.one.mul(size), RGB(60, 52, 50), CFrame.fromPos(pos), 0);
+			p.Material = "SmoothPlastic";
+			const glow = neonPart(Vector3.one.mul(size * 1.6), RGB(255, 120, 40), CFrame.fromPos(pos), 0.6);
+			glow.Shape = "Ball";
+			c.rocks.push({ p, glow, x, d: 640, size, spin: Math.random() * 6 });
+			if (!c.told) {
+				c.told = true;
+				showHint("DODGE THE DEBRIS");
+				task.delay(2.5, () => F.cine === c && showHint(null));
+			}
+		}
+		for (let i = c.rocks.length - 1; i >= 0; i--) {
+			const r = c.rocks[i];
+			r.d -= c.v * 0.7 * dt;
+			const at = V3(r.x, pos.Y, pos.Z).add(dir.mul(r.d));
+			r.p.CFrame = CFrame.fromPos(at).mul(Ang(r.spin + t * 2, t * 1.3, 0));
+			r.glow.CFrame = CFrame.fromPos(at.add(dir.mul(r.size * 0.7)));
+			if (!r.done && r.d < 6) {
+				r.done = true;
+				if (Math.abs(r.x - pos.X) < r.size / 2 + 5) {
+					c.hits++;
+					fuel = Math.max(10, fuel - 20);
+					boom(at);
+					flash();
+					sfx("blast");
+					shake = Math.max(shake, 0.9);
+					popup("HIT!  -20 FUEL", BAD);
+					r.d = -100;
+				} else {
+					stats.close = (stats.close || 0) + 1;
+					popup("DODGED  +" + (CONFIG.closeBonus || 15) + " \u25CF", WHITE);
+					sfx("near", 1, 1, clamp((r.x - pos.X) / 20, -0.7, 0.7));
+				}
+			}
+			if (r.d < -60) {
+				r.p.Destroy();
+				r.glow.Destroy();
+				c.rocks.splice(i, 1);
+			}
+		}
+		if (t >= 9.6 && !c.summed) {
+			c.summed = true;
+			if (c.hits === 0) {
+				banner("CLEAN RE-ENTRY", GOOD, 2);
+				sfx("good");
+			}
+		}
 		if (!c.shell) {
 			c.shell = neonPart(Vector3.one.mul(6), RGB(255, 140, 50), CFrame.fromPos(pos), 1);
 			c.shell.Shape = "Ball";
@@ -7654,7 +7861,7 @@ let startBoss, updateBoss, resetSky;
 			fire.Parent = att;
 			c.fire = fire;
 		}
-		const heat = clamp((t - 0.8) / 1.5, 0, 1) * (1 - clamp((t - 4.2) / 1, 0, 1));
+		const heat = clamp((t - 0.8) / 1.5, 0, 1) * (1 - clamp((t - 9.2) / 1, 0, 1));
 		c.shell.CFrame = CFrame.lookAt(pos.add(dir.mul(3)), pos.add(dir.mul(10)));
 		c.shell.Size = Vector3.one.mul(8 * (0.6 + heat * 0.8));
 		c.shell.Transparency = 1 - heat * 0.55;
@@ -7671,9 +7878,13 @@ let startBoss, updateBoss, resetSky;
 			Debris.AddItem(cl, 2);
 		}
 		F.cam = CFrame.lookAt(pos.sub(dir.mul(36)).add(V3(0, 10, 0)), pos.add(dir.mul(30)));
-		if (t >= 5.2 && !c.fading) {
+		if (t >= 10.4 && !c.fading) {
 			c.fading = true;
 			fade(() => {
+				for (const r of c.rocks) {
+					r.p.Destroy();
+					r.glow.Destroy();
+				}
 				if (c.shell) c.shell.Destroy();
 				Game.loopAround();
 			});
@@ -7971,6 +8182,14 @@ function onStage(nw, old) {
 			});
 		}
 		if (nw === "city") Game.mood(0.3, RGB(30, 30, 70), 4, RGB(150, 150, 195), 0.25);
+		if (nw === "traffic") Game.mood(17.7, RGB(240, 150, 95), 4);
+		if (nw === "desert") Game.mood(13, RGB(240, 215, 170), 3);
+		if (nw === "jungle") {
+			Game.mood(15.5, RGB(70, 120, 80), 3);
+			task.delay(2.2, () => {
+				if (curStage === "jungle" && !dead) banner(Game.touch.on ? "HOLD LEFT + RIGHT TO DUCK" : "HOLD " + Game.keyNames("duck") + " TO DUCK", GOOD, 3.5);
+			});
+		}
 		if (nw === "sea") Game.mood(Game.sky.clock, RGB(170, 200, 230), 3);
 	}
 }
@@ -8042,6 +8261,8 @@ Game.hitToppled = (b, at) => {
 
 Game.alt = () => {
 	if (curStage === "sea" || (curStage === "boss2" && Game.boss2.done)) return 70;
+	// in the jungle you can drop under the roots
+	if (curStage === "jungle") return Game.down("duck") || (Game.touch.left && Game.touch.right) ? 13 : ALT;
 	// the rocket just flies a bit higher than everything else
 	if (Game.flow.tier === 1 && data.skin === "Rocket") return ALT + 5;
 	return ALT;
@@ -8251,7 +8472,10 @@ Game.loopAround = () => {
 	resetSky();
 	Game.safeRow = null;
 	Game.introEnd = null;
-	Game.shiftStages(0);
+	// you come down in the desert, the first map starts behind it
+	Game.desertEnd = DESERT_LEN;
+	Game.jungleEnd = DESERT_LEN + JUNGLE_LEN;
+	Game.shiftStages(Game.jungleEnd);
 	boss = null;
 	bossDone = false;
 	beyondStart = null;
@@ -8318,6 +8542,8 @@ startRun = (startId) => {
 	buff.immortal = 0;
 	Game.stopTut();
 	Game.introEnd = null;
+	Game.desertEnd = null;
+	Game.jungleEnd = null;
 	Game.shiftStages(0);
 	if ((startId == null || startId === "towers") && !data.tutDone && !Game.race) {
 		Game.introEnd = Infinity;
@@ -8352,6 +8578,8 @@ toMenu = () => {
 	Game.hold = false;
 	Game.stopTut();
 	Game.introEnd = null;
+	Game.desertEnd = null;
+	Game.jungleEnd = null;
 	Game.shiftStages(0);
 	hud.Visible = false;
 	results.Visible = false;
@@ -8454,7 +8682,7 @@ function step(dt) {
 		y += (approachY - y) * Math.min(1, dt * 3);
 		speedNow *= approachK;
 	} else if (fuel <= 0 && stage !== "beyond") y -= FUEL.sink * dt;
-	else y += (Game.alt() - y) * Math.min(1, dt * 2);
+	else y += (Game.alt() - y) * Math.min(1, dt * (curStage === "jungle" ? 8 : 2));
 
 	if (stage === "beyond" && fuel <= 0 && !Game.god) {
 		const before = Game.voidT;
@@ -8651,7 +8879,10 @@ Game.skip = () => {
 		Game.endIntro();
 		nextD = Game.introEnd;
 	} else if (STAGE_BY_ID[stage]) nextD = STAGE_BY_ID[stage].finish;
-	else if (stage === "turrets") nextD = beyondStart + (CONFIG.turretsLen || 4000);
+	else if (stage === "desert") nextD = Game.desertEnd;
+	else if (stage === "jungle") nextD = Game.jungleEnd;
+	else if (stage === "turrets") nextD = beyondStart + (CONFIG.turretsLen || 4000) - TRAFFIC_LEN;
+	else if (stage === "traffic") nextD = beyondStart + (CONFIG.turretsLen || 4000);
 	else if (stage === "city") nextD = beyondStart + (CONFIG.turretsLen || 4000) + (CONFIG.cityLen || 4000);
 	else if (stage === "sea") {
 		flash();
@@ -8990,7 +9221,7 @@ applySettings();
 toMenu();
 start();
 document.getElementById("boot").remove();
-if (DEV) window.__dev = { bt: (v) => { if (boss) { boss.t = v; boss.nextShot = v + 1; } }, bossS: () => boss && { hits: boss.hits, green: boss.green ? [Math.round(boss.green.x), Math.round(boss.green.rz)] : null, shot: !!boss.shot, t: Math.round(boss.t), fin: boss.finale, p: [Math.round(boss.p.X - pos.X), Math.round(boss.p.Y)] }, gx: () => (boss && boss.green ? boss.green.x : null), boom: () => { const c = workspace.GetPartBoundsInRadius(pos.add(V3(0, 0, -330)), 300, params).filter((t) => t.GetAttribute("Break") && t.Size.Y > 80 && t.Parent).sort((x, y) => Math.abs(x.Position.X - pos.X) - Math.abs(y.Position.X - pos.X))[0]; if (!c) return null; Game.hold = true; shatter(c, V3(c.Position.X, pos.Y, c.Position.Z + c.Size.Z / 2), 1); return Math.round(c.Position.X - pos.X); }, fin: () => STAGE_BY_ID.canyon.finish, cp: (d) => canyonPath(d), hg: (d) => canyonHalfGap(d)[0], d: () => -pos.Z, setx: (x) => { pos = V3(x, pos.Y, pos.Z); vx = 0; }, tp: (back, side) => { const d = STAGE_BY_ID.canyon.finish - back; pos = V3(canyonPath(d) + (side || 0), ALT, -d); Game.cam.last = null; return [Game.fork, Math.round(d)]; }, steer: (v) => { Game.steerFake = v; }, note: (m) => notify(m, GOOD), del: () => Online.deleteAccount(), lb: () => openPanel("leaderboard"), hello: () => Game.cloudLoad(true), crash: () => task.spawn(crash, []), data: () => data, stats: () => stats, vs: () => Game.versusToggle(), heart: () => Game.heartFx(), pad: (k) => Game.makePad(k, pos.X, pos.Z - 45, pickups), reg: async (n, p) => { await Online.register(n, p); request("set_name", n); return Online.account(); }, win: () => Game._vsWin(), vsd: () => Game._vsDebug(), dbg: () => [mode, dead, !!stats, !!planeMain, planeMain && !!planeMain.Parent, Game.raceState.mid], race: () => [Game.race, Game.raceState.inQueue, Game.queueText(), JSON.stringify(Game.raceState.final)], shot: () => Game.flow.startApproach(), uid: () => Online.myId(), achp: () => openPanel("achievements"), achgo: (id) => Game.ach(id), bp: (s) => Game.openBackpack(s), pf: () => [1, 2, 3].map(Game.planeFor), req: (a, b) => request(a, b), gift: () => openPanel("gift"), push: () => Game.pushProfile(), gems: () => { Game.openShop(); shopTab = "GEMS"; rebuildShop(); }, run: (id) => startRun(id || "towers"), skip: () => Game.skip(), ahead: () => { const r = Math.floor(-pos.Z / CHUNK); return [r, beyondStart, stageFor(-pos.Z)[0], stageFor((r + 5) * CHUNK + 1)[0], stageFor((r + 40) * CHUNK + 1)[0]]; }, state: () => [mode, curStage, Game.flow.cine && Game.flow.cine.kind, Math.round(-pos.Z)] };
+if (DEV) window.__dev = { goto: (k) => { pos = V3(0, ALT, -((beyondStart || 0) + k)); Game.cam.last = null; regenerate(pos.X, pos.Z); return [curStage, Math.round(-pos.Z)]; }, bt: (v) => { if (boss) { boss.t = v; boss.nextShot = v + 1; } }, bossS: () => boss && { hits: boss.hits, green: boss.green ? [Math.round(boss.green.x), Math.round(boss.green.rz)] : null, shot: !!boss.shot, t: Math.round(boss.t), fin: boss.finale, p: [Math.round(boss.p.X - pos.X), Math.round(boss.p.Y)] }, gx: () => (boss && boss.green ? boss.green.x : null), boom: () => { const c = workspace.GetPartBoundsInRadius(pos.add(V3(0, 0, -330)), 300, params).filter((t) => t.GetAttribute("Break") && t.Size.Y > 80 && t.Parent).sort((x, y) => Math.abs(x.Position.X - pos.X) - Math.abs(y.Position.X - pos.X))[0]; if (!c) return null; Game.hold = true; shatter(c, V3(c.Position.X, pos.Y, c.Position.Z + c.Size.Z / 2), 1); return Math.round(c.Position.X - pos.X); }, fin: () => STAGE_BY_ID.canyon.finish, cp: (d) => canyonPath(d), hg: (d) => canyonHalfGap(d)[0], d: () => -pos.Z, setx: (x) => { pos = V3(x, pos.Y, pos.Z); vx = 0; }, tp: (back, side) => { const d = STAGE_BY_ID.canyon.finish - back; pos = V3(canyonPath(d) + (side || 0), ALT, -d); Game.cam.last = null; return [Game.fork, Math.round(d)]; }, steer: (v) => { Game.steerFake = v; }, note: (m) => notify(m, GOOD), del: () => Online.deleteAccount(), lb: () => openPanel("leaderboard"), hello: () => Game.cloudLoad(true), crash: () => task.spawn(crash, []), data: () => data, stats: () => stats, vs: () => Game.versusToggle(), heart: () => Game.heartFx(), pad: (k) => Game.makePad(k, pos.X, pos.Z - 45, pickups), reg: async (n, p) => { await Online.register(n, p); request("set_name", n); return Online.account(); }, win: () => Game._vsWin(), vsd: () => Game._vsDebug(), dbg: () => [mode, dead, !!stats, !!planeMain, planeMain && !!planeMain.Parent, Game.raceState.mid], race: () => [Game.race, Game.raceState.inQueue, Game.queueText(), JSON.stringify(Game.raceState.final)], shot: () => Game.flow.startApproach(), uid: () => Online.myId(), achp: () => openPanel("achievements"), achgo: (id) => Game.ach(id), bp: (s) => Game.openBackpack(s), pf: () => [1, 2, 3].map(Game.planeFor), req: (a, b) => request(a, b), gift: () => openPanel("gift"), push: () => Game.pushProfile(), gems: () => { Game.openShop(); shopTab = "GEMS"; rebuildShop(); }, run: (id) => startRun(id || "towers"), skip: () => Game.skip(), ahead: () => { const r = Math.floor(-pos.Z / CHUNK); return [r, beyondStart, stageFor(-pos.Z)[0], stageFor((r + 5) * CHUNK + 1)[0], stageFor((r + 40) * CHUNK + 1)[0]]; }, state: () => [mode, curStage, Game.flow.cine && Game.flow.cine.kind, Math.round(-pos.Z)] };
 
 // ------------------------------------------------------------------ versus
 // same idea as roblox: queue up, everyone starts on the same map, farthest wins.
@@ -10106,7 +10337,7 @@ if (DEV) window.__dev = { bt: (v) => { if (boss) { boss.t = v; boss.nextShot = v
 // ------------------------------------------------------------------ old version warning
 // every build has its own number, the page checks now and then whether a newer one is online
 (() => {
-	const BUILD = "1791184452";
+	const BUILD = "1791189504";
 	if (BUILD.startsWith("__")) return;
 	const bar = make("TextButton", {
 		AnchorPoint: V2(0.5, 0),
@@ -10256,7 +10487,9 @@ if (DEV) window.__dev = { bt: (v) => { if (boss) { boss.t = v; boss.nextShot = v
 
 	// ---------------- hooks from the run
 	Game.achStage = (old, nw) => {
-		if (["towers", "moving", "canyon", "smash", "turrets", "city", "sea"].includes(old)) Game.ach(old);
+		// turrets only count once the highway behind them is done too
+		if (old === "traffic") Game.ach("turrets");
+		else if (["towers", "moving", "canyon", "smash", "city", "sea"].includes(old) || (old === "turrets" && nw !== "traffic")) Game.ach(old);
 		if (old === "towers" && runTime < 30 && (Game.lastStart || "towers") === "towers" && Game.loop === 0) Game.ach("nodamage");
 	};
 	Game.achLoop = () => {
