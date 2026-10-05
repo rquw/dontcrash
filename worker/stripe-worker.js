@@ -168,7 +168,8 @@ function levelReward(level) {
 
 const DEFAULT = {
 	coins: 0, gems: 0, keys: 0, best: 0, revives: 0, farthest: 0, points: 0,
-	style: { own: {}, color: "", title: "", trail: "" },
+	style: { own: {}, color: "", title: "", font: "", trail: "" },
+	styleV: 0,
 	power: { coins: 0 },
 	skins: { Default: true }, skin: "Default",
 	// what you fly after the first boss and in space. empty = the standard jet / stealth
@@ -196,6 +197,15 @@ const DEFAULT = {
 	settings: { view: 6, music: true, musicVol: 0.5, sfx: false, sfxVol: 0.7, fov: 70, low: false, shake: true, binds: {} },
 };
 
+// when the boxes came, everyone's name colours and titles went back to nothing. trails stayed
+function resetStyle(d) {
+	if (d.styleV === 2) return;
+	const own = {};
+	for (const k in d.style.own || {}) if (k.startsWith("trail:")) own[k] = true;
+	d.style = { own, color: "", title: "", font: "", trail: d.style.trail || "" };
+	d.styleV = 2;
+}
+
 function copy(t) {
 	return JSON.parse(JSON.stringify(t));
 }
@@ -217,6 +227,7 @@ function load() {
 	}
 	if (typeof d !== "object" || !d) d = {};
 	fill(d, DEFAULT);
+	resetStyle(d);
 	// sounds start off for everyone, even saves from before, you turn them on in settings
 	if (!d.sfxOptIn) {
 		d.settings.sfx = false;
@@ -262,6 +273,7 @@ save(false);
 function setState(data, sess, name) {
 	const d = data && typeof data === "object" ? copy(data) : {};
 	fill(d, DEFAULT);
+	resetStyle(d);
 	if (!d.created) d.created = Date.now();
 	if (name) d.name = name;
 	// saves from before the daily and monthly boards only knew the week, carry that over
@@ -312,7 +324,7 @@ function profileOf(d) {
 	const p = {
 		name: d.name || "player", best: d.best || 0, at: d.bestAt || 0, level: d.level || 1, xp: d.xp || 0, skin: d.skin, death: d.death,
 		stats: d.stats, created: d.created || 0, updated: Date.now(), ach: Object.keys(d.ach || {}).length,
-		nc: (d.style && d.style.color) || "", tt: (d.style && d.style.title) || "",
+		nc: (d.style && d.style.color) || "", tt: (d.style && d.style.title) || "", nf: (d.style && d.style.font) || "", sv: d.styleV || 0,
 	};
 	for (const [k, kind] of [["d", "day"], ["w", "week"], ["m", "month"]]) {
 		const o = (d.lb || {})[kind] || {};
@@ -868,23 +880,81 @@ function checkAch() {
 	}
 }
 // ---------------- things to spend coins on. none of it makes you fly better, it's all for showing off
+// name colours, titles and fonts come out of boxes. r is how rare: 1 common, 2 rare, 3 epic, 4 legendary
 CONFIG.style = {
 	color: [
-		{ id: "red", hex: "#ff5d6c", price: 4000 }, { id: "orange", hex: "#ff9d3c", price: 6000 }, { id: "green", hex: "#5df08a", price: 8000 },
-		{ id: "cyan", hex: "#5fdcff", price: 12000 }, { id: "purple", hex: "#b98aff", price: 18000 }, { id: "pink", hex: "#ff7ad8", price: 25000 },
-		{ id: "gold", hex: "#ffd35a", price: 40000 }, { id: "rainbow", hex: "rainbow", price: 90000 },
+		{ id: "red", name: "RED", hex: "#ff5d6c", r: 1 }, { id: "orange", name: "ORANGE", hex: "#ff9d3c", r: 1 }, { id: "yellow", name: "YELLOW", hex: "#ffe45c", r: 1 },
+		{ id: "lime", name: "LIME", hex: "#b6f25a", r: 1 }, { id: "green", name: "GREEN", hex: "#5df08a", r: 1 }, { id: "teal", name: "TEAL", hex: "#3fd9b8", r: 1 },
+		{ id: "sky", name: "SKY", hex: "#6cc4ff", r: 1 }, { id: "blue", name: "BLUE", hex: "#5b8cff", r: 1 },
+		{ id: "purple", name: "PURPLE", hex: "#b98aff", r: 2 }, { id: "pink", name: "PINK", hex: "#ff7ad8", r: 2 }, { id: "magenta", name: "MAGENTA", hex: "#ff4fb0", r: 2 },
+		{ id: "coral", name: "CORAL", hex: "#ff8a7a", r: 2 }, { id: "mint", name: "MINT", hex: "#9dffd6", r: 2 }, { id: "lavender", name: "LAVENDER", hex: "#cdb8ff", r: 2 },
+		{ id: "crimson", name: "CRIMSON", hex: "#e0223a", r: 3 }, { id: "toxic", name: "TOXIC", hex: "#39ff14", r: 3 }, { id: "electric", name: "ELECTRIC", hex: "#00e5ff", r: 3 },
+		{ id: "ultraviolet", name: "ULTRAVIOLET", hex: "#8a2bff", r: 3 },
+		{ id: "gold", name: "GOLD", hex: "#ffd35a", r: 4 }, { id: "rainbow", name: "RAINBOW", hex: "rainbow", r: 4 },
 	],
 	title: [
-		{ id: "rookie", name: "ROOKIE", price: 2000 }, { id: "pilot", name: "PILOT", price: 6000 }, { id: "ace", name: "ACE", price: 15000 },
-		{ id: "daredevil", name: "DAREDEVIL", price: 25000 }, { id: "menace", name: "MENACE", price: 40000 }, { id: "legend", name: "LEGEND", price: 75000 },
-		{ id: "myth", name: "MYTH", price: 150000 },
+		{ id: "rookie", name: "ROOKIE", r: 1 }, { id: "pilot", name: "PILOT", r: 1 }, { id: "cadet", name: "CADET", r: 1 }, { id: "tourist", name: "TOURIST", r: 1 },
+		{ id: "passenger", name: "PASSENGER", r: 1 }, { id: "wingman", name: "WINGMAN", r: 1 }, { id: "drifter", name: "DRIFTER", r: 1 }, { id: "nightowl", name: "NIGHT OWL", r: 1 },
+		{ id: "ace", name: "ACE", r: 2 }, { id: "daredevil", name: "DAREDEVIL", r: 2 }, { id: "speedster", name: "SPEEDSTER", r: 2 }, { id: "hotshot", name: "HOTSHOT", r: 2 },
+		{ id: "stormchaser", name: "STORMCHASER", r: 2 }, { id: "skypirate", name: "SKY PIRATE", r: 2 },
+		{ id: "menace", name: "MENACE", r: 3 }, { id: "phantom", name: "PHANTOM", r: 3 }, { id: "untouchable", name: "UNTOUCHABLE", r: 3 }, { id: "crashdummy", name: "CRASH DUMMY", r: 3 },
+		{ id: "legend", name: "LEGEND", r: 4 }, { id: "myth", name: "MYTH", r: 4 },
+	],
+	// no font files: these are ones the device already has, with something close as a fallback
+	font: [
+		{ id: "serif", name: "SERIF", css: "Georgia, 'Times New Roman', serif", r: 1 }, { id: "mono", name: "MONO", css: "ui-monospace, Menlo, Consolas, monospace", r: 1 },
+		{ id: "narrow", name: "NARROW", css: "'Arial Narrow', 'Roboto Condensed', sans-serif", stretch: 1, r: 1 }, { id: "round", name: "ROUND", css: "'Arial Rounded MT Bold', 'Trebuchet MS', sans-serif", r: 1 },
+		{ id: "typewriter", name: "TYPEWRITER", css: "'Courier New', Courier, monospace", r: 2 }, { id: "italic", name: "ITALIC", css: "", italic: 1, r: 2 }, { id: "wide", name: "WIDE", css: "", wide: 1, r: 2 },
+		{ id: "comic", name: "COMIC", css: "'Comic Sans MS', 'Chalkboard SE', 'Comic Neue', cursive", r: 3 }, { id: "impact", name: "IMPACT", css: "Impact, 'Arial Black', sans-serif", r: 3 },
+		{ id: "script", name: "SCRIPT", css: "'Brush Script MT', 'Snell Roundhand', 'Segoe Script', cursive", r: 4 },
 	],
 	trail: [
 		{ id: "red", hex: "#ff4050", price: 3000 }, { id: "green", hex: "#4dff8a", price: 5000 }, { id: "cyan", hex: "#40e0ff", price: 5000 },
 		{ id: "pink", hex: "#ff60d0", price: 8000 }, { id: "gold", hex: "#ffd040", price: 12000 }, { id: "rainbow", hex: "rainbow", price: 50000 },
 	],
 };
-// buy it, or put it on if it's yours. id "" takes it off
+// what one box costs, and how likely each rarity is. ten at once is just ten
+CONFIG.boxes = { color: 10000, title: 50000, font: 7500 };
+CONFIG.boxOdds = [60, 27, 10, 3];
+CONFIG.boxDup = 0.3;
+// not Math.random: the browser and the worker have to roll the same thing
+function boxRoll(d) {
+	d.rolls = (d.rolls || 0) + 1;
+	let x = ((d.created || 1) ^ Math.imul(d.rolls, 2654435761)) >>> 0;
+	x = Math.imul(x ^ (x >>> 15), 2246822507) >>> 0;
+	x = Math.imul(x ^ (x >>> 13), 3266489909) >>> 0;
+	return ((x ^ (x >>> 16)) >>> 0) / 4294967296;
+}
+handlers.box = (a) => {
+	if (!a || typeof a !== "object" || !CONFIG.boxes[a.kind]) return [false, "unknown box"];
+	const n = a.n === 10 ? 10 : 1;
+	const price = CONFIG.boxes[a.kind] * n;
+	const d = s.data, st = d.style;
+	if (d.coins < price) return [false, "not enough coins"];
+	d.coins -= price;
+	const list = CONFIG.style[a.kind], out = [];
+	let back = 0;
+	for (let i = 0; i < n; i++) {
+		let roll = boxRoll(d) * 100, r = 1;
+		for (const odds of CONFIG.boxOdds) {
+			if (roll < odds) break;
+			roll -= odds;
+			r++;
+		}
+		const pool = list.filter((x) => x.r === Math.min(r, 4));
+		const it = pool[Math.floor(boxRoll(d) * pool.length)];
+		const key = a.kind + ":" + it.id;
+		// one you already have pays some of the box back
+		const dup = !!st.own[key];
+		const refund = dup ? Math.floor(CONFIG.boxes[a.kind] * CONFIG.boxDup) : 0;
+		st.own[key] = true;
+		back += refund;
+		out.push({ id: it.id, dup, refund });
+	}
+	d.coins += back;
+	return [true, { items: out, back }];
+};
+// put it on if it's yours. trails are still bought straight, everything else comes out of a box. id "" takes it off
 handlers.style = (a) => {
 	if (!a || typeof a !== "object" || !CONFIG.style[a.kind]) return [false, "unknown item"];
 	const st = s.data.style;
@@ -896,6 +966,7 @@ handlers.style = (a) => {
 	if (!item) return [false, "unknown item"];
 	const key = a.kind + ":" + item.id;
 	if (!st.own[key]) {
+		if (a.kind !== "trail") return [false, "that one comes out of a box"];
 		if (s.data.coins < item.price) return [false, "not enough coins"];
 		s.data.coins -= item.price;
 		st.own[key] = true;
@@ -1283,7 +1354,7 @@ async function whoIs(env, token) {
 }
 
 // what the browser may ask for. everything else isn't a thing
-const ACTIONS = new Set(["mission_claim", "mission_bonus", "claim_daily", "claim_hourly", "claim_play", "redeem", "shop_hint", "buy_code", "buy_power", "loadout", "skin", "death", "tut_done", "unlock_start", "use_revive", "revive_gems", "paid", "buy_revive", "run_start", "run_end", "race_prize", "vs_played", "ach", "ach_retro", "reset", "cas_wheel", "cas_roulette", "cas_mines_start", "cas_mines_pick", "cas_mines_cash", "cas_bj_start", "cas_bj_hit", "cas_bj_stand", "cas_bj_double", "cas_enter", "cas_leave", "buy_gems", "style"]);
+const ACTIONS = new Set(["mission_claim", "mission_bonus", "claim_daily", "claim_hourly", "claim_play", "redeem", "shop_hint", "buy_code", "box", "buy_power", "loadout", "skin", "death", "tut_done", "unlock_start", "use_revive", "revive_gems", "paid", "buy_revive", "run_start", "run_end", "race_prize", "vs_played", "ach", "ach_retro", "reset", "cas_wheel", "cas_roulette", "cas_mines_start", "cas_mines_pick", "cas_mines_cash", "cas_bj_start", "cas_bj_hit", "cas_bj_stand", "cas_bj_double", "cas_enter", "cas_leave", "buy_gems", "style"]);
 
 async function sync(req, env, ctx) {
 	let body;

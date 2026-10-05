@@ -3,9 +3,9 @@ import {
 	camera, Lighting, Instance, workspace, markQueryRoot, Enum, OverlapParams, TweenService, TweenInfo, Debris, UIS, playSfx, loopSound, loadSounds, setSfxVolume,
 	NumberSequence, NumberSequenceKeypoint, NumberRange, ColorSequence, ColorSequenceKeypoint, guiRootInst, setUiScale, setLowGraphics, physicsGround,
 	mergeFloor, start, perf,
-} from "./engine.js?v=1791190687";
-import * as Server from "./server.js?v=1791190687";
-import * as Online from "./online.js?v=1791190687";
+} from "./engine.js?v=1791191848";
+import * as Server from "./server.js?v=1791191848";
+import * as Online from "./online.js?v=1791191848";
 
 const V3 = (x, y, z) => new Vector3(x, y, z);
 const RGB = Color3.fromRGB;
@@ -4659,45 +4659,242 @@ function deathView(vp, kind, delay, fov) {
 	}
 
 	// colours, titles and trails for coins. chips in a row, yours have a tick, the one you wear is lit
+	// ---------------- name colours, titles and fonts: they come out of boxes, what you've rolled is yours to wear
+	const RARITY = [null, ["COMMON", RGB(170, 176, 190)], ["RARE", RGB(90, 180, 255)], ["EPIC", RGB(200, 110, 255)], ["LEGENDARY", RGB(255, 190, 60)]];
+	const myName = () => String(Online.account() || "YOU").toUpperCase();
+	// how one of them looks: a colour is your name in it, a font is your name set in it, a title is just the title
+	function styleFace(parent, kind, it, size, pos, ts) {
+		const l = text(parent, kind === "title" ? it.name : myName(), size, pos, ts, kind === "title" ? COIN : kind === "color" && it.hex !== "rainbow" ? Game.hexColor(it.hex) : WHITE);
+		if (kind === "color" && it.hex === "rainbow") rainbowLabels.push(l);
+		if (kind === "font") Game.applyFont(l, it.id);
+		return l;
+	}
+	function wear(kind, it, on) {
+		const [ok, msg] = request("style", { kind, id: on ? "" : it.id });
+		if (!ok) {
+			notify(msg, BAD);
+			sfx("bad");
+			return false;
+		}
+		sfx("select");
+		Game.pushProfile();
+		return true;
+	}
+
+	// the roll: a strip of them runs past and slows down on yours. ten at once runs once and then deals them all out
+	function rollShow(kind, title, items, back) {
+		const list = CONFIG.style[kind];
+		const got = items.map((x) => Object.assign({ it: list.find((y) => y.id === x.id) }, x));
+		// the strip stops on the best one
+		const star = got.reduce((a, b) => (b.it.r > a.it.r ? b : a));
+		const root = make("TextButton", { Size: US(1, 1), BackgroundColor3: BLACK, BackgroundTransparency: 1, Text: "", AutoButtonColor: false, ZIndex: 48, Parent: gui });
+		tw(root, 0.25, { BackgroundTransparency: 0.04 });
+		let closed = false;
+		const later = (t, fn) => task.delay(t, () => !closed && fn());
+		const head = text(root, title + (got.length > 1 ? "  x" + got.length : ""), U2(1, 0, 0, 34), U2(0, 0, 0.5, -200), 30, WHITE);
+
+		const TILE = 150, GAP = 10, N = 46, STOP = 40;
+		const win = make("Frame", { AnchorPoint: V2(0.5, 0.5), Position: US(0.5, 0.5), Size: UO(820, 132), BackgroundColor3: RGB(14, 15, 22), ClipsDescendants: true, Parent: root });
+		make("UICorner", { CornerRadius: UDim.new(0, 12), Parent: win });
+		const strip = make("Frame", { Size: UO(N * (TILE + GAP), 112), Position: UO(0, 10), BackgroundTransparency: 1, Parent: win });
+		const tile = (parent, it, pos, size) => {
+			const [, rc] = RARITY[it.r];
+			const c = make("Frame", { Position: pos, Size: size, BackgroundColor3: RGB(26, 28, 40), Parent: parent });
+			make("UICorner", { CornerRadius: UDim.new(0, 10), Parent: c });
+			make("UIStroke", { Color: rc, Thickness: 2, ApplyStrokeMode: "Border", Parent: c });
+			const bar = make("Frame", { Position: U2(0, 0, 1, -8), Size: U2(1, 0, 0, 8), BackgroundColor3: rc, Parent: c });
+			make("UICorner", { CornerRadius: UDim.new(0, 4), Parent: bar });
+			styleFace(c, kind, it, U2(1, -10, 0, 34), U2(0, 5, 0.5, -30), 24);
+			text(c, kind === "title" ? RARITY[it.r][0] : it.name, U2(1, -10, 0, 16), U2(0, 5, 0.5, 10), 13, rc);
+			return c;
+		};
+		// what runs past is rolled with the same odds, so it looks like what it is
+		const filler = () => {
+			let roll = Math.random() * 100, r = 1;
+			for (const o of CONFIG.boxOdds) {
+				if (roll < o) break;
+				roll -= o;
+				r++;
+			}
+			const pool = list.filter((x) => x.r === Math.min(r, 4));
+			return pool[Math.floor(Math.random() * pool.length)];
+		};
+		for (let i = 0; i < N; i++) tile(strip, i === STOP ? star.it : filler(), UO(i * (TILE + GAP), 0), UO(TILE, 112));
+		const needle = make("Frame", { AnchorPoint: V2(0.5, 0.5), Position: US(0.5, 0.5), Size: UO(4, 156), BackgroundColor3: COIN, ZIndex: 3, Parent: root });
+		const end = -(STOP * (TILE + GAP) + TILE / 2 - 410) + (Math.random() * 50 - 25);
+		const SPIN = 4.2;
+		tw(strip, SPIN, { Position: UO(end, 10) }, "Quart", "Out");
+		// it ticks every time one goes under the needle, slower and slower
+		for (let i = 1; i <= STOP; i++) {
+			const k = 1 - (1 - i / STOP) ** 4;
+			later(SPIN * (1 - (1 - k) ** 0.25), () => sfx("tick", 0.9 + (i / STOP) * 0.5));
+		}
+
+		const close = () => {
+			if (closed) return;
+			closed = true;
+			sfx("close");
+			tw(root, 0.2, { BackgroundTransparency: 1 });
+			task.delay(0.2, () => root.Destroy());
+			rebuildShop();
+		};
+
+		later(SPIN + 0.25, () => {
+			const [rn, rc] = RARITY[star.it.r];
+			const fl = make("Frame", { Size: US(1, 1), BackgroundColor3: rc, BackgroundTransparency: 0.3, ZIndex: 6, Parent: root });
+			tw(fl, 0.6, { BackgroundTransparency: 1 });
+			task.delay(0.7, () => fl.Destroy());
+			sfx(star.it.r >= 4 ? "map_clear" : star.it.r === 3 ? "record" : "good");
+			if (star.it.r >= 3) sfx("stage", 1.1, 0.8);
+			shake = Math.max(shake, 0.1 * star.it.r);
+			for (let i = 0; i < 12 * star.it.r; i++) {
+				const a = Math.random() * Math.PI * 2, far = 200 + Math.random() * 460, sz = 5 + Math.floor(Math.random() * 9);
+				const sp = make("Frame", { AnchorPoint: V2(0.5, 0.5), Position: US(0.5, 0.5), Size: UO(sz, sz), Rotation: Math.random() * 90, BackgroundColor3: Math.random() < 0.3 ? WHITE : rc, ZIndex: 5, Parent: root });
+				const tt = 0.7 + Math.random() * 0.7;
+				tw(sp, tt, { Position: U2(0.5, Math.cos(a) * far, 0.5, Math.sin(a) * far * 0.7 + 80), BackgroundTransparency: 1, Rotation: Math.random() * 400 - 200 }, "Quad");
+				task.delay(tt + 0.1, () => sp.Destroy());
+			}
+			if (got.length === 1) {
+				head.Text = rn;
+				head.TextColor3 = rc;
+				const note = text(root, star.dup ? "YOU HAD THIS ONE   +" + fmt(star.refund) + " ● BACK" : "NEW!", U2(1, 0, 0, 28), U2(0, 0, 0.5, 86), 24, star.dup ? DIM : GOOD);
+				note.TextTransparency = 1;
+				tw(note, 0.3, { TextTransparency: 0 });
+			}
+		});
+		later(SPIN + (got.length === 1 ? 1 : 0.9), () => {
+			let y = 130;
+			if (got.length > 1) {
+				// deal all ten out under the strip
+				win.Visible = false;
+				needle.Visible = false;
+				head.Position = U2(0, 0, 0.5, -250);
+				const W = 150, H = 104;
+				got.forEach((g, i) => {
+					later(i * 0.13, () => {
+						const c = tile(root, g.it, U2(0.5, -((W + 10) * 5 - 10) / 2 + (i % 5) * (W + 10), 0.5, -190 + Math.floor(i / 5) * (H + 34)), UO(W, H));
+						const sc = make("UIScale", { Scale: 0.2, Parent: c });
+						tw(sc, 0.3, { Scale: 1 }, "Back");
+						text(root, g.dup ? "+" + fmt(g.refund) + " ●" : "NEW!", UO(W, 18), U2(0.5, -((W + 10) * 5 - 10) / 2 + (i % 5) * (W + 10), 0.5, -190 + Math.floor(i / 5) * (H + 34) + H + 4), 15, g.dup ? DIM : GOOD);
+						sfx(g.it.r >= 3 ? "good" : "tick", 0.9 + g.it.r * 0.15);
+					});
+				});
+				y = 110;
+				later(1.5, () => {
+					if (back > 0) text(root, fmt(back) + " ● BACK FOR THE ONES YOU ALREADY HAD", U2(1, 0, 0, 22), U2(0, 0, 0.5, 96), 17, COIN);
+				});
+			}
+			later(got.length > 1 ? 1.6 : 0, () => {
+				const one = got.length === 1;
+				const bar = make("Frame", { AnchorPoint: V2(0.5, 0), Position: U2(0.5, 0, 0.5, y), Size: UO(one ? 470 : 220, 56), BackgroundTransparency: 1, Parent: root });
+				if (one) {
+					const a = button(bar, "", UO(240, 56), null, () => {
+						wear(kind, star.it, false);
+						close();
+					}, 0.1);
+					a.BackgroundColor3 = RARITY[star.it.r][1];
+					Icons.text(a, US(1, 1), null, 26, BLACK).Text = "WEAR IT";
+				}
+				const c = button(bar, "", UO(220, 56), U2(1, -220, 0, 0), close, 0.35);
+				Icons.text(c, US(1, 1), null, 24, WHITE).Text = "CONTINUE";
+			});
+		});
+	}
+
+	Game.rollShow = rollShow;
+
 	function styleShop() {
 		const st = data.style || { own: {} };
-		const SECT = [
-			["color", "NAME COLOUR", "HOW YOUR NAME LOOKS ON THE LEADERBOARD"],
-			["title", "TITLE", "SITS NEXT TO YOUR NAME FOR EVERYONE TO SEE"],
-			["trail", "TRAIL", "TWO EXTRA LINES OFF YOUR WINGS, ON EVERY PLANE"],
+		const BOXES = [
+			["color", "COLOUR BOX", "ROLLS A COLOUR FOR YOUR NAME"],
+			["title", "TITLE BOX", "ROLLS A TITLE THAT SITS NEXT TO YOUR NAME"],
+			["font", "FONT BOX", "ROLLS A FONT YOUR NAME IS WRITTEN IN"],
 		];
-		for (const [kind, head, sub] of SECT) {
-			const hr = row(shopItems, 50, 1);
-			text(hr, head, U2(0.5, 0, 0, 28), UO(6, 4), 24, WHITE, LEFT);
-			text(hr, sub, U2(1, -12, 0, 18), UO(6, 30), 13, DIM, LEFT);
-			const grid = make("Frame", { Size: U2(1, -10, 0, 0), AutomaticSize: "Y", BackgroundTransparency: 1, LayoutOrder: nextOrder(), Parent: shopItems });
-			make("UIGridLayout", { CellSize: UO(170, 74), CellPadding: UO(8, 8), SortOrder: "LayoutOrder", Parent: grid });
-			CONFIG.style[kind].forEach((it, i) => {
-				const mine = !!st.own[kind + ":" + it.id], on = st[kind] === it.id;
-				const col = it.hex ? (it.hex === "rainbow" ? Color3.fromHSV((i * 0.13) % 1, 0.7, 1) : Game.hexColor(it.hex)) : WHITE;
-				const b = button(grid, "", UO(170, 74), null, () => {
-					if (!mine && Game.topUp("coins", it.price)) return;
-					const [ok, msg] = request("style", { kind, id: on ? "" : it.id });
+		for (const [kind, head, sub] of BOXES) {
+			const list = CONFIG.style[kind], price = CONFIG.boxes[kind];
+			const have = list.filter((it) => st.own[kind + ":" + it.id]).length;
+			const hr = row(shopItems, 78, 0.45);
+			make("UICorner", { CornerRadius: UDim.new(0, 10), Parent: hr });
+			const ic = Icons.make("gift", hr, 46);
+			ic.Position = UO(12, 16);
+			text(hr, head, U2(1, -490, 0, 28), UO(70, 8), 24, WHITE, LEFT);
+			text(hr, have + " OF " + list.length + " FOUND", U2(1, -490, 0, 16), UO(70, 36), 14, have === list.length ? GOOD : COIN, LEFT);
+			text(hr, sub, U2(1, -490, 0, 14), UO(70, 54), 11, DIM, LEFT);
+			[[1, 406], [10, 200]].forEach(([n, right]) => {
+				const b = button(hr, "", UO(194, 54), U2(1, -right, 0.5, -27), () => {
+					if (Game.topUp("coins", price * n)) return;
+					const [ok, res] = request("box", { kind, n });
 					if (!ok) {
-						notify(msg, BAD);
+						notify(res, BAD);
 						sfx("bad");
 						return;
 					}
-					if (mine) sfx("select");
-					else Game.reveal({ head: "NEW " + head, name: String(it.name).toUpperCase(), color: col, skin: kind === "trail" ? data.skin : null, label: kind === "color" ? String((Online.account() || {}).name || "YOU").toUpperCase() : null });
 					Game.pushProfile();
-					if (kind === "trail" && mode === "menu") buildPlane(data.skin);
-					rebuildShop();
-				}, on ? 0.15 : 0.5);
+					sfx("whoosh", 0.7);
+					rollShow(kind, head, res.items, res.back);
+				}, 0.1);
+				Icons.text(b, U2(1, 0, 0, 22), UO(0, 6), 17, WHITE).Text = n === 1 ? "OPEN 1" : "OPEN 10";
+				Icons.text(b, U2(1, 0, 0, 22), UO(0, 27), 19, data.coins >= price * n ? COIN : DIM).Text = fmt(price * n) + " ●";
+			});
+			const grid = make("Frame", { Size: U2(1, -10, 0, 0), AutomaticSize: "Y", BackgroundTransparency: 1, LayoutOrder: nextOrder(), Parent: shopItems });
+			make("UIGridLayout", { CellSize: UO(134, 60), CellPadding: UO(6, 6), SortOrder: "LayoutOrder", Parent: grid });
+			list.forEach((it, i) => {
+				const mine = !!st.own[kind + ":" + it.id], on = st[kind] === it.id;
+				const [rn, rc] = RARITY[it.r];
+				const b = button(grid, "", UO(134, 60), null, () => {
+					if (!mine) {
+						sfx("bad");
+						notify(rn.toLowerCase() + ", it comes out of the " + head.toLowerCase(), rc);
+						return;
+					}
+					if (wear(kind, it, on)) rebuildShop();
+				}, on ? 0.15 : mine ? 0.45 : 0.75);
 				b.LayoutOrder = i;
-				if (on) make("UIStroke", { Color: GOOD, Thickness: 2, Transparency: 0.2, ApplyStrokeMode: "Border", Parent: b });
-				const label = text(b, it.name || (it.hex === "rainbow" ? "RAINBOW" : it.id.toUpperCase()), U2(1, -8, 0, 28), UO(4, 8), 21, col);
-				label.TextStrokeTransparency = 0.6;
-				if (it.hex === "rainbow") rainbowLabels.push(label);
-				const pl = Icons.text(b, U2(1, -8, 0, 20), UO(4, 44), 15, on ? GOOD : mine ? DIM : data.coins >= it.price ? COIN : DIM);
-				pl.Text = on ? "ON, TAP TO TAKE OFF" : mine ? "YOURS, TAP TO USE" : fmt(it.price) + " ●";
+				make("UIStroke", { Color: on ? GOOD : rc, Thickness: on ? 2 : 1, Transparency: on ? 0.1 : mine ? 0.35 : 0.7, ApplyStrokeMode: "Border", Parent: b });
+				if (mine) {
+					styleFace(b, kind, it, U2(1, -8, 0, 24), UO(4, 8), 18).TextStrokeTransparency = 0.6;
+					text(b, on ? "ON" : kind === "title" ? rn : it.name, U2(1, -8, 0, 14), UO(4, 38), 11, on ? GOOD : rc);
+				} else {
+					text(b, "?", U2(1, 0, 0, 30), UO(0, 6), 26, rc).TextTransparency = 0.45;
+					text(b, rn, U2(1, -8, 0, 14), UO(4, 38), 11, rc).TextTransparency = 0.35;
+				}
 			});
 		}
+		const odds = row(shopItems, 26, 1);
+		text(odds, "CHANCES PER BOX: COMMON 60%   RARE 27%   EPIC 10%   LEGENDARY 3%.   ONE YOU ALREADY HAVE PAYS 30% BACK.", U2(1, -12, 0, 18), UO(6, 4), 12, DIM, LEFT);
+
+		// trails are still bought straight
+		const kind = "trail";
+		const hr = row(shopItems, 50, 1);
+		text(hr, "TRAIL", U2(0.5, 0, 0, 28), UO(6, 4), 24, WHITE, LEFT);
+		text(hr, "TWO EXTRA LINES OFF YOUR WINGS, ON EVERY PLANE", U2(1, -12, 0, 18), UO(6, 30), 13, DIM, LEFT);
+		const grid = make("Frame", { Size: U2(1, -10, 0, 0), AutomaticSize: "Y", BackgroundTransparency: 1, LayoutOrder: nextOrder(), Parent: shopItems });
+		make("UIGridLayout", { CellSize: UO(170, 74), CellPadding: UO(8, 8), SortOrder: "LayoutOrder", Parent: grid });
+		CONFIG.style.trail.forEach((it, i) => {
+			const mine = !!st.own[kind + ":" + it.id], on = st[kind] === it.id;
+			const col = it.hex === "rainbow" ? Color3.fromHSV((i * 0.13) % 1, 0.7, 1) : Game.hexColor(it.hex);
+			const b = button(grid, "", UO(170, 74), null, () => {
+				if (!mine && Game.topUp("coins", it.price)) return;
+				const [ok, msg] = request("style", { kind, id: on ? "" : it.id });
+				if (!ok) {
+					notify(msg, BAD);
+					sfx("bad");
+					return;
+				}
+				if (mine) sfx("select");
+				else Game.reveal({ head: "NEW TRAIL", name: it.hex === "rainbow" ? "RAINBOW" : it.id.toUpperCase(), color: col, skin: data.skin });
+				Game.pushProfile();
+				if (mode === "menu") buildPlane(data.skin);
+				rebuildShop();
+			}, on ? 0.15 : 0.5);
+			b.LayoutOrder = i;
+			if (on) make("UIStroke", { Color: GOOD, Thickness: 2, Transparency: 0.2, ApplyStrokeMode: "Border", Parent: b });
+			const label = text(b, it.hex === "rainbow" ? "RAINBOW" : it.id.toUpperCase(), U2(1, -8, 0, 28), UO(4, 8), 21, col);
+			label.TextStrokeTransparency = 0.6;
+			if (it.hex === "rainbow") rainbowLabels.push(label);
+			const pl = Icons.text(b, U2(1, -8, 0, 20), UO(4, 44), 15, on ? GOOD : mine ? DIM : data.coins >= it.price ? COIN : DIM);
+			pl.Text = on ? "ON, TAP TO TAKE OFF" : mine ? "YOURS, TAP TO USE" : fmt(it.price) + " ●";
+		});
 	}
 	const rainbowLabels = [];
 	RunService.RenderStepped.Connect(() => {
@@ -5623,13 +5820,23 @@ function xpBar(parent, size, pos, k, color) {
 		obj.el.appendChild(b);
 	}
 	// what a player bought to stand out: a colour for the name, a title behind it
+	// only what came out of a box counts, what people had before that is gone
+	const styled = (e) => !!e && e.sv === 2;
+	Game.applyFont = (label, id) => {
+		const it = id && CONFIG.style.font.find((x) => x.id === id);
+		const st = label.el.style;
+		st.fontFamily = it && it.css ? it.css : "";
+		st.fontStyle = it && it.italic ? "italic" : "";
+		st.letterSpacing = it && it.wide ? "0.22em" : "";
+		st.fontStretch = it && it.stretch ? "condensed" : "";
+	};
 	const nameColor = (e, fallback) => {
-		const it = e && e.nc && CONFIG.style.color.find((x) => x.id === e.nc);
+		const it = styled(e) && e.nc && CONFIG.style.color.find((x) => x.id === e.nc);
 		if (!it) return fallback;
 		return it.hex === "rainbow" ? Color3.fromHSV((clock() * 0.35) % 1, 0.7, 1) : Game.hexColor(it.hex);
 	};
 	const titleOf = (e) => {
-		const it = e && e.tt && CONFIG.style.title.find((x) => x.id === e.tt);
+		const it = styled(e) && e.tt && CONFIG.style.title.find((x) => x.id === e.tt);
 		return it ? it.name : "";
 	};
 	const flashy = [];
@@ -5643,7 +5850,8 @@ function xpBar(parent, size, pos, k, color) {
 	});
 	function dress(label, e, fallback) {
 		label.TextColor3 = nameColor(e, fallback);
-		if (e && e.nc === "rainbow") flashy.push(label);
+		if (styled(e) && e.nc === "rainbow") flashy.push(label);
+		Game.applyFont(label, styled(e) ? e.nf : "");
 	}
 	Game.dressName = dress;
 	Game.titleOf = titleOf;
@@ -10533,7 +10741,7 @@ if (DEV) window.__dev = { lift: () => { Game.lift = runTime; }, goto: (k) => { p
 // ------------------------------------------------------------------ old version warning
 // every build has its own number, the page checks now and then whether a newer one is online
 (() => {
-	const BUILD = "1791190687";
+	const BUILD = "1791191848";
 	if (BUILD.startsWith("__")) return;
 	const bar = make("TextButton", {
 		AnchorPoint: V2(0.5, 0),
@@ -11008,14 +11216,14 @@ const PINK = RGB(255, 70, 170);
 		const cam = camera.CFrame;
 		const seen = new Set();
 		let n = 0;
-		const put = (id, label, best, col, nc, at) => {
+		const put = (id, label, best, col, nc, at, nf, sv) => {
 			if (seen.has(id) || !(best > 0)) return;
 			seen.add(id);
 			const m = marks.get(id) || build(id, col);
 			// the name wears the colour they bought
-			if (m.nc !== nc) {
-				m.nc = nc;
-				Game.dressName(m.who, { nc }, col);
+			if (m.nc !== nc + "|" + nf) {
+				m.nc = nc + "|" + nf;
+				Game.dressName(m.who, { nc, nf, sv }, col);
 			}
 			if (m.best !== best || m.label !== label) {
 				m.best = best;
@@ -11045,8 +11253,8 @@ const PINK = RGB(255, 70, 170);
 			m.tag.Visible = on;
 		};
 		const me = Online.account() ? Online.myId() : null;
-		put("me", "Your Best", data.best, GOOD, (data.style || {}).color || "", data.bestAt);
-		for (const p of list) if (p.id !== me) put(p.id, p.name + "'s Best", p.best, COIN, p.nc || "", p.at);
+		put("me", "Your Best", data.best, GOOD, (data.style || {}).color || "", data.bestAt, (data.style || {}).font || "", 2);
+		for (const p of list) if (p.id !== me) put(p.id, p.name + "'s Best", p.best, COIN, p.nc || "", p.at, p.nf || "", p.sv);
 		for (const [id, m] of marks) {
 			if (seen.has(id)) continue;
 			m.line.Parent = m.pole.Parent = null;
