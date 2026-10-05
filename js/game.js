@@ -3,9 +3,9 @@ import {
 	camera, Lighting, Instance, workspace, markQueryRoot, Enum, OverlapParams, TweenService, TweenInfo, Debris, UIS, playSfx, loopSound, loadSounds, setSfxVolume,
 	NumberSequence, NumberSequenceKeypoint, NumberRange, ColorSequence, ColorSequenceKeypoint, guiRootInst, setUiScale, setLowGraphics, physicsGround,
 	mergeFloor, start, perf,
-} from "./engine.js?v=1791181910";
-import * as Server from "./server.js?v=1791181910";
-import * as Online from "./online.js?v=1791181910";
+} from "./engine.js?v=1791183335";
+import * as Server from "./server.js?v=1791183335";
+import * as Online from "./online.js?v=1791183335";
 
 const V3 = (x, y, z) => new Vector3(x, y, z);
 const RGB = Color3.fromRGB;
@@ -10071,7 +10071,7 @@ if (DEV) window.__dev = { bt: (v) => { if (boss) { boss.t = v; boss.nextShot = v
 // ------------------------------------------------------------------ old version warning
 // every build has its own number, the page checks now and then whether a newer one is online
 (() => {
-	const BUILD = "1791181910";
+	const BUILD = "1791183335";
 	if (BUILD.startsWith("__")) return;
 	const bar = make("TextButton", {
 		AnchorPoint: V2(0.5, 0),
@@ -10557,8 +10557,8 @@ const PINK = RGB(255, 70, 170);
 				m.num.Text = fmt(Math.floor(best));
 				m.who.Text = label;
 			}
-			// where that distance is in the world right now
-			const z = -(best - Game.loopBase + (Game.from || 0));
+			// that far from the very start of the world, wherever this run began
+			const z = -(best - Game.loopBase);
 			const near = mode === "run" && z < cam.Z + 30 && z > cam.Z - 650;
 			let on = false;
 			if (near) {
