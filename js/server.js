@@ -18,6 +18,9 @@ export const CONFIG = {
 		{ id: "smash", name: "SMASH", len: 10400 },
 	],
 	turretsLen: 12400,
+	// the last part of the turrets is the motorway, the last part of the city is the desert. that way nothing behind them moves
+	trafficLen: 5000,
+	desertLen: 4000,
 	cityLen: 14900,
 	mapBonus: 250,
 	bossBonus: 750,
@@ -32,7 +35,9 @@ export const CONFIG = {
 		{ id: "smash", name: "SMASH", keys: 6, coins: 1500 },
 		{ id: "boss", name: "BOSS 1", keys: 6, coins: 2500 },
 		{ id: "turrets", name: "TURRETS", keys: 10, coins: 3500 },
+		{ id: "traffic", name: "TRAFFIC", keys: 10, coins: 4000 },
 		{ id: "city", name: "CITY", keys: 10, coins: 4500 },
+		{ id: "desert", name: "DESERT", keys: 10, coins: 5000 },
 		{ id: "boss2", name: "BOSS 2", keys: 10, coins: 5500 },
 		{ id: "sea", name: "SEA", keys: 16, coins: 7000 },
 		{ id: "space", name: "SPACE", keys: 16, coins: 8500 },
@@ -139,7 +144,7 @@ const BEYOND = BOSS_START + CONFIG.beyondGap;
 const SEA_AT = BEYOND + CONFIG.turretsLen + CONFIG.cityLen + (CONFIG.boss2 ? 1500 : 100);
 CONFIG.beyondAt = BEYOND;
 CONFIG.seaAt = SEA_AT;
-const AT = { boss: BOSS_START, turrets: BEYOND, city: BEYOND + CONFIG.turretsLen, boss2: BEYOND + CONFIG.turretsLen + CONFIG.cityLen, sea: SEA_AT, space: SEA_AT + CONFIG.seaLen + 1500 };
+const AT = { boss: BOSS_START, turrets: BEYOND, traffic: BEYOND + CONFIG.turretsLen - CONFIG.trafficLen, desert: BEYOND + CONFIG.turretsLen + CONFIG.cityLen - CONFIG.desertLen, city: BEYOND + CONFIG.turretsLen, boss2: BEYOND + CONFIG.turretsLen + CONFIG.cityLen, sea: SEA_AT, space: SEA_AT + CONFIG.seaLen + 1500 };
 for (const st of CONFIG.stages) AT[st.id] = st.start;
 const startById = {};
 if (!CONFIG.boss2) CONFIG.starts = CONFIG.starts.filter((st) => st.id !== "boss2");
@@ -789,7 +794,7 @@ const ACH_REWARDS = {
 	space: { gems: 100, keys: 2 }, fullcircle: { gems: 300, keys: 5 },
 	run5k: { gems: 10 }, run25k: { gems: 60 }, glass50: { gems: 25 }, close10: { gems: 15 }, kills50: { gems: 25 }, saved: { gems: 15 }, nodamage: { gems: 30 },
 	heart: { gems: 10 }, revive: { gems: 10 }, pickups100: { gems: 40 }, rich: { gems: 30 }, skins3: { gems: 30 }, codes5: { gems: 20 },
-	dist100k: { gems: 50 }, runs100: { gems: 50 }, level10: { gems: 50, keys: 2 }, vswin: { gems: 40 }, vs10: { gems: 50 }, hyper: { gems: 15 }, overdrive: { gems: 40 },
+	dist100k: { gems: 50 }, runs100: { gems: 50 }, level10: { gems: 50, keys: 2 }, vswin: { gems: 40 }, vs10: { gems: 50 }, hyper: { gems: 15 }, overdrive: { gems: 40 }, traffic: { gems: 25 }, desert: { gems: 30 },
 };
 CONFIG.achRewards = ACH_REWARDS;
 // can the save back the achievement up? the worker only hands one out when it can
@@ -797,7 +802,7 @@ function earned(d, id) {
 	const st = d.stats || {};
 	const far = Math.max(d.farthest || 0, d.best || 0);
 	const mr = d.maxRun || {};
-	const stage = { towers: 3000, moving: 10200, canyon: 18800, smash: 29200, turrets: BEYOND + CONFIG.turretsLen, city: BEYOND + CONFIG.turretsLen + CONFIG.cityLen, sea: SEA_AT + CONFIG.seaLen };
+	const stage = { towers: 3000, moving: 10200, canyon: 18800, smash: 29200, turrets: BEYOND + CONFIG.turretsLen - CONFIG.trafficLen, traffic: BEYOND + CONFIG.turretsLen, city: BEYOND + CONFIG.turretsLen + CONFIG.cityLen - CONFIG.desertLen, desert: BEYOND + CONFIG.turretsLen + CONFIG.cityLen, sea: SEA_AT + CONFIG.seaLen };
 	if (stage[id]) return far >= stage[id] - 50;
 	switch (id) {
 		case "boss": return (st.bosses || 0) >= 1;
@@ -830,7 +835,7 @@ function earnedNow(id) {
 	const dist = elapsed * 1200 + 1000;
 	const from = s.runFrom || 0, far = from + dist;
 	const cap = Math.floor(dist / 200) + 1;
-	const stage = { towers: 3000, moving: 10200, canyon: 18800, smash: 29200, turrets: BEYOND + CONFIG.turretsLen, city: BEYOND + CONFIG.turretsLen + CONFIG.cityLen, sea: SEA_AT + CONFIG.seaLen };
+	const stage = { towers: 3000, moving: 10200, canyon: 18800, smash: 29200, turrets: BEYOND + CONFIG.turretsLen - CONFIG.trafficLen, traffic: BEYOND + CONFIG.turretsLen, city: BEYOND + CONFIG.turretsLen + CONFIG.cityLen - CONFIG.desertLen, desert: BEYOND + CONFIG.turretsLen + CONFIG.cityLen, sea: SEA_AT + CONFIG.seaLen };
 	if (stage[id]) return far >= stage[id] - 50;
 	switch (id) {
 		case "boss": return far >= BOSS_START;
@@ -853,7 +858,7 @@ export function checkAch() {
 	const d = s.data;
 	d.ach = d.ach || {};
 	d.achPaid = d.achPaid || {};
-	for (const id of ["towers", "moving", "canyon", "smash", "turrets", "city", "sea", "boss", "space", "run5k", "run25k", "glass50", "close10", "kills50", "heart", "revive", "pickups100", "rich", "skins3", "codes5", "dist100k", "runs100", "level10", "vs10"]) {
+	for (const id of ["towers", "moving", "canyon", "smash", "turrets", "traffic", "city", "desert", "sea", "boss", "space", "run5k", "run25k", "glass50", "close10", "kills50", "heart", "revive", "pickups100", "rich", "skins3", "codes5", "dist100k", "runs100", "level10", "vs10"]) {
 		if (d.ach[id] || !earned(d, id)) continue;
 		d.ach[id] = Date.now();
 		if (ACH_REWARDS[id] && !d.achPaid[id]) {

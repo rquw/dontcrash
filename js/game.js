@@ -3,9 +3,9 @@ import {
 	camera, Lighting, Instance, workspace, markQueryRoot, Enum, OverlapParams, TweenService, TweenInfo, Debris, UIS, playSfx, loopSound, loadSounds, setSfxVolume,
 	NumberSequence, NumberSequenceKeypoint, NumberRange, ColorSequence, ColorSequenceKeypoint, guiRootInst, setUiScale, setLowGraphics, physicsGround,
 	mergeFloor, start, perf,
-} from "./engine.js?v=1791190147";
-import * as Server from "./server.js?v=1791190147";
-import * as Online from "./online.js?v=1791190147";
+} from "./engine.js?v=1791190687";
+import * as Server from "./server.js?v=1791190687";
+import * as Online from "./online.js?v=1791190687";
 
 const V3 = (x, y, z) => new Vector3(x, y, z);
 const RGB = Color3.fromRGB;
@@ -249,7 +249,7 @@ let BOSS_START;
 	}
 	BOSS_START = acc;
 })();
-const MAP_STAGES = { towers: true, moving: true, canyon: true, smash: true, turrets: true, city: true, sea: true };
+const MAP_STAGES = { towers: true, moving: true, canyon: true, smash: true, turrets: true, traffic: true, city: true, desert: true, sea: true };
 
 const PAD = {
 	fuel: [RGB(255, 45, 35), "FUEL"],
@@ -284,7 +284,6 @@ let devK = 0;
 		dashR: ["E", "MouseButton2"],
 		shoot: ["LeftShift", "RightShift"],
 		pause: ["P", ""],
-		duck: ["S", "Down"],
 	};
 	const NICE = {
 		LeftShift: "SHIFT", RightShift: "R-SHIFT", LeftControl: "CTRL", RightControl: "R-CTRL", LeftAlt: "ALT", RightAlt: "R-ALT",
@@ -292,8 +291,8 @@ let devK = 0;
 		Space: "SPACE", Return: "ENTER", Left: "LEFT", Right: "RIGHT", Up: "UP", Down: "DOWN", Tab: "TAB",
 	};
 	Game.BIND_DEFAULT = DEFAULT;
-	Game.BIND_ORDER = ["left", "right", "nitro", "dashL", "dashR", "shoot", "duck", "pause"];
-	Game.BIND_NAMES = { left: "STEER LEFT", right: "STEER RIGHT", nitro: "NITRO", dashL: "DASH LEFT", dashR: "DASH RIGHT", shoot: "SHOOT", duck: "DUCK (JUNGLE)", pause: "PAUSE" };
+	Game.BIND_ORDER = ["left", "right", "nitro", "dashL", "dashR", "shoot", "pause"];
+	Game.BIND_NAMES = { left: "STEER LEFT", right: "STEER RIGHT", nitro: "NITRO", dashL: "DASH LEFT", dashR: "DASH RIGHT", shoot: "SHOOT", pause: "PAUSE" };
 
 	Game.binds = () => {
 		settings.binds = typeof settings.binds === "object" && settings.binds && !Array.isArray(settings.binds) ? settings.binds : {};
@@ -468,11 +467,9 @@ const LANG_PATTERNS = [["^FLY ([\\d,]+) STUDS$", "FLIEG $1 STUDS", "VUELA $1 STU
 // ------------------------------------------------------------------ world
 
 // traffic is the last stretch of what used to be all turrets, so nothing behind it moves.
-// desert and jungle are the last stretch of what used to be all city, same idea
-const TRAFFIC_LEN = 5000;
-const DESERT_LEN = 4000;
-// behind the desert: the jungle, the one place where you can duck
-const JUNGLE_LEN = 4000;
+// the desert is the last stretch of what used to be all city, same idea
+const TRAFFIC_LEN = CONFIG.trafficLen || 5000;
+const DESERT_LEN = CONFIG.desertLen || 4000;
 
 function stageFor(d) {
 	if (Game.introEnd && d < Game.introEnd) return ["intro", 0];
@@ -484,10 +481,9 @@ function stageFor(d) {
 		const tl = CONFIG.turretsLen || 4000, cl = CONFIG.cityLen || 4000;
 		if (k < tl - TRAFFIC_LEN) return ["turrets", k / (tl - TRAFFIC_LEN)];
 		if (k < tl) return ["traffic", (k - (tl - TRAFFIC_LEN)) / TRAFFIC_LEN];
-		const ce = tl + cl - DESERT_LEN - JUNGLE_LEN;
+		const ce = tl + cl - DESERT_LEN;
 		if (k < ce) return ["city", (k - tl) / (ce - tl)];
-		if (k < ce + DESERT_LEN) return ["desert", (k - ce) / DESERT_LEN];
-		if (k < tl + cl) return ["jungle", (k - ce - DESERT_LEN) / JUNGLE_LEN];
+		if (k < tl + cl) return ["desert", (k - ce) / DESERT_LEN];
 		const m = Game.marks;
 		// boss 2 switched off: a short beach after the city, then the sea
 		if (m.sea == null && CONFIG.boss2 === false) {
@@ -502,7 +498,7 @@ function stageFor(d) {
 }
 
 function stageName(id) {
-	const n = STAGE_BY_ID[id] ? STAGE_BY_ID[id].name : { boss: "BOSS", turrets: "TURRETS", traffic: "TRAFFIC", desert: "DESERT", jungle: "JUNGLE", city: "CITY", boss2: CONFIG.boss2 === false ? "SEA" : "BOSS", sea: "SEA", beyond: "SPACE", intro: "" }[id];
+	const n = STAGE_BY_ID[id] ? STAGE_BY_ID[id].name : { boss: "BOSS", turrets: "TURRETS", traffic: "TRAFFIC", desert: "DESERT", city: "CITY", boss2: CONFIG.boss2 === false ? "SEA" : "BOSS", sea: "SEA", beyond: "SPACE", intro: "" }[id];
 	return (n === undefined ? String(id) : n).replace(/^\d+\s*/, "");
 }
 
@@ -532,7 +528,6 @@ let trackChunks, updateMovers, regenerate, canyonPath, canyonHalfGap, updatePads
 		if (stage === "turrets") return RGB(s * 0.55, s * 0.75, s * 0.45);
 		if (stage === "city") return RGB(35 + h * 2, 35 + h * 2, 42 + h * 2);
 		if (stage === "desert") return RGB(s * 1.25, s * 1.05, s * 0.68);
-		if (stage === "jungle") return RGB(s * 0.32, s * 0.62, s * 0.3);
 		if (stage === "boss2" && CONFIG.boss2 === false) return RGB(s * 0.95, s * 0.85, s * 0.6);
 		if (stage === "boss2") return RGB(s * 0.6, s * 0.45, s * 0.35);
 		if (stage === "sea") return RGB(20 + h * 8, 70 + h * 14, 140 + h * 12);
@@ -751,8 +746,10 @@ let trackChunks, updateMovers, regenerate, canyonPath, canyonHalfGap, updatePads
 		}
 		if (kind === 3) {
 			// a tanker: two boxes through each other read as a round tank
-			add(V3(15, 19, len), V3(0, 6 + h / 2, 0), RGB(206, 210, 216), true);
-			add(V3(10.5, 25, len - 2), V3(0, 6 + h / 2, 0), RGB(190, 194, 202), true);
+			// shoot it and it takes everything around it along
+			add(V3(15, 19, len), V3(0, 6 + h / 2, 0), RGB(206, 210, 216), true).SetAttribute("Boom", true);
+			add(V3(10.5, 25, len - 2), V3(0, 6 + h / 2, 0), RGB(190, 194, 202), true).SetAttribute("Boom", true);
+			if (!simple) add(V3(15.7, 6, 14), V3(0, 6 + h / 2, 0), RGB(240, 70, 50));
 			if (!simple) {
 				for (const z of [-len / 3, 0, len / 3]) add(V3(15.6, 19.6, 1.6), V3(0, 6 + h / 2, z), dark(paint, 0.1));
 				add(V3(4, 2, 4), V3(0, 6 + h / 2 + 13.2, 0), STEEL);
@@ -808,7 +805,7 @@ let trackChunks, updateMovers, regenerate, canyonPath, canyonHalfGap, updatePads
 			for (const zz of [50, 150]) deco(V3(1.2, 0.4, 34), V3(k * LANE + LANE / 2, 2.2, z0 - zz), RGB(235, 235, 220), folder);
 		}
 		// catseyes down the middle of every lane, they rush past and that's what makes it feel fast
-		if (!far) for (const k of lanes) for (const zz of [25, 100, 175]) deco(V3(1.6, 0.5, 1.6), V3(k * LANE, 2.2, z0 - zz), RGB(255, 190, 70), folder, true);
+		if (!far) for (const k of lanes) for (const zz of [50, 150]) deco(V3(1.6, 0.5, 1.6), V3(k * LANE, 2.2, z0 - zz), RGB(255, 190, 70), folder, true);
 
 		const sign = (word, z, color) => {
 			deco(V3(CHUNK, 3, 3), V3(xc, 66, z), RGB(60, 64, 72), folder);
@@ -851,7 +848,7 @@ let trackChunks, updateMovers, regenerate, canyonPath, canyonHalfGap, updatePads
 			const sway = rng.NextNumber() < 0.16 ? { amp: LANE * 0.5, f: rng.NextNumber(0.5, 0.8), ph: rng.NextNumber(0, 6.28) } : null;
 			drive(truck(folder, rng, origin, f, far), origin, V3(0, 0, f > 0 ? 30 + t * 22 : -26), sway);
 		}
-		const cars = entry ? 0 : amount(rng, far ? 0.6 : 1.5);
+		const cars = entry || far ? 0 : amount(rng, 1.5);
 		for (let i = 0; i < cars; i++) {
 			const k = lanes[rng.NextInteger(0, lanes.length - 1)];
 			const f = mod(k, 2) === 0 ? 1 : -1;
@@ -861,11 +858,12 @@ let trackChunks, updateMovers, regenerate, canyonPath, canyonHalfGap, updatePads
 	}
 
 	// ---------------- desert: cacti, table rock, and twisters that throw you into the sky
-	function cactus(folder, rng, x, z) {
+	function cactus(folder, rng, x, z, far) {
 		const w = rng.NextInteger(11, 15), h = rng.NextInteger(62, 92);
 		const green = dark(RGB(62, 148, 78), rng.NextNumber(0, 0.22)), rib = dark(green, 0.22);
 		const limb = (size, p) => {
 			block(size, p, green, folder).SetAttribute("Break", true);
+			if (far) return;
 			// ribs: two darker strips through each limb
 			deco(V3(size.X + 0.7, size.Y - 2, Math.max(1.6, size.Z * 0.22)), p, rib, folder);
 			deco(V3(Math.max(1.6, size.X * 0.22), size.Y - 2, size.Z + 0.7), p, rib, folder);
@@ -882,7 +880,7 @@ let trackChunks, updateMovers, regenerate, canyonPath, canyonHalfGap, updatePads
 	}
 	function desert(folder, movers, rng, x0, z0, t, far) {
 		const n = amount(rng, 1.3 + t * 2);
-		for (let i = 0; i < n; i++) cactus(folder, rng, x0 + rng.NextNumber(20, CHUNK - 20), z0 - rng.NextNumber(20, CHUNK - 20));
+		for (let i = 0; i < n; i++) cactus(folder, rng, x0 + rng.NextNumber(20, CHUNK - 20), z0 - rng.NextNumber(20, CHUNK - 20), far);
 		// little things on the sand
 		if (!far) {
 			for (let i = 0; i < 5; i++) {
@@ -900,7 +898,7 @@ let trackChunks, updateMovers, regenerate, canyonPath, canyonHalfGap, updatePads
 			});
 		}
 		// birds up where the twisters put you
-		if (rng.NextNumber() < 0.5) {
+		if (!far && rng.NextNumber() < 0.45) {
 			const bx = x0 + rng.NextNumber(0, CHUNK), bz = z0 - rng.NextNumber(0, CHUNK), by = rng.NextNumber(78, 112);
 			const count = rng.NextInteger(3, 5);
 			for (let i = 0; i < count; i++) {
@@ -913,7 +911,8 @@ let trackChunks, updateMovers, regenerate, canyonPath, canyonHalfGap, updatePads
 				movers.push({ rig: list, base: origin, vel: V3(0, 0, 24), t0: runTime, dMin: -1e9, dMax: 1e9, bob: { amp: 2.5, f: 3 + i * 0.3, ph: i } });
 			}
 		}
-		if (rng.NextNumber() < 0.2 + t * 0.2) {
+		// only where you can actually get to them, each one is a lot of moving parts
+		if (!far && rng.NextNumber() < 0.26 + t * 0.14) {
 			const x = x0 + rng.NextNumber(0, CHUNK), z = z0 - rng.NextNumber(30, CHUNK - 30);
 			const reach = rng.NextNumber(60, 110), f = rng.NextNumber(0.4, 0.65), ph = rng.NextNumber(0, 6.28);
 			const sway = (part, i, extra) => movers.push(Object.assign({ part, base: part.Position, a: Vector3.xAxis.mul(reach), f, ph: ph - i * 0.13, a2: Vector3.zAxis.mul(16), f2: f * 1.7 }, extra));
@@ -925,15 +924,15 @@ let trackChunks, updateMovers, regenerate, canyonPath, canyonHalfGap, updatePads
 			core.SetAttribute("Twister", true);
 			sway(core, 2);
 			sway(deco(V3(52, 1.4, 52), V3(x, 7.4, z), RGB(226, 204, 160), folder), 0, { spin: 1.4 });
-			for (let i = 0; i < 15; i++) {
-				const s = 8 + i * 4.4;
-				const slab = deco(V3(s, 8.6, s), V3(x, 9 + i * 9.4, z), RGB(224, 202, 160).Lerp(RGB(146, 128, 108), i / 15), folder);
+			for (let i = 0; i < 11; i++) {
+				const s = 8 + i * 6;
+				const slab = deco(V3(s, 12, s), V3(x, 10 + i * 12.8, z), RGB(224, 202, 160).Lerp(RGB(146, 128, 108), i / 11), folder);
 				slab.Transparency = 0.18 + (i % 2) * 0.14;
-				sway(slab, i, { spin: (i % 2 ? -1 : 1) * (5.5 - i * 0.2), rot: i * 0.5 });
+				sway(slab, i * 1.36, { spin: (i % 2 ? -1 : 1) * (5.5 - i * 0.27), rot: i * 0.5 });
 			}
 			// what it has picked up, going round it
-			for (let i = 0; i < 9; i++) {
-				const r = 16 + i * 5, y = 16 + i * 13;
+			for (let i = 0; i < 6; i++) {
+				const r = 18 + i * 8, y = 18 + i * 20;
 				const bit = deco(Vector3.one.mul(rng.NextNumber(2.5, 5.5)), V3(x, y, z), i % 3 === 0 ? RGB(214, 180, 90) : RGB(120, 96, 70), folder);
 				movers.push({ part: bit, base: V3(x, y, z), a: Vector3.xAxis.mul(reach), f, ph: ph - (y / 9.4) * 0.13, orbit: r, of: 2.2 + rng.NextNumber(0, 1.4), op: rng.NextNumber(0, 6.28), spin: 3 });
 			}
@@ -943,62 +942,6 @@ let trackChunks, updateMovers, regenerate, canyonPath, canyonHalfGap, updatePads
 				const bale = block(V3(13, 10, 11), bp, RGB(218, 184, 92), folder);
 				bale.SetAttribute("Break", true);
 				movers.push({ part: bale, base: bp, a: Vector3.yAxis.mul(5), f: rng.NextNumber(0.8, 1.4), ph: rng.NextNumber(0, 6.28), spin: rng.NextNumber(-1.2, 1.2), tilt: 0.35 });
-			}
-		}
-	}
-
-	// ---------------- jungle: trunks to fly around, roots across the whole way to duck under, logs you mustn't duck into
-	function jungle(folder, rng, x0, z0, cz, t, far) {
-		const bark = RGB(98, 68, 46);
-		const leaves = [RGB(36, 112, 54), RGB(52, 138, 62), RGB(28, 92, 50), RGB(74, 156, 70)];
-		const leaf = () => leaves[rng.NextInteger(0, leaves.length - 1)];
-		const n = amount(rng, 1 + t * 1.4);
-		for (let i = 0; i < n; i++) {
-			const w = rng.NextInteger(12, 20), h = rng.NextInteger(118, 150);
-			const x = x0 + rng.NextNumber(20, CHUNK - 20), z = z0 - rng.NextNumber(140, CHUNK - 10);
-			const b = dark(bark, rng.NextNumber(0, 0.25));
-			block(V3(w, h, w), V3(x, h / 2, z), b, folder).SetAttribute("Break", true);
-			// the foot of the tree spreads out, the crown comes in three layers
-			deco(V3(w + 9, 9, w + 9), V3(x, 8, z), dark(b, 0.15), folder);
-			deco(V3(w + 4, 16, w + 4), V3(x, 14, z), b, folder);
-			const cw = rng.NextInteger(58, 86);
-			deco(V3(cw, 16, cw), V3(x, h + 2, z), leaf(), folder);
-			deco(V3(cw * 0.72, 14, cw * 0.72), V3(x + rng.NextNumber(-8, 8), h + 15, z + rng.NextNumber(-8, 8)), leaf(), folder);
-			deco(V3(cw * 0.4, 11, cw * 0.4), V3(x, h + 26, z), leaf(), folder);
-			if (!far) for (let v = 0; v < 3; v++) {
-				const len = rng.NextNumber(14, 46);
-				deco(V3(1.3, len, 1.3), V3(x + rng.NextNumber(-cw / 2, cw / 2), h - 6 - len / 2, z + rng.NextNumber(-cw / 2, cw / 2)), leaf(), folder);
-			}
-		}
-		if (!far) {
-			// undergrowth
-			for (let i = 0; i < 5; i++) {
-				const s = rng.NextNumber(7, 15);
-				const p = V3(x0 + rng.NextNumber(0, CHUNK), 7 + s * 0.25, z0 - rng.NextNumber(110, CHUNK));
-				deco(V3(s, s * 0.6, s), p, leaf(), folder);
-				if (rng.NextNumber() < 0.4) deco(V3(2.2, 2, 2.2), p.add(V3(s * 0.2, s * 0.4, 0)), rng.NextNumber() < 0.5 ? RGB(255, 110, 150) : RGB(255, 214, 80), folder);
-			}
-		}
-		// the same for the whole row, so there's no way around: under the roots, over the logs
-		const roll = mod(Math.sin(cz * 12.9898 + seed * 0.37) * 43758.5453, 1);
-		const z = z0 - 70, xc = x0 + CHUNK / 2;
-		if (roll < 0.34 + t * 0.12) {
-			block(V3(CHUNK, 11, 9), V3(xc, 27.5, z), RGB(76, 52, 36), folder);
-			deco(V3(CHUNK, 2.4, 10.5), V3(xc, 33.6, z), RGB(60, 128, 62), folder);
-			block(V3(CHUNK, 6, 6), V3(xc, 37, z - 3), RGB(88, 60, 40), folder);
-			for (let i = 0; i < 7; i++) {
-				const len = rng.NextNumber(3, 8.5);
-				deco(V3(1.5, len, 1.5), V3(x0 + rng.NextNumber(6, CHUNK - 6), 22 - len / 2, z + rng.NextNumber(-3, 3)), leaf(), folder);
-			}
-			// they come down out of the trees at both ends
-			for (const x of [x0 + 30, x0 + CHUNK - 30]) deco(V3(8, 110, 8), V3(x, 88, z - 3), RGB(82, 56, 38), folder);
-		} else if (roll > 0.74 - t * 0.1) {
-			block(V3(CHUNK, 15, 12), V3(xc, 7.5, z), RGB(92, 66, 44), folder);
-			deco(V3(CHUNK, 2, 9), V3(xc, 15.6, z), RGB(70, 140, 66), folder);
-			for (let i = 0; i < 4; i++) {
-				const p = V3(x0 + rng.NextNumber(8, CHUNK - 8), 17.6, z + rng.NextNumber(-3, 3));
-				deco(V3(1.2, 2.4, 1.2), p, RGB(238, 232, 214), folder);
-				deco(V3(4.4, 1.6, 4.4), p.add(V3(0, 2, 0)), RGB(226, 56, 50), folder);
 			}
 		}
 	}
@@ -1402,8 +1345,6 @@ let trackChunks, updateMovers, regenerate, canyonPath, canyonHalfGap, updatePads
 				traffic(folder, movers, rng, x0, z0, t, Math.abs(x0 + CHUNK / 2 - pos.X) > 420);
 			} else if (stage === "desert") {
 				desert(folder, movers, rng, x0, z0, t, Math.abs(x0 + CHUNK / 2 - pos.X) > 420);
-			} else if (stage === "jungle") {
-				jungle(folder, rng, x0, z0, cz, t, Math.abs(x0 + CHUNK / 2 - pos.X) > 420);
 			} else if (stage === "city") {
 				const far = Math.abs(x0 + CHUNK / 2 - pos.X) > 900;
 				cityBlocks(folder, rng, x0, z0, far ? Math.min(1, amount(rng, 0.7)) : amount(rng, (0.6 + t * 0.8) * mult), far);
@@ -5185,11 +5126,11 @@ let showResults;
 // ------------------------------------------------------------------ revive (only with revives you collected)
 
 (() => {
-	const ORDER = ["towers", "moving", "canyon", "smash", "boss", "turrets", "city", "boss2", "sea", "beyond"];
+	const ORDER = ["towers", "moving", "canyon", "smash", "boss", "turrets", "traffic", "city", "desert", "boss2", "sea", "beyond"];
 	Game.STAGE_ORDER = ORDER;
 	const WAIT = 6;
 	// gems for a revive in each stage, dying again in the same stage makes it pricier
-	const PRICE = [100, 120, 150, 180, 220, 260, 300, 320, 350, 400];
+	const PRICE = [100, 120, 150, 180, 220, 260, 280, 300, 310, 320, 350, 400];
 	const box = make("CanvasGroup", {
 		AnchorPoint: V2(0.5, 0.5),
 		Position: US(0.5, 0.5),
@@ -7317,7 +7258,8 @@ let startBoss, updateBoss, resetSky;
 			sfx("glass");
 		} else if (h.GetAttribute("Break")) {
 			const hp = (h.GetAttribute("HP") || 5) - dmg;
-			if (hp <= 0) {
+			if (hp <= 0 && h.GetAttribute("Boom")) Game.boomAt(h.Position);
+			else if (hp <= 0) {
 				shatter(h, at, 0.8, true, 4);
 				stats.kills++;
 				sfx("shatter");
@@ -8401,10 +8343,9 @@ function onStage(nw, old) {
 		}
 		// the night ends at the edge of the city
 		if (nw === "desert") Game.mood(11, RGB(240, 215, 170), 5);
-		if (nw === "jungle") {
-			Game.mood(15.5, RGB(70, 120, 80), 3);
+		if (nw === "desert") {
 			task.delay(2.2, () => {
-				if (curStage === "jungle" && !dead) banner(Game.touch.on ? "HOLD LEFT + RIGHT TO DUCK" : "HOLD " + Game.keyNames("duck") + " TO DUCK", GOOD, 3.5);
+				if (curStage === "desert" && !dead) banner("FLY INTO A TWISTER!", GOOD, 3);
 			});
 		}
 		if (nw === "sea") Game.mood(Game.sky.clock, RGB(170, 200, 230), 3);
@@ -8484,8 +8425,6 @@ Game.alt = () => {
 		if (k > 8 || curStage !== "desert") Game.lift = null;
 		else return ALT + 78 * (k < 0.9 ? k / 0.9 : Math.max(0, 1 - (k - 0.9) / 6.6) ** 1.4);
 	}
-	// in the jungle you can drop under the roots
-	if (curStage === "jungle") return Game.down("duck") || (Game.touch.left && Game.touch.right) ? 13 : ALT;
 	// the rocket just flies a bit higher than everything else
 	if (Game.flow.tier === 1 && data.skin === "Rocket") return ALT + 5;
 	return ALT;
@@ -8515,7 +8454,7 @@ Game.startAt = (id) => {
 	if (!st) return;
 	const at = st.at;
 	Game.safeRow = Math.floor(at / CHUNK);
-	if (["turrets", "city", "boss2", "sea", "space"].includes(id)) {
+	if (["turrets", "traffic", "city", "desert", "boss2", "sea", "space"].includes(id)) {
 		bossDone = true;
 		beyondStart = CONFIG.beyondAt;
 		Game.flow.tier = id === "space" ? 3 : 2;
@@ -8528,6 +8467,25 @@ Game.startAt = (id) => {
 	pos = V3(0, id === "sea" ? 70 : ALT, -(at + (id === "space" ? 60 : 5)));
 	Game.from = Math.floor(-pos.Z);
 	buff.immortal = 3;
+};
+
+// a tanker goes up and takes what's next to it along
+Game.boomAt = (at) => {
+	ball(at, 80, RGB(255, 240, 180), 0.4);
+	ball(at, 60, RGB(255, 120, 30), 0.9);
+	sfx("blast");
+	sfx("crash", 0.8, 0.6);
+	shake = Math.max(shake, 0.7);
+	let n = 0;
+	for (const t of workspace.GetPartBoundsInRadius(at, 80, params)) {
+		if (t.GetAttribute("Break") && t.Parent) {
+			t.SetAttribute("Boom", null);
+			shatter(t, at, 1);
+			n++;
+		}
+	}
+	stats.kills += n;
+	popup("TANKER!  +" + n * 5 + " \u25CF", COIN);
 };
 
 // out of the casino: you come out of the dark at the start of the next map
@@ -8904,7 +8862,7 @@ function step(dt) {
 		y += (approachY - y) * Math.min(1, dt * 3);
 		speedNow *= approachK;
 	} else if (fuel <= 0 && stage !== "beyond") y -= FUEL.sink * dt;
-	else y += (Game.alt() - y) * Math.min(1, dt * (curStage === "jungle" ? 8 : 2));
+	else y += (Game.alt() - y) * Math.min(1, dt * 2);
 
 	if (stage === "beyond" && fuel <= 0 && !Game.god) {
 		const before = Game.voidT;
@@ -9014,7 +8972,9 @@ function step(dt) {
 				sfx("launch", 1.5, 0.7);
 				sfx("whoosh", 0.6);
 				shake = Math.max(shake, 0.5);
-				popup("UPDRAFT!", GOOD);
+				fuel = Math.min(FUEL.max, fuel + 15);
+				Game.fuelFlash = clock();
+				popup("UPDRAFT!  +FUEL", GOOD);
 			}
 			continue;
 		}
@@ -9118,9 +9078,8 @@ Game.skip = () => {
 	} else if (STAGE_BY_ID[stage]) nextD = STAGE_BY_ID[stage].finish;
 	else if (stage === "turrets") nextD = beyondStart + (CONFIG.turretsLen || 4000) - TRAFFIC_LEN;
 	else if (stage === "traffic") nextD = beyondStart + (CONFIG.turretsLen || 4000);
-	else if (stage === "city") nextD = beyondStart + (CONFIG.turretsLen || 4000) + (CONFIG.cityLen || 4000) - DESERT_LEN - JUNGLE_LEN;
-	else if (stage === "desert") nextD = beyondStart + (CONFIG.turretsLen || 4000) + (CONFIG.cityLen || 4000) - JUNGLE_LEN;
-	else if (stage === "jungle") nextD = beyondStart + (CONFIG.turretsLen || 4000) + (CONFIG.cityLen || 4000);
+	else if (stage === "city") nextD = beyondStart + (CONFIG.turretsLen || 4000) + (CONFIG.cityLen || 4000) - DESERT_LEN;
+	else if (stage === "desert") nextD = beyondStart + (CONFIG.turretsLen || 4000) + (CONFIG.cityLen || 4000);
 	else if (stage === "sea") {
 		flash();
 		Missiles.clear();
@@ -10574,7 +10533,7 @@ if (DEV) window.__dev = { lift: () => { Game.lift = runTime; }, goto: (k) => { p
 // ------------------------------------------------------------------ old version warning
 // every build has its own number, the page checks now and then whether a newer one is online
 (() => {
-	const BUILD = "1791190147";
+	const BUILD = "1791190687";
 	if (BUILD.startsWith("__")) return;
 	const bar = make("TextButton", {
 		AnchorPoint: V2(0.5, 0),
@@ -10619,7 +10578,9 @@ if (DEV) window.__dev = { lift: () => { Game.lift = runTime; }, goto: (k) => { p
 		{ id: "smash", name: "BULL IN A CHINA SHOP", desc: "Finish Smash", color: GEM },
 		{ id: "boss", name: "BOSS 1 DOWN", desc: "Beat the first boss", color: BAD },
 		{ id: "turrets", name: "DODGEBALL", desc: "Finish Turrets", color: RGB(255, 90, 90) },
+		{ id: "traffic", name: "WRONG WAY", desc: "Finish Traffic", color: RGB(255, 160, 90) },
 		{ id: "city", name: "NIGHT SHIFT", desc: "Finish the City", color: RGB(150, 150, 255) },
+		{ id: "desert", name: "TUMBLEWEED", desc: "Finish the Desert", color: RGB(236, 204, 130) },
 		{ id: "sea", name: "SEA LEGS", desc: "Get through the Sea", color: RGB(80, 170, 255) },
 		{ id: "space", name: "HOUSTON", desc: "Make it through Space and fall back to earth", color: RGB(170, 110, 255) },
 		// the big one
@@ -10726,11 +10687,7 @@ if (DEV) window.__dev = { lift: () => { Game.lift = runTime; }, goto: (k) => { p
 
 	// ---------------- hooks from the run
 	Game.achStage = (old, nw) => {
-		// turrets only count once the highway behind them is done too
-		if (old === "traffic") Game.ach("turrets");
-		// and the city ends behind the desert and the jungle
-		else if (old === "jungle") Game.ach("city");
-		else if (["towers", "moving", "canyon", "smash", "sea"].includes(old) || (old === "turrets" && nw !== "traffic") || (old === "city" && nw !== "desert")) Game.ach(old);
+		if (["towers", "moving", "canyon", "smash", "turrets", "traffic", "city", "desert", "sea"].includes(old)) Game.ach(old);
 		if (old === "towers" && runTime < 30 && (Game.lastStart || "towers") === "towers" && Game.loop === 0) Game.ach("nodamage");
 	};
 	Game.achLoop = () => {
