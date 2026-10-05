@@ -815,6 +815,29 @@ function earned(d, id) {
 	}
 	return false;
 }
+// the ones you earn in the middle of a run: the save can't show them yet, so it goes by how far this run can be by now
+function earnedNow(id) {
+	if (!s.runStart) return false;
+	const elapsed = runClock() / 1000 - s.runStart;
+	const dist = elapsed * 1200 + 1000;
+	const from = s.runFrom || 0, far = from + dist;
+	const cap = Math.floor(dist / 200) + 1;
+	const stage = { towers: 3000, moving: 10200, canyon: 18800, smash: 29200, turrets: BEYOND + CONFIG.turretsLen, city: BEYOND + CONFIG.turretsLen + CONFIG.cityLen, sea: SEA_AT + CONFIG.seaLen };
+	if (stage[id]) return far >= stage[id] - 50;
+	switch (id) {
+		case "boss": return far >= BOSS_START;
+		case "space": return far >= AT.space;
+		case "fullcircle": return from === 0 && dist >= AT.space;
+		case "run5k": return dist >= 5000;
+		case "run25k": return dist >= 25000;
+		case "glass50": return cap * 3 >= 50;
+		case "kills50": return cap * 4 >= 50;
+		case "close10": return elapsed / 1.1 + 1 >= 10;
+		case "nodamage": return from === 0 && dist >= 3000;
+		case "saved": case "heart": case "revive": return true;
+	}
+	return false;
+}
 // the worker hands out everything the save has earned by now, whatever the browser claimed
 export function checkAch() {
 	const d = s.data;
@@ -1132,7 +1155,7 @@ handlers.reset = () => {
 handlers.ach = (id) => {
 	if (typeof id !== "string" || id.length > 30) return [false, "bad id"];
 	if (s.data.ach[id]) return [false, "already"];
-	if (HOST && !earned(s.data, id)) return [false, "not yet"];
+	if (HOST && !earned(s.data, id) && !earnedNow(id)) return [false, "not yet"];
 	s.data.ach[id] = Date.now();
 	s.data.achPaid = s.data.achPaid || {};
 	const rw = ACH_REWARDS[id];
