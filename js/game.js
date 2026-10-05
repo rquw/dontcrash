@@ -3,9 +3,9 @@ import {
 	camera, Lighting, Instance, workspace, markQueryRoot, Enum, OverlapParams, TweenService, TweenInfo, Debris, UIS, playSfx, loopSound, loadSounds, setSfxVolume,
 	NumberSequence, NumberSequenceKeypoint, NumberRange, ColorSequence, ColorSequenceKeypoint, guiRootInst, setUiScale, setLowGraphics, physicsGround,
 	mergeFloor, start, perf,
-} from "./engine.js?v=1791149548";
-import * as Server from "./server.js?v=1791149548";
-import * as Online from "./online.js?v=1791149548";
+} from "./engine.js?v=1791179358";
+import * as Server from "./server.js?v=1791179358";
+import * as Online from "./online.js?v=1791179358";
 
 const V3 = (x, y, z) => new Vector3(x, y, z);
 const RGB = Color3.fromRGB;
@@ -221,7 +221,9 @@ const ALT = 25;
 const SOFT = 1600;
 const ARENA = 1600;
 const HITBOX = V3(10, 2, 7);
-const PICKBOX = V3(16, 16, 8);
+const PICKBOX = V3(28, 24, 12);
+// glass is generous too, only the things that kill you use the real shape
+const GLASSBOX = V3(24, 16, 10);
 
 const CHUNK = 200;
 const SAFE_ROWS = 2;
@@ -8514,6 +8516,7 @@ function step(dt) {
 		const cf = e.part ? e.part.CFrame : planeMain.CFrame.mul(e.off);
 		for (const h of workspace.GetPartBoundsInBox(cf, e.size, params)) touched.add(h);
 	}
+	for (const h of workspace.GetPartBoundsInBox(CFrame.fromPos(pos), GLASSBOX, params)) if (h.GetAttribute("Glass")) touched.add(h);
 	for (const h of touched) {
 		if (h.GetAttribute("Glass")) {
 			if (h.Parent) {
@@ -10068,7 +10071,7 @@ if (DEV) window.__dev = { bt: (v) => { if (boss) { boss.t = v; boss.nextShot = v
 // ------------------------------------------------------------------ old version warning
 // every build has its own number, the page checks now and then whether a newer one is online
 (() => {
-	const BUILD = "1791149548";
+	const BUILD = "1791179358";
 	if (BUILD.startsWith("__")) return;
 	const bar = make("TextButton", {
 		AnchorPoint: V2(0.5, 0),
@@ -10500,7 +10503,7 @@ const PINK = RGB(255, 70, 170);
 	setTimeout(load, 4000);
 	setInterval(load, 300000);
 
-	function build(id, col, letter) {
+	function build(id, col) {
 		const neon = (size) => {
 			const p = Instance.new("Part");
 			p.Anchored = true;
@@ -10516,14 +10519,10 @@ const PINK = RGB(255, 70, 170);
 		};
 		// a line right across where it ended and a pole up to the sign, so you can tell how far away it is
 		const m = { line: neon(V3(700, 0.6, 0.6)), pole: neon(V3(0.6, 22, 0.6)), best: -1 };
-		m.tag = make("Frame", { AnchorPoint: V2(0.5, 1), Size: UO(220, 150), BackgroundTransparency: 1, Visible: false, ZIndex: 2, Parent: gui });
+		m.tag = make("Frame", { AnchorPoint: V2(0.5, 1), Size: UO(260, 74), BackgroundTransparency: 1, Visible: false, ZIndex: 2, Parent: gui });
 		m.scale = make("UIScale", { Parent: m.tag });
-		const face = make("Frame", { AnchorPoint: V2(0.5, 0), Position: U2(0.5, 0, 0, 0), Size: UO(72, 72), BackgroundColor3: RGB(30, 32, 44), Parent: m.tag });
-		make("UICorner", { CornerRadius: UDim.new(0.5, 0), Parent: face });
-		make("UIStroke", { Color: col, Thickness: 3, Parent: face });
-		text(face, letter, US(1, 1), null, 40, col);
-		m.num = text(m.tag, "", U2(1, 0, 0, 44), UO(0, 76), 40, WHITE);
-		m.who = text(m.tag, "", U2(1, 0, 0, 24), UO(0, 122), 20, col);
+		m.num = text(m.tag, "", U2(1, 0, 0, 44), UO(0, 0), 40, WHITE);
+		m.who = text(m.tag, "", U2(1, 0, 0, 24), UO(0, 46), 20, col);
 		marks.set(id, m);
 		return m;
 	}
@@ -10532,10 +10531,15 @@ const PINK = RGB(255, 70, 170);
 		const cam = camera.CFrame;
 		const seen = new Set();
 		let n = 0;
-		const put = (id, label, best, col) => {
+		const put = (id, label, best, col, nc) => {
 			if (seen.has(id) || !(best > 0)) return;
 			seen.add(id);
-			const m = marks.get(id) || build(id, col, label.charAt(0).toUpperCase());
+			const m = marks.get(id) || build(id, col);
+			// the name wears the colour they bought
+			if (m.nc !== nc) {
+				m.nc = nc;
+				Game.dressName(m.who, { nc }, col);
+			}
 			if (m.best !== best || m.label !== label) {
 				m.best = best;
 				m.label = label;
@@ -10564,8 +10568,8 @@ const PINK = RGB(255, 70, 170);
 			m.tag.Visible = on;
 		};
 		const me = Online.account() ? Online.myId() : null;
-		put("me", "Your Best", data.best, GOOD);
-		for (const p of list) if (p.id !== me) put(p.id, p.name + "'s Best", p.best, COIN);
+		put("me", "Your Best", data.best, GOOD, (data.style || {}).color || "");
+		for (const p of list) if (p.id !== me) put(p.id, p.name + "'s Best", p.best, COIN, p.nc || "");
 		for (const [id, m] of marks) {
 			if (seen.has(id)) continue;
 			m.line.Parent = m.pole.Parent = null;
