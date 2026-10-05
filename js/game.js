@@ -3,9 +3,9 @@ import {
 	camera, Lighting, Instance, workspace, markQueryRoot, Enum, OverlapParams, TweenService, TweenInfo, Debris, UIS, playSfx, loopSound, loadSounds, setSfxVolume,
 	NumberSequence, NumberSequenceKeypoint, NumberRange, ColorSequence, ColorSequenceKeypoint, guiRootInst, setUiScale, setLowGraphics, physicsGround,
 	mergeFloor, start, perf,
-} from "./engine.js?v=1791183335";
-import * as Server from "./server.js?v=1791183335";
-import * as Online from "./online.js?v=1791183335";
+} from "./engine.js?v=1791183465";
+import * as Server from "./server.js?v=1791183465";
+import * as Online from "./online.js?v=1791183465";
 
 const V3 = (x, y, z) => new Vector3(x, y, z);
 const RGB = Color3.fromRGB;
@@ -379,10 +379,8 @@ const LANG_PATTERNS = [["^FLY ([\\d,]+) STUDS$", "FLIEG $1 STUDS", "VUELA $1 STU
 	try {
 		lang = localStorage.getItem("dontcrash_lang") || "";
 	} catch (e) {}
-	if (!LANGS.includes(lang)) {
-		const n = String(navigator.language || "en").slice(0, 2).toLowerCase();
-		lang = LANGS.includes(n) ? n : "en";
-	}
+	// english unless you picked something else in the settings
+	if (!LANGS.includes(lang)) lang = "en";
 	Game.lang = lang;
 	Game.setLang = (l) => {
 		if (!LANGS.includes(l) || l === lang) return;
@@ -7325,6 +7323,16 @@ let startBoss, updateBoss, resetSky;
 	F.startTransfer = () => {
 		if (F.cine || dead) return;
 		Missiles.clear();
+		// the same plane in both slots: nothing to switch to, you just keep flying
+		if (Game.planeFor(2) === Game.planeFor(1)) {
+			fuel = FUEL.max;
+			Game.fuelFlash = clock();
+			beyondStart = Game.nextStart();
+			F.tier = 2;
+			Game.spd = 0;
+			banner(Game.touch.on ? "FIRE = SHOOT" : Game.keyName("shoot") + " = SHOOT", WHITE, 2.5);
+			return;
+		}
 		vx = 0;
 		const [jet, jmain, jparts] = Game.makePlane(Game.planeFor(2), junk);
 		jmain.CFrame = CFrame.fromPos(pos.add(V3(60, 14, 140)));
@@ -7429,6 +7437,14 @@ let startBoss, updateBoss, resetSky;
 		vx = 0;
 		F.holdCam = true;
 		F.bars(true);
+		// the same plane in both slots: nobody shoots you down, you pull straight up
+		if (Game.planeFor(3) === Game.planeFor(2)) {
+			fuel = FUEL.max;
+			Game.fuelFlash = clock();
+			sfx("launch", 0.8);
+			F.cine = { kind: "launch", t: 2.2, v: Math.max(speedNow, 160), pitch: 0 };
+			return;
+		}
 		const c = { kind: "shot", t: 0, speed: Math.max(speedNow, 160) };
 		// the stealth jet is already up ahead on the right
 		const [jet, jmain, jparts] = Game.makePlane(Game.planeFor(3), junk);
@@ -10071,7 +10087,7 @@ if (DEV) window.__dev = { bt: (v) => { if (boss) { boss.t = v; boss.nextShot = v
 // ------------------------------------------------------------------ old version warning
 // every build has its own number, the page checks now and then whether a newer one is online
 (() => {
-	const BUILD = "1791183335";
+	const BUILD = "1791183465";
 	if (BUILD.startsWith("__")) return;
 	const bar = make("TextButton", {
 		AnchorPoint: V2(0.5, 0),
