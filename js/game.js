@@ -3,9 +3,9 @@ import {
 	camera, Lighting, Instance, workspace, markQueryRoot, Enum, OverlapParams, TweenService, TweenInfo, Debris, UIS, playSfx, loopSound, loadSounds, setSfxVolume,
 	NumberSequence, NumberSequenceKeypoint, NumberRange, ColorSequence, ColorSequenceKeypoint, guiRootInst, setUiScale, setLowGraphics, physicsGround,
 	mergeFloor, start, perf,
-} from "./engine.js?v=1791189504";
-import * as Server from "./server.js?v=1791189504";
-import * as Online from "./online.js?v=1791189504";
+} from "./engine.js?v=1791190147";
+import * as Server from "./server.js?v=1791190147";
+import * as Online from "./online.js?v=1791190147";
 
 const V3 = (x, y, z) => new Vector3(x, y, z);
 const RGB = Color3.fromRGB;
@@ -468,16 +468,14 @@ const LANG_PATTERNS = [["^FLY ([\\d,]+) STUDS$", "FLIEG $1 STUDS", "VUELA $1 STU
 // ------------------------------------------------------------------ world
 
 // traffic is the last stretch of what used to be all turrets, so nothing behind it moves.
-// the desert is where you come down after space, it sits in front of the first map on every loop after the first
+// desert and jungle are the last stretch of what used to be all city, same idea
 const TRAFFIC_LEN = 5000;
-const DESERT_LEN = 6000;
+const DESERT_LEN = 4000;
 // behind the desert: the jungle, the one place where you can duck
-const JUNGLE_LEN = 6000;
+const JUNGLE_LEN = 4000;
 
 function stageFor(d) {
 	if (Game.introEnd && d < Game.introEnd) return ["intro", 0];
-	if (Game.desertEnd && d < Game.desertEnd) return ["desert", d / Game.desertEnd];
-	if (Game.jungleEnd && d < Game.jungleEnd) return ["jungle", (d - Game.desertEnd) / JUNGLE_LEN];
 	for (const s of CONFIG.stages) {
 		if (d < s.finish) return [s.id, clamp((d - s.start) / s.len, 0, 1)];
 	}
@@ -486,7 +484,10 @@ function stageFor(d) {
 		const tl = CONFIG.turretsLen || 4000, cl = CONFIG.cityLen || 4000;
 		if (k < tl - TRAFFIC_LEN) return ["turrets", k / (tl - TRAFFIC_LEN)];
 		if (k < tl) return ["traffic", (k - (tl - TRAFFIC_LEN)) / TRAFFIC_LEN];
-		if (k < tl + cl) return ["city", (k - tl) / cl];
+		const ce = tl + cl - DESERT_LEN - JUNGLE_LEN;
+		if (k < ce) return ["city", (k - tl) / (ce - tl)];
+		if (k < ce + DESERT_LEN) return ["desert", (k - ce) / DESERT_LEN];
+		if (k < tl + cl) return ["jungle", (k - ce - DESERT_LEN) / JUNGLE_LEN];
 		const m = Game.marks;
 		// boss 2 switched off: a short beach after the city, then the sea
 		if (m.sea == null && CONFIG.boss2 === false) {
@@ -579,7 +580,7 @@ let trackChunks, updateMovers, regenerate, canyonPath, canyonHalfGap, updatePads
 		C: "01111,10000,10000,10000,10000,10000,01111", A: "01110,10001,10001,11111,10001,10001,10001", S: "01111,10000,10000,01110,00001,00001,11110",
 		I: "111,010,010,010,010,010,111", N: "10001,11001,10101,10101,10011,10001,10001", O: "01110,10001,10001,10001,10001,10001,01110",
 		E: "11111,10000,10000,11110,10000,10000,11111", X: "10001,10001,01010,00100,01010,10001,10001", T: "11111,00100,00100,00100,00100,00100,00100",
-		M: "10001,11011,10101,10101,10001,10001,10001", P: "11110,10001,10001,11110,10000,10000,10000", " ": "00,00,00,00,00,00,00",
+		M: "10001,11011,10101,10101,10001,10001,10001", R: "11110,10001,10001,11110,10100,10010,10001", F: "11111,10000,10000,11110,10000,10000,10000", Y: "10001,10001,01010,00100,00100,00100,00100", P: "11110,10001,10001,11110,10000,10000,10000", " ": "00,00,00,00,00,00,00",
 		">": "0010000,0001100,1111110,1111111,1111110,0001100,0010000", "<": "0000100,0011000,0111111,1111111,0111111,0011000,0000100",
 	};
 	function write(folder, str, mid, px, color) {
@@ -685,116 +686,320 @@ let trackChunks, updateMovers, regenerate, canyonPath, canyonHalfGap, updatePads
 		}
 	}
 
-	// ---------------- traffic: a highway at dusk. trucks come at you in every other lane, the rest you overtake
+	// things that are only there to look at: nothing hits them, nothing counts them as a close call
+	function deco(size, p, color, folder, neon) {
+		const b = block(size, p, color, folder);
+		b.CanQuery = false;
+		b.CanCollide = false;
+		b.CastShadow = false;
+		if (neon) b.Material = "Neon";
+		return b;
+	}
+	// something built out of several parts that moves as one. add(size, offset, colour, solid, neon)
+	function rig(folder, origin) {
+		const list = [];
+		const add = (size, off, color, solid, neon) => {
+			const p = solid ? block(size, origin.add(off), color, folder) : deco(size, origin.add(off), color, folder, neon);
+			if (solid) p.SetAttribute("Break", true);
+			list.push([p, off]);
+			return p;
+		};
+		return [add, list];
+	}
+	const dark = (c, k) => c.Lerp(new Color3(0, 0, 0), k);
+
+	// ---------------- traffic: a motorway at dusk. trucks come at you in every other lane, the rest you overtake
 	const LANE = 44;
-	function traffic(folder, movers, rng, x0, z0, count, t) {
-		const d0 = -z0;
-		const from = beyondStart + (CONFIG.turretsLen || 4000) - TRAFFIC_LEN, to = from + TRAFFIC_LEN;
-		const lanes = [];
-		for (let k = Math.ceil(x0 / LANE); k * LANE < x0 + CHUNK; k++) lanes.push(k);
-		// lane markings
-		for (const k of lanes) {
-			for (const zz of [50, 150]) {
-				const dash = block(V3(1.2, 0.4, 34), V3(k * LANE + LANE / 2, 2.2, z0 - zz), RGB(235, 235, 220), folder);
-				dash.CanQuery = false;
-				dash.CanCollide = false;
-				dash.CastShadow = false;
+	const PAINT = [RGB(214, 62, 52), RGB(52, 112, 214), RGB(238, 186, 52), RGB(232, 232, 236), RGB(62, 164, 104), RGB(146, 84, 198), RGB(236, 128, 44), RGB(40, 44, 54)];
+	const GLASS = RGB(24, 32, 46), TYRE = RGB(18, 18, 20), STEEL = RGB(120, 124, 132);
+
+	function wheels(add, zs, half, r) {
+		for (const z of zs) {
+			for (const s of [-1, 1]) {
+				add(V3(3, r, r), V3(s * half, r / 2, z), TYRE);
+				add(V3(3.3, r * 0.45, r * 0.45), V3(s * half, r / 2, z), STEEL);
 			}
 		}
-		const COLORS = [RGB(220, 70, 60), RGB(60, 120, 220), RGB(240, 190, 60), RGB(235, 235, 235), RGB(70, 170, 110), RGB(150, 90, 200)];
-		const drive = (part, vel) => movers.push({ part, base: part.Position, vel, t0: runTime, dMin: from, dMax: to });
-		for (let i = 0; i < count; i++) {
-			const k = lanes[rng.NextInteger(0, lanes.length - 1)];
-			const oncoming = mod(k, 2) === 0;
-			const x = k * LANE, z = z0 - rng.NextNumber(40, CHUNK - 40);
-			const vel = V3(0, 0, oncoming ? 30 + t * 20 : -25);
-			const len = rng.NextInteger(46, 70), h = rng.NextInteger(32, 40);
-			const trailer = block(V3(16, h, len), V3(x, 4 + h / 2, z), COLORS[rng.NextInteger(0, COLORS.length - 1)], folder);
-			trailer.SetAttribute("Break", true);
-			drive(trailer, vel);
-			// the cab sits on the end it's driving towards
-			const cab = block(V3(15, 22, 14), V3(x, 4 + 11, z + (oncoming ? 1 : -1) * (len / 2 + 8)), RGB(40, 42, 50), folder);
-			cab.SetAttribute("Break", true);
-			drive(cab, vel);
-			const lights = block(V3(13, 2.5, 1), V3(x, 9, z + (oncoming ? 1 : -1) * (len / 2 + 15.4)), oncoming ? RGB(255, 245, 200) : RGB(255, 40, 40), folder);
-			lights.Material = "Neon";
-			lights.CanQuery = false;
-			lights.CanCollide = false;
-			drive(lights, vel);
+	}
+	function lamps(add, f, w, front, back, y) {
+		for (const s of [-1, 1]) {
+			add(V3(3, 1.8, 0.6), V3(s * (w / 2 - 2.2), y, front + f * 0.3), RGB(255, 246, 205), false, true);
+			add(V3(2.6, 1.6, 0.6), V3(s * (w / 2 - 2), y, back - f * 0.3), RGB(255, 40, 40), false, true);
 		}
-		// cars are too low to hit, they're just there so the road is busy
-		const cars = amount(rng, 1.4);
+	}
+	// f is +1 when it drives towards you. simple = far off to the side, there it's just the boxes you could hit
+	function truck(folder, rng, origin, f, simple) {
+		const [add, list] = rig(folder, origin);
+		const paint = PAINT[rng.NextInteger(0, PAINT.length - 1)], cabC = PAINT[rng.NextInteger(0, PAINT.length - 1)];
+		const kind = rng.NextInteger(1, 4);
+		const len = rng.NextInteger(48, 66), h = rng.NextInteger(28, 34);
+		const nose = f * (len / 2 + 9);
+		if (kind === 4) {
+			// a bus: one long body, tall enough to be in your way
+			const L = 62;
+			add(V3(15, 25, L), V3(0, 18.5, 0), paint, true);
+			if (!simple) {
+				add(V3(15.4, 7, L - 8), V3(0, 22, 0), GLASS);
+				add(V3(15.4, 1.2, L + 0.4), V3(0, 13, 0), dark(paint, 0.35));
+				add(V3(14, 1.5, L - 3), V3(0, 31.6, 0), RGB(236, 236, 240));
+				add(V3(13, 8, 0.6), V3(0, 21, f * (L / 2 + 0.2)), GLASS);
+				add(V3(15.6, 2.4, 1.4), V3(0, 6.6, f * (L / 2 + 0.4)), STEEL);
+				wheels(add, [-L / 2 + 10, L / 2 - 12], 6.4, 7);
+				lamps(add, f, 15, f * (L / 2 + 0.6), -f * (L / 2 + 0.6), 9);
+			}
+			return list;
+		}
+		if (kind === 3) {
+			// a tanker: two boxes through each other read as a round tank
+			add(V3(15, 19, len), V3(0, 6 + h / 2, 0), RGB(206, 210, 216), true);
+			add(V3(10.5, 25, len - 2), V3(0, 6 + h / 2, 0), RGB(190, 194, 202), true);
+			if (!simple) {
+				for (const z of [-len / 3, 0, len / 3]) add(V3(15.6, 19.6, 1.6), V3(0, 6 + h / 2, z), dark(paint, 0.1));
+				add(V3(4, 2, 4), V3(0, 6 + h / 2 + 13.2, 0), STEEL);
+			}
+		} else {
+			add(V3(16, h, len), V3(0, 6 + h / 2, 0), paint, true);
+			if (!simple) {
+				add(V3(16.4, 1.4, len + 0.4), V3(0, 6 + h + 0.2, 0), dark(paint, 0.3));
+				add(V3(16.3, 3, len - 6), V3(0, 6 + h * 0.55, 0), kind === 2 ? RGB(240, 240, 244) : dark(paint, 0.25));
+				add(V3(15, h - 4, 0.6), V3(0, 6 + h / 2, -f * (len / 2 + 0.2)), dark(paint, 0.45));
+			}
+		}
+		add(V3(15, 21, 13), V3(0, 15.5, nose), cabC, true);
+		if (!simple) {
+			add(V3(13, 2.2, len + 20), V3(0, 4.9, f * 8), RGB(34, 36, 42));
+			add(V3(13.4, 7.5, 0.6), V3(0, 20, nose + f * 6.6), GLASS);
+			add(V3(14, 6, 9), V3(0, 28.6, nose - f * 1.5), dark(cabC, 0.2));
+			add(V3(15.6, 3, 1.6), V3(0, 6.2, nose + f * 6.8), STEEL);
+			add(V3(11, 5, 0.5), V3(0, 11, nose + f * 6.7), RGB(30, 30, 34));
+			for (const s of [-1, 1]) add(V3(1.2, 9, 1.2), V3(s * 8, 26, nose - f * 6), STEEL);
+			wheels(add, [nose - f * 1, -f * (len / 2 - 8), -f * (len / 2 - 16)], 6.6, 7.5);
+			lamps(add, f, 15, nose + f * 6.9, -f * (len / 2 + 0.5), 9.5);
+		}
+		return list;
+	}
+	// cars are too low to hit, they're there so the road is alive
+	function car(folder, rng, origin, f, simple) {
+		const [add, list] = rig(folder, origin);
+		const paint = PAINT[rng.NextInteger(0, PAINT.length - 1)];
+		const van = rng.NextNumber() < 0.3;
+		add(V3(9.4, van ? 8 : 4.2, 20), V3(0, van ? 6.4 : 4.6, 0), paint);
+		if (simple) return list;
+		if (van) {
+			add(V3(9.6, 3, 5), V3(0, 8.2, f * 6.5), GLASS);
+		} else {
+			add(V3(8.4, 3.4, 10), V3(0, 8.3, -f * 1), GLASS);
+			add(V3(8.6, 0.7, 9), V3(0, 10.2, -f * 1), paint);
+		}
+		wheels(add, [6.5, -6.5], 4.4, 4.4);
+		lamps(add, f, 9.4, f * 10, -f * 10, 5);
+		return list;
+	}
+
+	function traffic(folder, movers, rng, x0, z0, t, far) {
+		const from = beyondStart + (CONFIG.turretsLen || 4000) - TRAFFIC_LEN, to = from + TRAFFIC_LEN;
+		const k0 = -z0 - from;
+		const xc = x0 + CHUNK / 2;
+		const lanes = [];
+		for (let k = Math.ceil(x0 / LANE); k * LANE < x0 + CHUNK; k++) lanes.push(k);
+		const entry = k0 < CHUNK, tunnel = k0 >= TRAFFIC_LEN - 3 * CHUNK;
+		// lane markings, a solid yellow one where the direction changes
+		for (const k of lanes) {
+			for (const zz of [50, 150]) deco(V3(1.2, 0.4, 34), V3(k * LANE + LANE / 2, 2.2, z0 - zz), RGB(235, 235, 220), folder);
+		}
+		// catseyes down the middle of every lane, they rush past and that's what makes it feel fast
+		if (!far) for (const k of lanes) for (const zz of [25, 100, 175]) deco(V3(1.6, 0.5, 1.6), V3(k * LANE, 2.2, z0 - zz), RGB(255, 190, 70), folder, true);
+
+		const sign = (word, z, color) => {
+			deco(V3(CHUNK, 3, 3), V3(xc, 66, z), RGB(60, 64, 72), folder);
+			for (const k of lanes) block(V3(3.5, 66, 3.5), V3(k * LANE + LANE / 2, 33, z), RGB(60, 64, 72), folder);
+			if (Math.abs(xc - pos.X) > 320) return;
+			deco(V3(96, 30, 1.6), V3(xc, 48, z + 2), color, folder);
+			for (const [sx, sy, w, hh] of [[0, 14.4, 97, 1.2], [0, -14.4, 97, 1.2], [-48, 0, 1.2, 30], [48, 0, 1.2, 30]]) deco(V3(w, hh, 2), V3(xc + sx, 48 + sy, z + 2), RGB(240, 240, 240), folder, true);
+			write(folder, word, V3(xc, 48, z + 3.6), 1.9, RGB(245, 245, 245));
+		};
+		if (entry) sign("TRAFFIC", z0 - 20, RGB(20, 110, 60));
+
+		if (tunnel) {
+			// the last stretch runs under the city: a roof, a row of columns between the lanes, strip lights. you come out at night
+			deco(V3(CHUNK, 5, CHUNK), V3(xc, 62.5, z0 - CHUNK / 2), RGB(38, 40, 46), folder);
+			if (k0 < TRAFFIC_LEN - 3 * CHUNK + 1) {
+				deco(V3(CHUNK, 16, 4), V3(xc, 73, z0 - 2), RGB(52, 54, 62), folder);
+				for (let x = x0; x < x0 + CHUNK; x += 20) deco(V3(10, 3, 4.4), V3(x + 5, 62, z0 - 2), RGB(240, 190, 50), folder, true);
+				if (Math.abs(xc - pos.X) <= 320) write(folder, "CITY", V3(xc, 73, z0 + 0.6), 1.7, RGB(120, 225, 255));
+			}
+			for (const k of lanes) {
+				for (const zz of [50, 150]) block(V3(4, 60, 4), V3(k * LANE + LANE / 2, 30, z0 - zz), RGB(70, 72, 80), folder);
+				for (const zz of [40, 140]) deco(V3(2.4, 0.8, 56), V3(k * LANE, 59.4, z0 - zz), RGB(255, 226, 170), folder, true);
+			}
+		} else if (!entry && mod(Math.floor(k0 / CHUNK), 5) === 3) {
+			// a bridge over the road every so often, its legs stand between the lanes
+			const z = z0 - 100;
+			deco(V3(CHUNK, 6, 30), V3(xc, 62, z), RGB(86, 88, 96), folder);
+			deco(V3(CHUNK, 4, 1.5), V3(xc, 67, z + 15), RGB(110, 112, 120), folder);
+			deco(V3(CHUNK, 4, 1.5), V3(xc, 67, z - 15), RGB(110, 112, 120), folder);
+			for (const k of lanes) block(V3(5, 59, 8), V3(k * LANE + LANE / 2, 29.5, z), RGB(96, 98, 106), folder);
+		}
+
+		const drive = (list, origin, vel, sway) => movers.push({ rig: list, base: origin, vel, t0: runTime, dMin: from - 40, dMax: to - 3 * CHUNK, sway });
+		const n = entry || tunnel ? 0 : amount(rng, 0.9 + t * 1.1);
+		for (let i = 0; i < n; i++) {
+			const k = lanes[rng.NextInteger(0, lanes.length - 1)];
+			const f = mod(k, 2) === 0 ? 1 : -1;
+			const origin = V3(k * LANE, 0, z0 - rng.NextNumber(40, CHUNK - 40));
+			// some of them don't stay in their lane
+			const sway = rng.NextNumber() < 0.16 ? { amp: LANE * 0.5, f: rng.NextNumber(0.5, 0.8), ph: rng.NextNumber(0, 6.28) } : null;
+			drive(truck(folder, rng, origin, f, far), origin, V3(0, 0, f > 0 ? 30 + t * 22 : -26), sway);
+		}
+		const cars = entry ? 0 : amount(rng, far ? 0.6 : 1.5);
 		for (let i = 0; i < cars; i++) {
 			const k = lanes[rng.NextInteger(0, lanes.length - 1)];
-			const oncoming = mod(k, 2) === 0;
-			const car = block(V3(9, 6, 19), V3(k * LANE + rng.NextNumber(-3, 3), 5.2, z0 - rng.NextNumber(20, CHUNK - 20)), COLORS[rng.NextInteger(0, COLORS.length - 1)], folder);
-			car.CanQuery = false;
-			car.CanCollide = false;
-			drive(car, V3(0, 0, oncoming ? 55 : -45));
+			const f = mod(k, 2) === 0 ? 1 : -1;
+			const origin = V3(k * LANE + rng.NextNumber(-4, 4), 0, z0 - rng.NextNumber(20, CHUNK - 20));
+			movers.push({ rig: car(folder, rng, origin, f, far), base: origin, vel: V3(0, 0, f > 0 ? 58 : -46), t0: runTime, dMin: from - 40, dMax: to + 200 });
 		}
 	}
 
-	// ---------------- desert: cacti, rock, and twisters that wander across the sand
-	function desert(folder, movers, rng, x0, z0, t) {
-		const green = RGB(58, 138, 72);
-		const n = amount(rng, 1.4 + t * 2.2);
-		for (let i = 0; i < n; i++) {
-			const w = rng.NextInteger(11, 16), h = rng.NextInteger(70, 112);
-			const x = x0 + rng.NextNumber(20, CHUNK - 20), z = z0 - rng.NextNumber(20, CHUNK - 20);
-			const tint = green.Lerp(new Color3(0, 0, 0), rng.NextNumber(0, 0.2));
-			block(V3(w, h, w), V3(x, h / 2, z), tint, folder).SetAttribute("Break", true);
-			const arms = rng.NextInteger(0, 2);
-			for (let a = 0; a < arms; a++) {
-				const side = a === 0 ? 1 : -1, ay = rng.NextNumber(18, 34), up = rng.NextNumber(22, 40);
-				block(V3(14, w * 0.7, w * 0.7), V3(x + side * (w / 2 + 7), ay, z), tint, folder).SetAttribute("Break", true);
-				block(V3(w * 0.7, up, w * 0.7), V3(x + side * (w / 2 + 14 - w * 0.35), ay + up / 2, z), tint, folder).SetAttribute("Break", true);
+	// ---------------- desert: cacti, table rock, and twisters that throw you into the sky
+	function cactus(folder, rng, x, z) {
+		const w = rng.NextInteger(11, 15), h = rng.NextInteger(62, 92);
+		const green = dark(RGB(62, 148, 78), rng.NextNumber(0, 0.22)), rib = dark(green, 0.22);
+		const limb = (size, p) => {
+			block(size, p, green, folder).SetAttribute("Break", true);
+			// ribs: two darker strips through each limb
+			deco(V3(size.X + 0.7, size.Y - 2, Math.max(1.6, size.Z * 0.22)), p, rib, folder);
+			deco(V3(Math.max(1.6, size.X * 0.22), size.Y - 2, size.Z + 0.7), p, rib, folder);
+			deco(V3(size.X - 3, 2.4, size.Z - 3), p.add(V3(0, size.Y / 2 + 1, 0)), green, folder);
+		};
+		limb(V3(w, h, w), V3(x, h / 2, z));
+		const arms = rng.NextInteger(0, 2);
+		for (let a = 0; a < arms; a++) {
+			const s = a === 0 ? 1 : -1, ay = rng.NextNumber(20, 36), up = rng.NextNumber(20, 34), aw = w * 0.68;
+			block(V3(13, aw, aw), V3(x + s * (w / 2 + 6.5), ay, z), green, folder).SetAttribute("Break", true);
+			limb(V3(aw, up, aw), V3(x + s * (w / 2 + 13 - aw / 2), ay - aw / 2 + up / 2, z));
+		}
+		if (rng.NextNumber() < 0.35) deco(V3(5, 3, 5), V3(x, h + 3.8, z), RGB(255, 110, 160), folder);
+	}
+	function desert(folder, movers, rng, x0, z0, t, far) {
+		const n = amount(rng, 1.3 + t * 2);
+		for (let i = 0; i < n; i++) cactus(folder, rng, x0 + rng.NextNumber(20, CHUNK - 20), z0 - rng.NextNumber(20, CHUNK - 20));
+		// little things on the sand
+		if (!far) {
+			for (let i = 0; i < 5; i++) {
+				const s = rng.NextNumber(3, 8);
+				deco(V3(s * 1.4, s * 0.7, s), V3(x0 + rng.NextNumber(0, CHUNK), 7 + s * 0.2, z0 - rng.NextNumber(0, CHUNK)), dark(RGB(176, 140, 100), rng.NextNumber(0, 0.3)), folder);
 			}
 		}
-		if (rng.NextNumber() < 0.22) {
-			const w = rng.NextInteger(60, 120), h = rng.NextInteger(45, 80);
-			block(V3(w, h, rng.NextInteger(50, 90)), V3(x0 + rng.NextNumber(0, CHUNK), h / 2, z0 - rng.NextNumber(0, CHUNK)), RGB(170, 105, 70).Lerp(new Color3(0, 0, 0), rng.NextNumber(0, 0.2)), folder).SetAttribute("Break", true);
+		if (rng.NextNumber() < 0.2) {
+			// table rock in layers
+			const w = rng.NextInteger(70, 120), d = rng.NextInteger(60, 90), x = x0 + rng.NextNumber(0, CHUNK), z = z0 - rng.NextNumber(0, CHUNK);
+			let y = 0;
+			[[1, 26, RGB(168, 98, 66)], [0.86, 14, RGB(196, 124, 78)], [0.94, 9, RGB(150, 84, 58)], [0.74, 18, RGB(206, 138, 88)], [0.8, 7, RGB(170, 100, 68)]].forEach(([k, h, c]) => {
+				block(V3(w * k, h, d * k), V3(x, y + h / 2, z), c, folder).SetAttribute("Break", true);
+				y += h;
+			});
 		}
-		// a twister is a stack of slabs that each sway a little later than the one below
-		if (rng.NextNumber() < 0.22 + t * 0.25) {
+		// birds up where the twisters put you
+		if (rng.NextNumber() < 0.5) {
+			const bx = x0 + rng.NextNumber(0, CHUNK), bz = z0 - rng.NextNumber(0, CHUNK), by = rng.NextNumber(78, 112);
+			const count = rng.NextInteger(3, 5);
+			for (let i = 0; i < count; i++) {
+				const origin = V3(bx + (i - count / 2) * 13, by + Math.abs(i - (count - 1) / 2) * -3, bz - Math.abs(i - (count - 1) / 2) * 12);
+				const [add, list] = rig(folder, origin);
+				add(V3(2.4, 2, 7), V3(0, 0, 0), RGB(40, 40, 46), true);
+				add(V3(1.6, 1.4, 2.2), V3(0, 0.3, 4.2), RGB(236, 170, 60));
+				add(V3(7, 0.7, 3.4), V3(-4.4, 1, 0), RGB(58, 58, 66));
+				add(V3(7, 0.7, 3.4), V3(4.4, 1, 0), RGB(58, 58, 66));
+				movers.push({ rig: list, base: origin, vel: V3(0, 0, 24), t0: runTime, dMin: -1e9, dMax: 1e9, bob: { amp: 2.5, f: 3 + i * 0.3, ph: i } });
+			}
+		}
+		if (rng.NextNumber() < 0.2 + t * 0.2) {
 			const x = x0 + rng.NextNumber(0, CHUNK), z = z0 - rng.NextNumber(30, CHUNK - 30);
-			const reach = rng.NextNumber(70, 120), f = rng.NextNumber(0.45, 0.75), ph = rng.NextNumber(0, 6.28);
+			const reach = rng.NextNumber(60, 110), f = rng.NextNumber(0.4, 0.65), ph = rng.NextNumber(0, 6.28);
+			const sway = (part, i, extra) => movers.push(Object.assign({ part, base: part.Position, a: Vector3.xAxis.mul(reach), f, ph: ph - i * 0.13, a2: Vector3.zAxis.mul(16), f2: f * 1.7 }, extra));
+			// what you actually fly into is one tall box you can't see
+			const core = block(V3(36, 70, 36), V3(x, 35, z), RGB(255, 255, 255), folder);
+			core.Transparency = 1;
+			core.CanCollide = false;
+			core.CastShadow = false;
+			core.SetAttribute("Twister", true);
+			sway(core, 2);
+			sway(deco(V3(52, 1.4, 52), V3(x, 7.4, z), RGB(226, 204, 160), folder), 0, { spin: 1.4 });
+			for (let i = 0; i < 15; i++) {
+				const s = 8 + i * 4.4;
+				const slab = deco(V3(s, 8.6, s), V3(x, 9 + i * 9.4, z), RGB(224, 202, 160).Lerp(RGB(146, 128, 108), i / 15), folder);
+				slab.Transparency = 0.18 + (i % 2) * 0.14;
+				sway(slab, i, { spin: (i % 2 ? -1 : 1) * (5.5 - i * 0.2), rot: i * 0.5 });
+			}
+			// what it has picked up, going round it
 			for (let i = 0; i < 9; i++) {
-				const s = 10 + i * 5.5;
-				const ring = block(V3(s, 12, s), V3(x, 7 + i * 12.5, z), RGB(214, 190, 150).Lerp(RGB(150, 130, 105), i / 9), folder);
-				ring.CFrame = CFrame.fromPos(ring.Position).mul(Ang(0, i * 0.55, 0));
-				ring.Transparency = 0.2;
-				ring.CastShadow = false;
-				movers.push({ part: ring, base: ring.Position, a: Vector3.xAxis.mul(reach), f, ph: ph - i * 0.16, a2: Vector3.zAxis.mul(18), f2: f * 1.7 });
+				const r = 16 + i * 5, y = 16 + i * 13;
+				const bit = deco(Vector3.one.mul(rng.NextNumber(2.5, 5.5)), V3(x, y, z), i % 3 === 0 ? RGB(214, 180, 90) : RGB(120, 96, 70), folder);
+				movers.push({ part: bit, base: V3(x, y, z), a: Vector3.xAxis.mul(reach), f, ph: ph - (y / 9.4) * 0.13, orbit: r, of: 2.2 + rng.NextNumber(0, 1.4), op: rng.NextNumber(0, 6.28), spin: 3 });
+			}
+			// straw bales hang in the air behind it, right where it sends you
+			for (let i = 0; i < 6; i++) {
+				const bp = V3(x + rng.NextNumber(-150, 150), rng.NextNumber(74, 110), z - rng.NextNumber(120, 620));
+				const bale = block(V3(13, 10, 11), bp, RGB(218, 184, 92), folder);
+				bale.SetAttribute("Break", true);
+				movers.push({ part: bale, base: bp, a: Vector3.yAxis.mul(5), f: rng.NextNumber(0.8, 1.4), ph: rng.NextNumber(0, 6.28), spin: rng.NextNumber(-1.2, 1.2), tilt: 0.35 });
 			}
 		}
 	}
 
 	// ---------------- jungle: trunks to fly around, roots across the whole way to duck under, logs you mustn't duck into
-	function jungle(folder, rng, x0, z0, cz, t, safe) {
-		const bark = RGB(96, 66, 44), leaf = RGB(40, 120, 58);
-		const n = safe ? 0 : amount(rng, 1 + t * 1.4);
+	function jungle(folder, rng, x0, z0, cz, t, far) {
+		const bark = RGB(98, 68, 46);
+		const leaves = [RGB(36, 112, 54), RGB(52, 138, 62), RGB(28, 92, 50), RGB(74, 156, 70)];
+		const leaf = () => leaves[rng.NextInteger(0, leaves.length - 1)];
+		const n = amount(rng, 1 + t * 1.4);
 		for (let i = 0; i < n; i++) {
-			const w = rng.NextInteger(12, 20), h = rng.NextInteger(120, 150);
+			const w = rng.NextInteger(12, 20), h = rng.NextInteger(118, 150);
 			const x = x0 + rng.NextNumber(20, CHUNK - 20), z = z0 - rng.NextNumber(140, CHUNK - 10);
-			block(V3(w, h, w), V3(x, h / 2, z), bark.Lerp(new Color3(0, 0, 0), rng.NextNumber(0, 0.25)), folder).SetAttribute("Break", true);
-			const top = block(V3(rng.NextInteger(50, 80), 22, rng.NextInteger(50, 80)), V3(x, h + 6, z), leaf.Lerp(new Color3(0, 0, 0), rng.NextNumber(0, 0.3)), folder);
-			top.CanQuery = false;
-			top.CanCollide = false;
+			const b = dark(bark, rng.NextNumber(0, 0.25));
+			block(V3(w, h, w), V3(x, h / 2, z), b, folder).SetAttribute("Break", true);
+			// the foot of the tree spreads out, the crown comes in three layers
+			deco(V3(w + 9, 9, w + 9), V3(x, 8, z), dark(b, 0.15), folder);
+			deco(V3(w + 4, 16, w + 4), V3(x, 14, z), b, folder);
+			const cw = rng.NextInteger(58, 86);
+			deco(V3(cw, 16, cw), V3(x, h + 2, z), leaf(), folder);
+			deco(V3(cw * 0.72, 14, cw * 0.72), V3(x + rng.NextNumber(-8, 8), h + 15, z + rng.NextNumber(-8, 8)), leaf(), folder);
+			deco(V3(cw * 0.4, 11, cw * 0.4), V3(x, h + 26, z), leaf(), folder);
+			if (!far) for (let v = 0; v < 3; v++) {
+				const len = rng.NextNumber(14, 46);
+				deco(V3(1.3, len, 1.3), V3(x + rng.NextNumber(-cw / 2, cw / 2), h - 6 - len / 2, z + rng.NextNumber(-cw / 2, cw / 2)), leaf(), folder);
+			}
 		}
-		if (safe) return;
+		if (!far) {
+			// undergrowth
+			for (let i = 0; i < 5; i++) {
+				const s = rng.NextNumber(7, 15);
+				const p = V3(x0 + rng.NextNumber(0, CHUNK), 7 + s * 0.25, z0 - rng.NextNumber(110, CHUNK));
+				deco(V3(s, s * 0.6, s), p, leaf(), folder);
+				if (rng.NextNumber() < 0.4) deco(V3(2.2, 2, 2.2), p.add(V3(s * 0.2, s * 0.4, 0)), rng.NextNumber() < 0.5 ? RGB(255, 110, 150) : RGB(255, 214, 80), folder);
+			}
+		}
 		// the same for the whole row, so there's no way around: under the roots, over the logs
 		const roll = mod(Math.sin(cz * 12.9898 + seed * 0.37) * 43758.5453, 1);
-		const z = z0 - 70;
+		const z = z0 - 70, xc = x0 + CHUNK / 2;
 		if (roll < 0.34 + t * 0.12) {
-			const root = block(V3(CHUNK, 11, 9), V3(x0 + CHUNK / 2, 27.5, z), RGB(74, 50, 34), folder);
-			root.SetAttribute("Jungle", "root");
-			for (let i = 0; i < 4; i++) {
-				const vine = block(V3(1.4, rng.NextNumber(4, 8), 1.4), V3(x0 + rng.NextNumber(10, CHUNK - 10), 20, z), leaf, folder);
-				vine.CanQuery = false;
-				vine.CanCollide = false;
+			block(V3(CHUNK, 11, 9), V3(xc, 27.5, z), RGB(76, 52, 36), folder);
+			deco(V3(CHUNK, 2.4, 10.5), V3(xc, 33.6, z), RGB(60, 128, 62), folder);
+			block(V3(CHUNK, 6, 6), V3(xc, 37, z - 3), RGB(88, 60, 40), folder);
+			for (let i = 0; i < 7; i++) {
+				const len = rng.NextNumber(3, 8.5);
+				deco(V3(1.5, len, 1.5), V3(x0 + rng.NextNumber(6, CHUNK - 6), 22 - len / 2, z + rng.NextNumber(-3, 3)), leaf(), folder);
 			}
+			// they come down out of the trees at both ends
+			for (const x of [x0 + 30, x0 + CHUNK - 30]) deco(V3(8, 110, 8), V3(x, 88, z - 3), RGB(82, 56, 38), folder);
 		} else if (roll > 0.74 - t * 0.1) {
-			block(V3(CHUNK, 15, 12), V3(x0 + CHUNK / 2, 7.5, z), RGB(70, 92, 48), folder).SetAttribute("Jungle", "log");
+			block(V3(CHUNK, 15, 12), V3(xc, 7.5, z), RGB(92, 66, 44), folder);
+			deco(V3(CHUNK, 2, 9), V3(xc, 15.6, z), RGB(70, 140, 66), folder);
+			for (let i = 0; i < 4; i++) {
+				const p = V3(x0 + rng.NextNumber(8, CHUNK - 8), 17.6, z + rng.NextNumber(-3, 3));
+				deco(V3(1.2, 2.4, 1.2), p, RGB(238, 232, 214), folder);
+				deco(V3(4.4, 1.6, 4.4), p.add(V3(0, 2, 0)), RGB(226, 56, 50), folder);
+			}
 		}
 	}
 
@@ -1194,11 +1399,11 @@ let trackChunks, updateMovers, regenerate, canyonPath, canyonHalfGap, updatePads
 				towers(folder, rng, x0, z0, amount(rng, (1.2 + t * 1.8) * mult));
 				turretTowers(folder, rng, x0, z0, amount(rng, 0.15 + t * 0.2));
 			} else if (stage === "traffic") {
-				traffic(folder, movers, rng, x0, z0, amount(rng, 0.9 + t * 1.1), t);
+				traffic(folder, movers, rng, x0, z0, t, Math.abs(x0 + CHUNK / 2 - pos.X) > 420);
 			} else if (stage === "desert") {
-				desert(folder, movers, rng, x0, z0, t);
+				desert(folder, movers, rng, x0, z0, t, Math.abs(x0 + CHUNK / 2 - pos.X) > 420);
 			} else if (stage === "jungle") {
-				jungle(folder, rng, x0, z0, cz, t, false);
+				jungle(folder, rng, x0, z0, cz, t, Math.abs(x0 + CHUNK / 2 - pos.X) > 420);
 			} else if (stage === "city") {
 				const far = Math.abs(x0 + CHUNK / 2 - pos.X) > 900;
 				cityBlocks(folder, rng, x0, z0, far ? Math.min(1, amount(rng, 0.7)) : amount(rng, (0.6 + t * 0.8) * mult), far);
@@ -1294,15 +1499,23 @@ let trackChunks, updateMovers, regenerate, canyonPath, canyonHalfGap, updatePads
 	updateMovers = () => {
 		for (const c of chunks.values()) {
 			for (const m of c.movers) {
-				if (m.part.Parent && m.vel) {
-					// traffic drives in a straight line, and is gone once it leaves its stretch of road
-					const p = m.base.add(m.vel.mul(runTime - m.t0));
-					if (-p.Z < m.dMin || -p.Z > m.dMax) m.part.Parent = null;
-					else m.part.Position = p;
+				if (m.rig) {
+					// several parts driving as one. traffic is gone once it leaves its stretch of road
+					if (m.gone) continue;
+					let p = m.base.add(m.vel.mul(runTime - m.t0));
+					if (m.sway) p = p.add(V3(Math.sin(runTime * m.sway.f + m.sway.ph) * m.sway.amp, 0, 0));
+					if (m.bob) p = p.add(V3(0, Math.sin(runTime * m.bob.f + m.bob.ph) * m.bob.amp, 0));
+					if (-p.Z < m.dMin || -p.Z > m.dMax) {
+						m.gone = true;
+						for (const [part] of m.rig) part.Parent = null;
+					} else for (const [part, off] of m.rig) if (part.Parent) part.Position = p.add(off);
 				} else if (m.part.Parent) {
 					let off = m.a.mul(Math.sin(runTime * m.f + m.ph));
 					if (m.a2) off = off.add(m.a2.mul(Math.sin(runTime * m.f2 + m.ph)));
-					m.part.Position = m.base.add(off);
+					// going round something, and turning on the spot
+					if (m.orbit) off = off.add(V3(Math.cos(runTime * m.of + m.op) * m.orbit, 0, Math.sin(runTime * m.of + m.op) * m.orbit));
+					if (m.spin) m.part.CFrame = CFrame.fromPos(m.base.add(off)).mul(Ang(m.tilt || 0, runTime * m.spin + (m.rot || 0), 0));
+					else m.part.Position = m.base.add(off);
 				}
 			}
 		}
@@ -8182,8 +8395,12 @@ function onStage(nw, old) {
 			});
 		}
 		if (nw === "city") Game.mood(0.3, RGB(30, 30, 70), 4, RGB(150, 150, 195), 0.25);
-		if (nw === "traffic") Game.mood(17.7, RGB(240, 150, 95), 4);
-		if (nw === "desert") Game.mood(13, RGB(240, 215, 170), 3);
+		if (nw === "traffic") {
+			Game.tunnelDark = false;
+			Game.mood(17.7, RGB(240, 150, 95), 4);
+		}
+		// the night ends at the edge of the city
+		if (nw === "desert") Game.mood(11, RGB(240, 215, 170), 5);
 		if (nw === "jungle") {
 			Game.mood(15.5, RGB(70, 120, 80), 3);
 			task.delay(2.2, () => {
@@ -8261,6 +8478,12 @@ Game.hitToppled = (b, at) => {
 
 Game.alt = () => {
 	if (curStage === "sea" || (curStage === "boss2" && Game.boss2.done)) return 70;
+	// a twister throws you up, then you glide back down
+	if (Game.lift != null) {
+		const k = runTime - Game.lift;
+		if (k > 8 || curStage !== "desert") Game.lift = null;
+		else return ALT + 78 * (k < 0.9 ? k / 0.9 : Math.max(0, 1 - (k - 0.9) / 6.6) ** 1.4);
+	}
 	// in the jungle you can drop under the roots
 	if (curStage === "jungle") return Game.down("duck") || (Game.touch.left && Game.touch.right) ? 13 : ALT;
 	// the rocket just flies a bit higher than everything else
@@ -8472,10 +8695,7 @@ Game.loopAround = () => {
 	resetSky();
 	Game.safeRow = null;
 	Game.introEnd = null;
-	// you come down in the desert, the first map starts behind it
-	Game.desertEnd = DESERT_LEN;
-	Game.jungleEnd = DESERT_LEN + JUNGLE_LEN;
-	Game.shiftStages(Game.jungleEnd);
+	Game.shiftStages(0);
 	boss = null;
 	bossDone = false;
 	beyondStart = null;
@@ -8542,8 +8762,7 @@ startRun = (startId) => {
 	buff.immortal = 0;
 	Game.stopTut();
 	Game.introEnd = null;
-	Game.desertEnd = null;
-	Game.jungleEnd = null;
+	Game.lift = null;
 	Game.shiftStages(0);
 	if ((startId == null || startId === "towers") && !data.tutDone && !Game.race) {
 		Game.introEnd = Infinity;
@@ -8578,8 +8797,7 @@ toMenu = () => {
 	Game.hold = false;
 	Game.stopTut();
 	Game.introEnd = null;
-	Game.desertEnd = null;
-	Game.jungleEnd = null;
+	Game.lift = null;
 	Game.shiftStages(0);
 	hud.Visible = false;
 	results.Visible = false;
@@ -8653,6 +8871,10 @@ function step(dt) {
 	const typing = UIS.GetFocusedTextBox() != null;
 	const cheat = false;
 	const nitro = ((!typing && Game.down("nitro")) || Game.touch.nitro) && fuel > 0 && !boss && !Game.boss2.active && !Game.flow.approach && !typing;
+	// how long the boost has been held without a break, for the achievements
+	Game.nitroT = nitro ? (Game.nitroT || 0) + dt : 0;
+	if (Game.nitroT >= 5 && Game.ach) Game.ach("hyper");
+	if (Game.nitroT >= 10 && Game.ach) Game.ach("overdrive");
 	devK += ((cheat ? 1 : 0) - devK) * Math.min(1, dt * 3);
 	nitroK += ((nitro ? 1 : 0) - nitroK) * Math.min(1, dt * (nitro ? 4 : 2));
 	speedNow = BASE_SPEED * diff * (Game.flow.tier >= 3 ? 0.75 : 1) * (1 + (FUEL.mult - 1) * nitroK) * (1 + 19 * devK);
@@ -8750,6 +8972,11 @@ function step(dt) {
 	updatePads(pos.Y, pos.Z);
 	if (boss) updateBoss(dt);
 	if (stage === "city") Game.cityTick(dt);
+	// it gets dark as you go into the tunnel, so you come out into the night
+	if (stage === "traffic" && !Game.tunnelDark && -pos.Z > beyondStart + (CONFIG.turretsLen || 4000) - 3 * CHUNK - 60) {
+		Game.tunnelDark = true;
+		Game.mood(0.3, RGB(30, 30, 70), 2.5, RGB(150, 150, 195), 0.25);
+	}
 	if (Game.boss2.active) Game.boss2.update(dt);
 	Missiles.update(dt);
 	Game.guns.update(dt, Game.flow.tier >= 2 && !typing && (Game.down("shoot") || Game.touch.shoot));
@@ -8781,6 +9008,16 @@ function step(dt) {
 	}
 	for (const h of workspace.GetPartBoundsInBox(CFrame.fromPos(pos), GLASSBOX, params)) if (h.GetAttribute("Glass")) touched.add(h);
 	for (const h of touched) {
+		if (h.GetAttribute("Twister")) {
+			if (Game.lift == null || runTime - Game.lift > 2.5) {
+				Game.lift = runTime;
+				sfx("launch", 1.5, 0.7);
+				sfx("whoosh", 0.6);
+				shake = Math.max(shake, 0.5);
+				popup("UPDRAFT!", GOOD);
+			}
+			continue;
+		}
 		if (h.GetAttribute("Glass")) {
 			if (h.Parent) {
 				const wasEmpty = fuel <= 0;
@@ -8879,11 +9116,11 @@ Game.skip = () => {
 		Game.endIntro();
 		nextD = Game.introEnd;
 	} else if (STAGE_BY_ID[stage]) nextD = STAGE_BY_ID[stage].finish;
-	else if (stage === "desert") nextD = Game.desertEnd;
-	else if (stage === "jungle") nextD = Game.jungleEnd;
 	else if (stage === "turrets") nextD = beyondStart + (CONFIG.turretsLen || 4000) - TRAFFIC_LEN;
 	else if (stage === "traffic") nextD = beyondStart + (CONFIG.turretsLen || 4000);
-	else if (stage === "city") nextD = beyondStart + (CONFIG.turretsLen || 4000) + (CONFIG.cityLen || 4000);
+	else if (stage === "city") nextD = beyondStart + (CONFIG.turretsLen || 4000) + (CONFIG.cityLen || 4000) - DESERT_LEN - JUNGLE_LEN;
+	else if (stage === "desert") nextD = beyondStart + (CONFIG.turretsLen || 4000) + (CONFIG.cityLen || 4000) - JUNGLE_LEN;
+	else if (stage === "jungle") nextD = beyondStart + (CONFIG.turretsLen || 4000) + (CONFIG.cityLen || 4000);
 	else if (stage === "sea") {
 		flash();
 		Missiles.clear();
@@ -9221,7 +9458,7 @@ applySettings();
 toMenu();
 start();
 document.getElementById("boot").remove();
-if (DEV) window.__dev = { goto: (k) => { pos = V3(0, ALT, -((beyondStart || 0) + k)); Game.cam.last = null; regenerate(pos.X, pos.Z); return [curStage, Math.round(-pos.Z)]; }, bt: (v) => { if (boss) { boss.t = v; boss.nextShot = v + 1; } }, bossS: () => boss && { hits: boss.hits, green: boss.green ? [Math.round(boss.green.x), Math.round(boss.green.rz)] : null, shot: !!boss.shot, t: Math.round(boss.t), fin: boss.finale, p: [Math.round(boss.p.X - pos.X), Math.round(boss.p.Y)] }, gx: () => (boss && boss.green ? boss.green.x : null), boom: () => { const c = workspace.GetPartBoundsInRadius(pos.add(V3(0, 0, -330)), 300, params).filter((t) => t.GetAttribute("Break") && t.Size.Y > 80 && t.Parent).sort((x, y) => Math.abs(x.Position.X - pos.X) - Math.abs(y.Position.X - pos.X))[0]; if (!c) return null; Game.hold = true; shatter(c, V3(c.Position.X, pos.Y, c.Position.Z + c.Size.Z / 2), 1); return Math.round(c.Position.X - pos.X); }, fin: () => STAGE_BY_ID.canyon.finish, cp: (d) => canyonPath(d), hg: (d) => canyonHalfGap(d)[0], d: () => -pos.Z, setx: (x) => { pos = V3(x, pos.Y, pos.Z); vx = 0; }, tp: (back, side) => { const d = STAGE_BY_ID.canyon.finish - back; pos = V3(canyonPath(d) + (side || 0), ALT, -d); Game.cam.last = null; return [Game.fork, Math.round(d)]; }, steer: (v) => { Game.steerFake = v; }, note: (m) => notify(m, GOOD), del: () => Online.deleteAccount(), lb: () => openPanel("leaderboard"), hello: () => Game.cloudLoad(true), crash: () => task.spawn(crash, []), data: () => data, stats: () => stats, vs: () => Game.versusToggle(), heart: () => Game.heartFx(), pad: (k) => Game.makePad(k, pos.X, pos.Z - 45, pickups), reg: async (n, p) => { await Online.register(n, p); request("set_name", n); return Online.account(); }, win: () => Game._vsWin(), vsd: () => Game._vsDebug(), dbg: () => [mode, dead, !!stats, !!planeMain, planeMain && !!planeMain.Parent, Game.raceState.mid], race: () => [Game.race, Game.raceState.inQueue, Game.queueText(), JSON.stringify(Game.raceState.final)], shot: () => Game.flow.startApproach(), uid: () => Online.myId(), achp: () => openPanel("achievements"), achgo: (id) => Game.ach(id), bp: (s) => Game.openBackpack(s), pf: () => [1, 2, 3].map(Game.planeFor), req: (a, b) => request(a, b), gift: () => openPanel("gift"), push: () => Game.pushProfile(), gems: () => { Game.openShop(); shopTab = "GEMS"; rebuildShop(); }, run: (id) => startRun(id || "towers"), skip: () => Game.skip(), ahead: () => { const r = Math.floor(-pos.Z / CHUNK); return [r, beyondStart, stageFor(-pos.Z)[0], stageFor((r + 5) * CHUNK + 1)[0], stageFor((r + 40) * CHUNK + 1)[0]]; }, state: () => [mode, curStage, Game.flow.cine && Game.flow.cine.kind, Math.round(-pos.Z)] };
+if (DEV) window.__dev = { lift: () => { Game.lift = runTime; }, goto: (k) => { pos = V3(0, ALT, -((beyondStart || 0) + k)); Game.cam.last = null; regenerate(pos.X, pos.Z); return [curStage, Math.round(-pos.Z)]; }, bt: (v) => { if (boss) { boss.t = v; boss.nextShot = v + 1; } }, bossS: () => boss && { hits: boss.hits, green: boss.green ? [Math.round(boss.green.x), Math.round(boss.green.rz)] : null, shot: !!boss.shot, t: Math.round(boss.t), fin: boss.finale, p: [Math.round(boss.p.X - pos.X), Math.round(boss.p.Y)] }, gx: () => (boss && boss.green ? boss.green.x : null), boom: () => { const c = workspace.GetPartBoundsInRadius(pos.add(V3(0, 0, -330)), 300, params).filter((t) => t.GetAttribute("Break") && t.Size.Y > 80 && t.Parent).sort((x, y) => Math.abs(x.Position.X - pos.X) - Math.abs(y.Position.X - pos.X))[0]; if (!c) return null; Game.hold = true; shatter(c, V3(c.Position.X, pos.Y, c.Position.Z + c.Size.Z / 2), 1); return Math.round(c.Position.X - pos.X); }, fin: () => STAGE_BY_ID.canyon.finish, cp: (d) => canyonPath(d), hg: (d) => canyonHalfGap(d)[0], d: () => -pos.Z, setx: (x) => { pos = V3(x, pos.Y, pos.Z); vx = 0; }, tp: (back, side) => { const d = STAGE_BY_ID.canyon.finish - back; pos = V3(canyonPath(d) + (side || 0), ALT, -d); Game.cam.last = null; return [Game.fork, Math.round(d)]; }, steer: (v) => { Game.steerFake = v; }, note: (m) => notify(m, GOOD), del: () => Online.deleteAccount(), lb: () => openPanel("leaderboard"), hello: () => Game.cloudLoad(true), crash: () => task.spawn(crash, []), data: () => data, stats: () => stats, vs: () => Game.versusToggle(), heart: () => Game.heartFx(), pad: (k) => Game.makePad(k, pos.X, pos.Z - 45, pickups), reg: async (n, p) => { await Online.register(n, p); request("set_name", n); return Online.account(); }, win: () => Game._vsWin(), vsd: () => Game._vsDebug(), dbg: () => [mode, dead, !!stats, !!planeMain, planeMain && !!planeMain.Parent, Game.raceState.mid], race: () => [Game.race, Game.raceState.inQueue, Game.queueText(), JSON.stringify(Game.raceState.final)], shot: () => Game.flow.startApproach(), uid: () => Online.myId(), achp: () => openPanel("achievements"), achgo: (id) => Game.ach(id), bp: (s) => Game.openBackpack(s), pf: () => [1, 2, 3].map(Game.planeFor), req: (a, b) => request(a, b), gift: () => openPanel("gift"), push: () => Game.pushProfile(), gems: () => { Game.openShop(); shopTab = "GEMS"; rebuildShop(); }, run: (id) => startRun(id || "towers"), skip: () => Game.skip(), ahead: () => { const r = Math.floor(-pos.Z / CHUNK); return [r, beyondStart, stageFor(-pos.Z)[0], stageFor((r + 5) * CHUNK + 1)[0], stageFor((r + 40) * CHUNK + 1)[0]]; }, state: () => [mode, curStage, Game.flow.cine && Game.flow.cine.kind, Math.round(-pos.Z)] };
 
 // ------------------------------------------------------------------ versus
 // same idea as roblox: queue up, everyone starts on the same map, farthest wins.
@@ -10337,7 +10574,7 @@ if (DEV) window.__dev = { goto: (k) => { pos = V3(0, ALT, -((beyondStart || 0) +
 // ------------------------------------------------------------------ old version warning
 // every build has its own number, the page checks now and then whether a newer one is online
 (() => {
-	const BUILD = "1791189504";
+	const BUILD = "1791190147";
 	if (BUILD.startsWith("__")) return;
 	const bar = make("TextButton", {
 		AnchorPoint: V2(0.5, 0),
@@ -10409,6 +10646,8 @@ if (DEV) window.__dev = { goto: (k) => { pos = V3(0, ALT, -((beyondStart || 0) +
 		// versus
 		{ id: "vswin", name: "WINNER WINNER", desc: "Win a versus match", color: COIN },
 		{ id: "vs10", name: "RIVALRY", desc: "Play 10 versus matches", color: KEY },
+		{ id: "hyper", name: "HYPER", desc: "Boost for 5 seconds without letting go", color: RGB(120, 220, 255) },
+		{ id: "overdrive", name: "OVERDRIVE", desc: "Boost for 10 seconds without letting go", color: RGB(255, 120, 60) },
 	];
 	const BY_ID = {};
 	for (const a of LIST) BY_ID[a.id] = a;
@@ -10489,7 +10728,9 @@ if (DEV) window.__dev = { goto: (k) => { pos = V3(0, ALT, -((beyondStart || 0) +
 	Game.achStage = (old, nw) => {
 		// turrets only count once the highway behind them is done too
 		if (old === "traffic") Game.ach("turrets");
-		else if (["towers", "moving", "canyon", "smash", "city", "sea"].includes(old) || (old === "turrets" && nw !== "traffic")) Game.ach(old);
+		// and the city ends behind the desert and the jungle
+		else if (old === "jungle") Game.ach("city");
+		else if (["towers", "moving", "canyon", "smash", "sea"].includes(old) || (old === "turrets" && nw !== "traffic") || (old === "city" && nw !== "desert")) Game.ach(old);
 		if (old === "towers" && runTime < 30 && (Game.lastStart || "towers") === "towers" && Game.loop === 0) Game.ach("nodamage");
 	};
 	Game.achLoop = () => {

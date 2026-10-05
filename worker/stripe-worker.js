@@ -789,7 +789,7 @@ const ACH_REWARDS = {
 	space: { gems: 100, keys: 2 }, fullcircle: { gems: 300, keys: 5 },
 	run5k: { gems: 10 }, run25k: { gems: 60 }, glass50: { gems: 25 }, close10: { gems: 15 }, kills50: { gems: 25 }, saved: { gems: 15 }, nodamage: { gems: 30 },
 	heart: { gems: 10 }, revive: { gems: 10 }, pickups100: { gems: 40 }, rich: { gems: 30 }, skins3: { gems: 30 }, codes5: { gems: 20 },
-	dist100k: { gems: 50 }, runs100: { gems: 50 }, level10: { gems: 50, keys: 2 }, vswin: { gems: 40 }, vs10: { gems: 50 },
+	dist100k: { gems: 50 }, runs100: { gems: 50 }, level10: { gems: 50, keys: 2 }, vswin: { gems: 40 }, vs10: { gems: 50 }, hyper: { gems: 15 }, overdrive: { gems: 40 },
 };
 CONFIG.achRewards = ACH_REWARDS;
 // can the save back the achievement up? the worker only hands one out when it can
@@ -843,6 +843,8 @@ function earnedNow(id) {
 		case "close10": return elapsed / 1.1 + 1 >= 10;
 		case "nodamage": return from === 0 && dist >= 3000;
 		case "saved": case "heart": case "revive": return true;
+		case "hyper": return elapsed >= 5;
+		case "overdrive": return elapsed >= 10;
 	}
 	return false;
 }
