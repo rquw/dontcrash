@@ -3,9 +3,9 @@ import {
 	camera, Lighting, Instance, workspace, markQueryRoot, Enum, OverlapParams, TweenService, TweenInfo, Debris, UIS, playSfx, loopSound, loadSounds, setSfxVolume,
 	NumberSequence, NumberSequenceKeypoint, NumberRange, ColorSequence, ColorSequenceKeypoint, guiRootInst, setUiScale, setLowGraphics, physicsGround,
 	mergeFloor, start, perf,
-} from "./engine.js?v=1791184305";
-import * as Server from "./server.js?v=1791184305";
-import * as Online from "./online.js?v=1791184305";
+} from "./engine.js?v=1791184452";
+import * as Server from "./server.js?v=1791184452";
+import * as Online from "./online.js?v=1791184452";
 
 const V3 = (x, y, z) => new Vector3(x, y, z);
 const RGB = Color3.fromRGB;
@@ -8145,6 +8145,7 @@ async function crash(hits) {
 	if (runId !== my) return;
 	stats.loop = Game.loop;
 	stats.raceMult = Game.race ? Game.raceMult || 1 : 1;
+	stats.at = (stats.dist || 0) + (Game.from || 0);
 	const [ok, award] = request("run_end", stats);
 	if (ok) Game.pushProfile();
 	if (runId !== my) return;
@@ -8173,6 +8174,7 @@ Game.finishRun = () => {
 	const my = runId;
 	stats.loop = Game.loop;
 	stats.raceMult = Game.race ? Game.raceMult || 1 : 1;
+	stats.at = (stats.dist || 0) + (Game.from || 0);
 	const [ok, award] = request("run_end", stats);
 	if (ok) Game.pushProfile();
 	return [runId === my, ok && typeof award === "object" ? award : null];
@@ -10104,7 +10106,7 @@ if (DEV) window.__dev = { bt: (v) => { if (boss) { boss.t = v; boss.nextShot = v
 // ------------------------------------------------------------------ old version warning
 // every build has its own number, the page checks now and then whether a newer one is online
 (() => {
-	const BUILD = "1791184305";
+	const BUILD = "1791184452";
 	if (BUILD.startsWith("__")) return;
 	const bar = make("TextButton", {
 		AnchorPoint: V2(0.5, 0),
@@ -10575,7 +10577,7 @@ const PINK = RGB(255, 70, 170);
 		const cam = camera.CFrame;
 		const seen = new Set();
 		let n = 0;
-		const put = (id, label, best, col, nc) => {
+		const put = (id, label, best, col, nc, at) => {
 			if (seen.has(id) || !(best > 0)) return;
 			seen.add(id);
 			const m = marks.get(id) || build(id, col);
@@ -10590,8 +10592,8 @@ const PINK = RGB(255, 70, 170);
 				m.num.Text = fmt(Math.floor(best));
 				m.who.Text = label;
 			}
-			// that far from the very start of the world, wherever this run began
-			const z = -(best - Game.loopBase);
+			// where in the world that run ended. old records only know the distance, those count from the very start
+			const z = -((at > best ? at : best) - Game.loopBase);
 			const near = mode === "run" && z < cam.Z + 30 && z > cam.Z - 650;
 			let on = false;
 			if (near) {
@@ -10612,8 +10614,8 @@ const PINK = RGB(255, 70, 170);
 			m.tag.Visible = on;
 		};
 		const me = Online.account() ? Online.myId() : null;
-		put("me", "Your Best", data.best, GOOD, (data.style || {}).color || "");
-		for (const p of list) if (p.id !== me) put(p.id, p.name + "'s Best", p.best, COIN, p.nc || "");
+		put("me", "Your Best", data.best, GOOD, (data.style || {}).color || "", data.bestAt);
+		for (const p of list) if (p.id !== me) put(p.id, p.name + "'s Best", p.best, COIN, p.nc || "", p.at);
 		for (const [id, m] of marks) {
 			if (seen.has(id)) continue;
 			m.line.Parent = m.pole.Parent = null;

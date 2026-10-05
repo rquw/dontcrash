@@ -305,7 +305,7 @@ function importAuth(data, sess) {
 // what everyone else gets to see of you: leaderboards and your profile
 function profileOf(d) {
 	const p = {
-		name: d.name || "player", best: d.best || 0, level: d.level || 1, xp: d.xp || 0, skin: d.skin, death: d.death,
+		name: d.name || "player", best: d.best || 0, at: d.bestAt || 0, level: d.level || 1, xp: d.xp || 0, skin: d.skin, death: d.death,
 		stats: d.stats, created: d.created || 0, updated: Date.now(), ach: Object.keys(d.ach || {}).length,
 		nc: (d.style && d.style.color) || "", tt: (d.style && d.style.title) || "",
 	};
@@ -713,6 +713,8 @@ handlers.run_end = (r) => {
 		award.revives = hearts;
 	}
 	d.farthest = Math.max(d.farthest || 0, (s.runFrom || 0) + dist);
+	// where in the world the best run ended, for the marker. a quick start puts that further out than the distance says
+	if (dist > d.best) d.bestAt = Math.max(dist, Math.min(dist + 400000, Math.floor(Number(r.at) || 0)));
 	d.best = Math.max(d.best, dist);
 	bumpLb(d, dist);
 	d.maxRun = d.maxRun || { glass: 0, close: 0, kills: 0 };
