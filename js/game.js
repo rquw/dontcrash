@@ -3,9 +3,9 @@ import {
 	camera, Lighting, Instance, workspace, markQueryRoot, Enum, OverlapParams, TweenService, TweenInfo, Debris, UIS, playSfx, loopSound, loadSounds, setSfxVolume,
 	NumberSequence, NumberSequenceKeypoint, NumberRange, ColorSequence, ColorSequenceKeypoint, guiRootInst, setUiScale, setLowGraphics, physicsGround,
 	mergeFloor, start, perf,
-} from "./engine.js?v=1791284488";
-import * as Server from "./server.js?v=1791284488";
-import * as Online from "./online.js?v=1791284488";
+} from "./engine.js?v=1791303615";
+import * as Server from "./server.js?v=1791303615";
+import * as Online from "./online.js?v=1791303615";
 
 const V3 = (x, y, z) => new Vector3(x, y, z);
 const RGB = Color3.fromRGB;
@@ -11002,7 +11002,7 @@ if (DEV) window.__dev = { lift: () => { Game.lift = runTime; }, goto: (k) => { p
 // ------------------------------------------------------------------ old version warning
 // every build has its own number, the page checks now and then whether a newer one is online
 (() => {
-	const BUILD = "1791284488";
+	const BUILD = "1791303615";
 	if (BUILD.startsWith("__")) return;
 	const bar = make("TextButton", {
 		AnchorPoint: V2(0.5, 0),
@@ -11455,13 +11455,21 @@ const PINK = RGB(255, 70, 170);
 	const sb = button(r6, "SEND GIFT", U2(1, -10, 0, 60), UO(0, 5), send, 0.05);
 	sb.TextColor3 = GOOD;
 	// shop switch
-	const sp = panel("shopsw", "SHOP OR CASINO", UO(640, 470));
+	const sp = panel("shopsw", "SHOP OR CASINO", UO(640, 540));
 	const links = {};
 	for (const it of CONFIG.skins.filter((x) => x.pack)) {
 		const r = row(sp.body, 64, 1);
 		links[it.pack] = box(r, it.id.toUpperCase() + " PAYMENT LINK", U2(1, -10, 0, 54), UO(0, 5));
 		links[it.pack].TextSize = 16;
 	}
+	// only goes into the database while the shop is open, the impressum page reads it from there
+	const ra = row(sp.body, 64, 1);
+	const addr = box(ra, "FULL ADDRESS FOR THE IMPRESSUM", U2(1, -10, 0, 54), UO(0, 5));
+	addr.TextSize = 16;
+	addr.el.maxLength = 120;
+	try {
+		addr.Text = localStorage.getItem("dontcrash_dev_addr") || "";
+	} catch (e) {}
 	const rs = row(sp.body, 70, 1);
 	let shopOn = false;
 	const label = () => {
@@ -11474,8 +11482,13 @@ const PINK = RGB(255, 70, 170);
 		const l = {};
 		for (const k in links) if (links[k].Text.trim()) l[k] = links[k].Text.trim();
 		if (want && Object.keys(l).length < Object.keys(links).length) return notify("paste all three payment links first", BAD);
+		const a = addr.Text.trim();
+		if (want && a.length < 10) return notify("type your full address, the impressum needs it while you sell", BAD);
 		try {
-			await Online.put("meta/shop", { on: want, links: l });
+			localStorage.setItem("dontcrash_dev_addr", a);
+		} catch (e) {}
+		try {
+			await Online.put("meta/shop", want ? { on: true, links: l, addr: a } : { on: false, links: l });
 			shopOn = want;
 			label();
 			sfx("good");

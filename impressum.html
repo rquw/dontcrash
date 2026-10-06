@@ -24,6 +24,10 @@ a { color: var(--accent); }
 .lang button.on { background: var(--accent); color: #0b0d12; }
 ul { padding-left: 20px; }
 [data-lang] { display: none; }
+.shop { display: none; }
+body.shop .shop { display: block; }
+body.shop .shop.li { display: list-item; }
+body.shop .noshop { display: none; }
 body.de [data-lang="de"], body.en [data-lang="en"] { display: block; }
 </style>
 </head>
@@ -39,9 +43,18 @@ body.de [data-lang="de"], body.en [data-lang="en"] { display: block; }
 <h1>IMPRESSUM</h1>
 <p class="dim">Offenlegung gemäß § 25 Mediengesetz</p>
 <div class="card">
-<p><b>Fabio Schwaiger</b><br>Ternberg, Österreich</p>
+<p><b>Fabio Schwaiger</b><br><span class="addr">Ternberg, Österreich</span></p>
 <p>E-Mail: <a href="mailto:schwaiger.fabio0907@gmail.com">schwaiger.fabio0907@gmail.com</a></p>
-<p class="dim">Privates, nicht kommerzielles Browserspiel „DON'T CRASH!“. Hier wird nichts verkauft, es gibt keine Werbung.</p>
+<p class="dim noshop">Privates, nicht kommerzielles Browserspiel „DON'T CRASH!“. Hier wird nichts verkauft, es gibt keine Werbung.</p>
+<p class="dim shop">Browserspiel „DON'T CRASH!“. Im Spiel können einzelne Flugzeug-Skins gekauft werden. Keine Werbung.</p>
+</div>
+
+<div class="shop">
+<h2>Käufe</h2>
+<p>Verkauft werden digitale Inhalte (Flugzeug-Skins) für das Spiel. Die Preise stehen im Shop und sind Endpreise. Bezahlt wird über Stripe (Stripe Payments Europe Ltd.), der Skin landet direkt nach der Zahlung auf deinem Account. Kaufen darfst du nur, wenn du volljährig bist oder deine Eltern einverstanden sind.</p>
+<h2>Widerrufsrecht</h2>
+<p>Als Verbraucher kannst du einen Kauf grundsätzlich binnen 14 Tagen ohne Angabe von Gründen widerrufen. Bei digitalen Inhalten erlischt dieses Recht, sobald die Lieferung mit deiner ausdrücklichen Zustimmung begonnen hat und du bestätigt hast, dass du dein Widerrufsrecht dadurch verlierst. Wenn etwas nicht angekommen ist oder du ein Problem mit einem Kauf hast, schreib eine E-Mail, dann wird das gelöst oder erstattet.</p>
+<p>Plattform der EU zur Online-Streitbeilegung: <a href="https://ec.europa.eu/consumers/odr" target="_blank">ec.europa.eu/consumers/odr</a></p>
 </div>
 
 <h2>Datenschutz</h2>
@@ -49,6 +62,7 @@ body.de [data-lang="de"], body.en [data-lang="en"] { display: block; }
 <ul>
 <li><b>Dein Account:</b> Name und Passwort (verschlüsselt) bei Google Firebase (Google Ireland Ltd.).</li>
 <li><b>Dein Spielstand:</b> Fortschritt, Bestenliste und Online-Status, bei Google Firebase und lokal in deinem Browser. Der Spielstand wird über einen Cloudflare Worker (Cloudflare, Inc.) geprüft und gespeichert.</li>
+<li class="shop li"><b>Zahlungen:</b> Beim Kauf verarbeitet Stripe (Stripe Payments Europe Ltd.) deine Zahlungsdaten. Das Spiel selbst bekommt nur, was gekauft wurde und für welchen Account.</li>
 <li><b>Hosting:</b> Die Website liegt auf GitHub Pages (GitHub, Inc.). Dabei fallen technisch nötige Server-Logs an, zum Beispiel deine IP-Adresse.</li>
 </ul>
 <p>Kein Tracking, keine Werbung. Deinen Account und alle Daten kannst du jederzeit im Spiel im Account-Menü mit DELETE ACCOUNT selbst löschen. Für Auskunft, Berichtigung oder Löschung reicht eine E-Mail. Beschweren kannst du dich bei der österreichischen Datenschutzbehörde (<a href="https://www.dsb.gv.at" target="_blank">dsb.gv.at</a>).</p>
@@ -60,9 +74,18 @@ body.de [data-lang="de"], body.en [data-lang="en"] { display: block; }
 <h1>LEGAL NOTICE</h1>
 <p class="dim">Disclosure according to § 25 of the Austrian Media Act</p>
 <div class="card">
-<p><b>Fabio Schwaiger</b><br>Ternberg, Austria</p>
+<p><b>Fabio Schwaiger</b><br><span class="addr">Ternberg, Austria</span></p>
 <p>Email: <a href="mailto:schwaiger.fabio0907@gmail.com">schwaiger.fabio0907@gmail.com</a></p>
-<p class="dim">Private, non-commercial browser game "DON'T CRASH!". Nothing is sold here and there are no ads.</p>
+<p class="dim noshop">Private, non-commercial browser game "DON'T CRASH!". Nothing is sold here and there are no ads.</p>
+<p class="dim shop">Browser game "DON'T CRASH!". Individual plane skins can be bought in the game. No ads.</p>
+</div>
+
+<div class="shop">
+<h2>Purchases</h2>
+<p>What is sold is digital content (plane skins) for the game. The prices in the shop are final prices. Payment runs through Stripe (Stripe Payments Europe Ltd.), the skin lands on your account right after payment. You may only buy if you are of age or your parents agree.</p>
+<h2>Right of withdrawal</h2>
+<p>As a consumer you can generally withdraw from a purchase within 14 days without giving a reason. For digital content this right ends once delivery has started with your express consent and you have confirmed that you lose your right of withdrawal by that. If something did not arrive or you have a problem with a purchase, send an email and it gets fixed or refunded.</p>
+<p>EU platform for online dispute resolution: <a href="https://ec.europa.eu/consumers/odr" target="_blank">ec.europa.eu/consumers/odr</a></p>
 </div>
 
 <h2>Privacy</h2>
@@ -70,6 +93,7 @@ body.de [data-lang="de"], body.en [data-lang="en"] { display: block; }
 <ul>
 <li><b>Your account:</b> name and password (encrypted) at Google Firebase (Google Ireland Ltd.).</li>
 <li><b>Your progress:</b> save data, leaderboard and online status, at Google Firebase and locally in your browser. Saves are checked and stored through a Cloudflare Worker (Cloudflare, Inc.).</li>
+<li class="shop li"><b>Payments:</b> when you buy something, Stripe (Stripe Payments Europe Ltd.) processes your payment data. The game itself only learns what was bought and for which account.</li>
 <li><b>Hosting:</b> the website is hosted on GitHub Pages (GitHub, Inc.), which keeps technically necessary server logs such as your IP address.</li>
 </ul>
 <p>No tracking, no ads. You can delete your account and all your data yourself at any time in the account menu with DELETE ACCOUNT. For access, correction or deletion just send an email. You can file a complaint with the Austrian Data Protection Authority (<a href="https://www.dsb.gv.at" target="_blank">dsb.gv.at</a>).</p>
@@ -78,7 +102,7 @@ body.de [data-lang="de"], body.en [data-lang="en"] { display: block; }
 </main>
 <script>
 function setLang(l) {
-	document.body.className = l;
+	document.body.className = l + (document.body.classList.contains("shop") ? " shop" : "");
 	document.documentElement.lang = l;
 	document.title = (l === "de" ? "Impressum" : "Legal notice") + " – DON'T CRASH!";
 	document.getElementById("b-de").className = l === "de" ? "on" : "";
@@ -88,6 +112,12 @@ function setLang(l) {
 let start = "de";
 try { start = localStorage.getItem("dontcrash_imp_lang") || (navigator.language.startsWith("de") ? "de" : "en"); } catch (e) {}
 setLang(start);
+// while the shop is open this page shows the full address and the purchase terms. the address is not in this file
+fetch("https://dontcrash-7a1db-default-rtdb.europe-west1.firebasedatabase.app/meta/shop.json").then((r) => r.json()).then((v) => {
+	if (!v || v.on !== true) return;
+	document.body.classList.add("shop");
+	if (typeof v.addr === "string" && v.addr.trim()) for (const el of document.querySelectorAll(".addr")) el.textContent = v.addr.trim().slice(0, 120);
+}).catch(() => {});
 </script>
 </body>
 </html>
