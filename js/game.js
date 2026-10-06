@@ -3,9 +3,9 @@ import {
 	camera, Lighting, Instance, workspace, markQueryRoot, Enum, OverlapParams, TweenService, TweenInfo, Debris, UIS, playSfx, loopSound, loadSounds, setSfxVolume,
 	NumberSequence, NumberSequenceKeypoint, NumberRange, ColorSequence, ColorSequenceKeypoint, guiRootInst, setUiScale, setLowGraphics, physicsGround,
 	mergeFloor, start, perf,
-} from "./engine.js?v=1791304033";
-import * as Server from "./server.js?v=1791304033";
-import * as Online from "./online.js?v=1791304033";
+} from "./engine.js?v=1791304271";
+import * as Server from "./server.js?v=1791304271";
+import * as Online from "./online.js?v=1791304271";
 
 const V3 = (x, y, z) => new Vector3(x, y, z);
 const RGB = Color3.fromRGB;
@@ -11002,7 +11002,7 @@ if (DEV) window.__dev = { lift: () => { Game.lift = runTime; }, goto: (k) => { p
 // ------------------------------------------------------------------ old version warning
 // every build has its own number, the page checks now and then whether a newer one is online
 (() => {
-	const BUILD = "1791304033";
+	const BUILD = "1791304271";
 	if (BUILD.startsWith("__")) return;
 	const bar = make("TextButton", {
 		AnchorPoint: V2(0.5, 0),
@@ -11293,24 +11293,29 @@ const PINK = RGB(255, 70, 170);
 
 	// ---------------- picking up what you paid for
 	function thanks(g) {
-		const wash = make("Frame", { Size: US(1, 1), BackgroundColor3: g.skin ? PINK : GEM, BackgroundTransparency: 0.5, ZIndex: 30, Parent: gui });
-		wash.el.style.pointerEvents = "none";
-		tw(wash, 1.2, { BackgroundTransparency: 1 });
-		Debris.AddItem(wash, 1.3);
-		const bits = [];
-		if (g.skin) bits.push(niceName(g.skin) + " SKIN");
-		if (g.death) bits.push(niceName(g.death));
-		if (g.gems) bits.push("+" + fmt(g.gems) + " GEMS");
-		if (g.coins) bits.push("+" + fmt(g.coins) + " COINS");
-		if (!bits.length && g.keys) bits.push("+" + g.keys + " KEYS");
-		if (!bits.length && g.revives) bits.push("+" + g.revives + " REVIVES");
-		if (!bits.length && g.casino) bits.push("TAKE THE RIGHT WAY IN THE CANYON");
-		banner(bits.slice(0, 2).join("  "), g.skin ? PINK : GEM, 3.5);
-		notify(g.pack === "lb" ? "leaderboard prize: you were " + String(g.note || "in the top 3").toUpperCase() : g.pack === "gift" ? "a gift from " + String(g.from || "the dev").toUpperCase() + (g.note ? ": " + String(g.note).slice(0, 80) : "") : "thanks for supporting the game!", GOOD);
-		sfx("levelup");
-		if (g.skin && mode === "menu") buildPlane(g.skin);
+		const paid = g.pack !== "gift" && g.pack !== "lb";
+		const sub = g.pack === "lb" ? "LEADERBOARD PRIZE: " + String(g.note || "top 3").toUpperCase() : g.pack === "gift" ? "A GIFT FROM " + String(g.from || "the dev").toUpperCase() + (g.note ? ": " + String(g.note).slice(0, 80).toUpperCase() : "") : "THANK YOU FOR THE SUPPORT!!";
+		const head = paid ? "PAYMENT DONE" : g.pack === "lb" ? "YOU WON" : "YOU GOT A GIFT";
+		// one big reveal per thing in it, the plane first
+		const shows = [];
+		if (g.skin) shows.push({ head: paid ? "IT'S YOURS" : head, name: niceName(g.skin), tag: paid ? "LIMITED" : null, color: PINK, skin: g.skin, sub, action: ["EQUIP", () => Game.openBackpack(g.skin)] });
+		if (g.death) shows.push({ head, name: niceName(g.death), color: PINK, death: g.death, sub });
+		if (g.gems) shows.push({ head, name: "GEMS", icon: "gem", count: g.gems, color: GEM, sub });
+		if (g.coins) shows.push({ head, name: "COINS", icon: "coin", count: g.coins, color: COIN, sub });
+		if (g.keys) shows.push({ head, name: g.keys === 1 ? "KEY" : "KEYS", icon: "key", count: g.keys, color: KEY, sub });
+		if (g.revives) shows.push({ head, name: g.revives === 1 ? "REVIVE" : "REVIVES", icon: "heart", count: g.revives, color: RGB(255, 100, 130), sub });
+		if (g.casino) shows.push({ head, name: "CASINO", icon: "coin", color: COIN, sub: "TAKE THE RIGHT WAY IN THE CANYON ON YOUR NEXT RUN" });
 		Game.pushProfile();
-		if (panels.shop && panels.shop.frame.Visible) rebuildShop();
+		// not in the middle of a run, it waits for the menu
+		const go = () => {
+			if (mode !== "menu") return task.delay(1, go);
+			if (g.skin) buildPlane(g.skin);
+			sfx("levelup");
+			for (const o of shows) Game.reveal(o);
+			if (panels.shop && panels.shop.frame.Visible) rebuildShop();
+		};
+		if (mode !== "menu") notify(paid ? "payment done, you'll see it back in the menu" : "something arrived, you'll see it back in the menu", GOOD);
+		go();
 	}
 
 	const busy = new Set();
