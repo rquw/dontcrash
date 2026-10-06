@@ -3,9 +3,9 @@ import {
 	camera, Lighting, Instance, workspace, markQueryRoot, Enum, OverlapParams, TweenService, TweenInfo, Debris, UIS, playSfx, loopSound, loadSounds, setSfxVolume,
 	NumberSequence, NumberSequenceKeypoint, NumberRange, ColorSequence, ColorSequenceKeypoint, guiRootInst, setUiScale, setLowGraphics, physicsGround,
 	mergeFloor, start, perf,
-} from "./engine.js?v=1791274315";
-import * as Server from "./server.js?v=1791274315";
-import * as Online from "./online.js?v=1791274315";
+} from "./engine.js?v=1791275204";
+import * as Server from "./server.js?v=1791275204";
+import * as Online from "./online.js?v=1791275204";
 
 const V3 = (x, y, z) => new Vector3(x, y, z);
 const RGB = Color3.fromRGB;
@@ -4888,6 +4888,7 @@ function deathView(vp, kind, delay, fov) {
 	Game.RARITY = RARITY;
 	Game.rollShow = rollShow;
 
+	let boxView = "color";
 	function styleShop() {
 		const st = data.style || { own: {} };
 		const BOXES = [
@@ -4896,7 +4897,7 @@ function deathView(vp, kind, delay, fov) {
 			["font", "FONT BOX", "ROLLS A FONT YOUR NAME IS WRITTEN IN"],
 			["effect", "EFFECT BOX", "ROLLS A GLOW OR A MOVE FOR YOUR NAME"],
 			["icon", "ICON BOX", "ROLLS A SIGN THAT STANDS IN FRONT OF YOUR NAME"],
-			["marker", "MARKER BOX", "ROLLS HOW YOUR BEST-RUN MARKER LOOKS IN EVERYONE'S GAME"],
+			["marker", "MARKER BOX", "ROLLS THE LOOK OF YOUR BEST-RUN MARKER"],
 		];
 		// the rank ladder: nothing but a flex, and each step costs more than the last
 		{
@@ -4933,19 +4934,37 @@ function deathView(vp, kind, delay, fov) {
 				Icons.text(b, U2(1, 0, 0, 22), UO(0, 25), 19, data.coins >= next.price ? COIN : DIM).Text = fmt(next.price) + " ●";
 			}
 		}
-		for (const [kind, head, sub] of BOXES) {
-			const list = CONFIG.style[kind];
+		// six cards, two in a row: what it is, how much of it you've found, and the two ways to open it
+		const cards = make("Frame", { Size: U2(1, -10, 0, 0), AutomaticSize: "Y", BackgroundTransparency: 1, LayoutOrder: nextOrder(), Parent: shopItems });
+		make("UIGridLayout", { CellSize: UO(340, 132), CellPadding: UO(8, 8), SortOrder: "LayoutOrder", Parent: cards });
+		make("UIPadding", { PaddingTop: UDim.new(0, 2), PaddingLeft: UDim.new(0, 2), PaddingBottom: UDim.new(0, 4), Parent: cards });
+		const TINT = { color: RGB(255, 122, 216), title: COIN, font: RGB(108, 196, 255), effect: RGB(185, 138, 255), icon: RGB(93, 240, 138), marker: RGB(255, 157, 60) };
+		BOXES.forEach(([kind, head, sub], i) => {
+			const list = CONFIG.style[kind], tint = TINT[kind];
 			const cost = (n) => Math.floor(CONFIG.boxes[kind] * n * (n === 10 ? CONFIG.boxTen || 1 : 1));
 			const have = list.filter((it) => st.own[kind + ":" + it.id]).length;
-			const hr = row(shopItems, 78, 0.45);
-			make("UICorner", { CornerRadius: UDim.new(0, 10), Parent: hr });
-			const ic = Icons.make("gift", hr, 46);
-			ic.Position = UO(12, 16);
-			text(hr, head, U2(1, -490, 0, 28), UO(70, 8), 24, WHITE, LEFT);
-			text(hr, have + " OF " + list.length + " FOUND", U2(1, -490, 0, 16), UO(70, 36), 14, have === list.length ? GOOD : COIN, LEFT);
-			text(hr, sub, U2(1, -490, 0, 14), UO(70, 54), 11, DIM, LEFT);
-			[[1, 406], [10, 200]].forEach(([n, right]) => {
-				const b = button(hr, "", UO(194, 54), U2(1, -right, 0.5, -27), () => {
+			const sel = boxView === kind;
+			const c = button(cards, "", new UDim2(), null, () => {
+				if (boxView === kind) return;
+				boxView = kind;
+				sfx("click");
+				rebuildShop();
+			}, sel ? 0.2 : 0.5);
+			c.LayoutOrder = i;
+			make("UICorner", { CornerRadius: UDim.new(0, 10), Parent: c });
+			make("UIStroke", { Color: tint, Thickness: sel ? 2 : 1, Transparency: sel ? 0.1 : 0.65, ApplyStrokeMode: "Border", Parent: c });
+			const ic = Icons.make("gift", c, 40);
+			ic.Position = UO(12, 10);
+			text(c, head, U2(1, -70, 0, 24), UO(62, 8), 21, WHITE, LEFT);
+			text(c, sub, U2(1, -70, 0, 14), UO(62, 32), 10, DIM, LEFT);
+			// how much of it is yours
+			const track = make("Frame", { Position: UO(12, 60), Size: U2(1, -100, 0, 8), BackgroundColor3: WHITE, BackgroundTransparency: 0.88, Parent: c });
+			make("UICorner", { CornerRadius: UDim.new(0, 4), Parent: track });
+			const fill = make("Frame", { Size: US(have / list.length, 1), BackgroundColor3: tint, Parent: track });
+			make("UICorner", { CornerRadius: UDim.new(0, 4), Parent: fill });
+			text(c, have + " / " + list.length, UO(80, 16), U2(1, -86, 0, 56), 14, have === list.length ? GOOD : tint, RIGHT);
+			[[1, 12], [10, 172]].forEach(([n, x]) => {
+				const b = button(c, "", UO(154, 44), U2(0, x, 1, -54), () => {
 					if (Game.topUp("coins", cost(n))) return;
 					const [ok, res] = request("box", { kind, n });
 					if (!ok) {
@@ -4954,18 +4973,31 @@ function deathView(vp, kind, delay, fov) {
 						return;
 					}
 					Game.pushProfile();
-					sfx("whoosh", 0.7);
+					boxView = kind;
 					rollShow(kind, head, res.items, res.back);
 				}, 0.1);
-				Icons.text(b, U2(1, 0, 0, 22), UO(0, 6), 17, n === 1 ? WHITE : GOOD).Text = n === 1 ? "OPEN 1" : "OPEN 10   SAVE " + Math.round((1 - (CONFIG.boxTen || 1)) * 100) + "%";
-				Icons.text(b, U2(1, 0, 0, 22), UO(0, 27), 19, data.coins >= cost(n) ? COIN : DIM).Text = fmt(cost(n)) + " ●";
+				Icons.text(b, U2(1, 0, 0, 16), UO(0, 4), 12, n === 1 ? WHITE : GOOD).Text = n === 1 ? "OPEN 1" : "OPEN 10   -" + Math.round((1 - (CONFIG.boxTen || 1)) * 100) + "%";
+				Icons.text(b, U2(1, 0, 0, 20), UO(0, 20), 17, data.coins >= cost(n) ? COIN : DIM).Text = fmt(cost(n)) + " ●";
 			});
+		});
+
+		// what's inside the one you picked. you put things on in the backpack
+		{
+			const [kind, head] = BOXES.find((x) => x[0] === boxView) || BOXES[0];
+			const list = CONFIG.style[kind];
+			const hr = row(shopItems, 40, 1);
+			text(hr, "INSIDE THE " + head, U2(0.6, 0, 1, 0), UO(4, 0), 18, TINT[kind], LEFT);
+			const bp = button(hr, "WEAR THEM IN THE BACKPACK", UO(250, 32), U2(1, -256, 0.5, -16), () => Game.openBackpack(null, "name"), 0.4);
+			bp.TextSize = 14;
+			bp.TextColor3 = GEM;
 			const grid = make("Frame", { Size: U2(1, -10, 0, 0), AutomaticSize: "Y", BackgroundTransparency: 1, LayoutOrder: nextOrder(), Parent: shopItems });
-			make("UIGridLayout", { CellSize: UO(134, 60), CellPadding: UO(6, 6), SortOrder: "LayoutOrder", Parent: grid });
+			make("UIGridLayout", { CellSize: UO(132, 58), CellPadding: UO(6, 6), SortOrder: "LayoutOrder", Parent: grid });
+			make("UIPadding", { PaddingLeft: UDim.new(0, 2), Parent: grid });
+			// sorted by rarity, what you have first within each
 			list.forEach((it, i) => {
 				const mine = !!st.own[kind + ":" + it.id], on = st[kind] === it.id;
 				const [rn, rc] = RARITY[it.r];
-				const b = button(grid, "", UO(134, 60), null, () => {
+				const b = button(grid, "", new UDim2(), null, () => {
 					if (!mine) {
 						sfx("bad");
 						notify(rn.toLowerCase() + ", it comes out of the " + head.toLowerCase(), rc);
@@ -4977,10 +5009,10 @@ function deathView(vp, kind, delay, fov) {
 				make("UIStroke", { Color: on ? GOOD : rc, Thickness: on ? 2 : 1, Transparency: on ? 0.1 : mine ? 0.35 : 0.7, ApplyStrokeMode: "Border", Parent: b });
 				if (mine) {
 					styleFace(b, kind, it, U2(1, -8, 0, 24), UO(4, 8), 18).TextStrokeTransparency = 0.6;
-					text(b, on ? "ON" : kind === "title" ? rn : it.name, U2(1, -8, 0, 14), UO(4, 38), 11, on ? GOOD : rc);
+					text(b, on ? "ON" : kind === "title" ? rn : it.name, U2(1, -8, 0, 14), UO(4, 37), 11, on ? GOOD : rc);
 				} else {
-					text(b, "?", U2(1, 0, 0, 30), UO(0, 6), 26, rc).TextTransparency = 0.45;
-					text(b, rn, U2(1, -8, 0, 14), UO(4, 38), 11, rc).TextTransparency = 0.35;
+					text(b, "?", U2(1, 0, 0, 30), UO(0, 5), 26, rc).TextTransparency = 0.45;
+					text(b, rn, U2(1, -8, 0, 14), UO(4, 37), 11, rc).TextTransparency = 0.35;
 				}
 			});
 		}
@@ -6573,9 +6605,10 @@ Game.showXp = (award, my, alive) => {
 
 	bp.onOpen = draw;
 	// from the shop: "equip" on a skin lands here and asks where it should go
-	Game.openBackpack = (skin) => {
+	Game.openBackpack = (skin, which) => {
 		pending = skin && data.skins[skin] ? skin : null;
 		slot = 1;
+		tab = which === "name" ? "name" : "planes";
 		if (panels.backpack.frame.Visible && !panels.backpack.closing) draw();
 		else openPanel("backpack");
 	};
@@ -10968,7 +11001,7 @@ if (DEV) window.__dev = { lift: () => { Game.lift = runTime; }, goto: (k) => { p
 // ------------------------------------------------------------------ old version warning
 // every build has its own number, the page checks now and then whether a newer one is online
 (() => {
-	const BUILD = "1791274315";
+	const BUILD = "1791275204";
 	if (BUILD.startsWith("__")) return;
 	const bar = make("TextButton", {
 		AnchorPoint: V2(0.5, 0),
@@ -11691,6 +11724,107 @@ const PINK = RGB(255, 70, 170);
 		"This is for entertainment only. Gambling with real money is a different thing: it can be addictive and it is not allowed for minors. If these themes aren't for you, just fly on.",
 	]) h("p", null, t, nBox);
 	const nLabel = h("label", "off", null, nBox);
+	const nCheck = h("input", null, null, nLabel);
+	nCheck.type = "checkbox";
+	const nText = h("span", null, "", nLabel);
+	const nGo = h("button", null, "CONTINUE", nBox);
+	const nNo = h("button", null, "No thanks, fly on", nBox);
+	let nTimer = null, entered = false;
+	function showNotice() {
+		clearInterval(nTimer);
+		let left = 5;
+		nCheck.checked = false;
+		nCheck.disabled = true;
+		nGo.disabled = true;
+		nLabel.className = "off";
+		nText.textContent = "I have read this and I agree (" + left + ")";
+		notice.classList.add("on");
+		nTimer = setInterval(() => {
+			left--;
+			if (left > 0) {
+				nText.textContent = "I have read this and I agree (" + left + ")";
+				return;
+			}
+			clearInterval(nTimer);
+			nText.textContent = "I have read this and I agree";
+			nCheck.disabled = false;
+			nLabel.className = "";
+		}, 1000);
+	}
+	nCheck.addEventListener("change", () => {
+		nGo.disabled = !nCheck.checked;
+	});
+	nLabel.addEventListener("click", (ev) => ev.stopPropagation());
+	nGo.addEventListener("click", async (ev) => {
+		ev.stopPropagation();
+		if (nGo.disabled) return;
+		nGo.disabled = true;
+		const [ok, r] = await Sync.ask("cas_enter");
+		if (!ok) {
+			notify(String(r || "the casino is closed"), BAD);
+			entered = false;
+			Game.casino.leave();
+			return;
+		}
+		entered = true;
+		cameWith = Math.floor(data.coins || 0);
+		notice.classList.remove("on");
+		sfx("cas_in");
+		settle();
+	});
+	nNo.addEventListener("click", (ev) => {
+		ev.stopPropagation();
+		clearInterval(nTimer);
+		entered = false;
+		Game.casino.leave();
+	});
+	// ---------------- the ticker along the bottom: who won what, live from everyone who's playing
+	const tick = h("div", "cas-ticker", null, box);
+	const tickIn = h("div", null, null, tick);
+	const GAME_NAME = { wheel: "LUCKY WHEEL", roulette: "ROULETTE", mines: "MINEFIELD", bj: "BLACKJACK" };
+	const HOUSE = ["THE ODDS ARE EVEN. YOUR NERVES ARE NOT", "SWAP COINS FOR STARS AT THE TOP", "NOBODY HAS HIT IT BIG YET. YOUR TURN", "ONE MORE ROUND NEVER HURT ANYONE. PROBABLY"];
+	let stopFeed = null, feedSig = "";
+	function drawTicker(all) {
+		const list = Object.values(all || {}).filter((e) => e && typeof e.n === "string" && e.w > 0).sort((a, b) => (b.at || 0) - (a.at || 0)).slice(0, 12);
+		const sig = list.map((e) => e.n + e.w + e.at).join("|");
+		if (sig === feedSig && tickIn.childNodes.length) return;
+		feedSig = sig;
+		tickIn.innerHTML = "";
+		const say = (cls, txt) => h("span", cls, txt, tickIn);
+		// twice in a row, so the loop has no gap
+		for (let k = 0; k < 2; k++) {
+			if (!list.length) for (const l of HOUSE) say("dim", l);
+			for (const e of list) {
+				const who = e.n.toUpperCase().slice(0, 16);
+				if (e.k === "cash") {
+					say("who", who);
+					say("cash", "WALKED OUT WITH");
+					say("num", fmt(e.w) + " ●");
+				} else {
+					say("who", who);
+					say("win", "WON");
+					say("num", fmt(e.w) + " ★");
+					say("dim", GAME_NAME[e.g] || "");
+				}
+				say("sep", "✦");
+			}
+		}
+		tickIn.style.animationDuration = Math.max(18, tickIn.childNodes.length * 1.1) + "s";
+	}
+	// chips and glasses somewhere in the room
+	let roomT = null;
+	function room(on) {
+		clearTimeout(roomT);
+		if (!on) return;
+		const go = () => {
+			if (!Game.inCasino) return;
+			if (!notice.classList.contains("on")) sfx("cas_chip", 0.7 + Math.random() * 0.7, 0.12 + Math.random() * 0.12, Math.random() * 1.6 - 0.8);
+			roomT = setTimeout(go, 900 + Math.random() * 3200);
+		};
+		roomT = setTimeout(go, 1500);
+	}
+	const fxC = h("canvas", "cas-fx", null, box);
+	const flashE = h("div", "cas-flash", null, box);
 	const banner = h("div", "cas-banner", null, box);
 
 	const click = (e, fn) => e.addEventListener("click", (ev) => {
