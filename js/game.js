@@ -3,9 +3,9 @@ import {
 	camera, Lighting, Instance, workspace, markQueryRoot, Enum, OverlapParams, TweenService, TweenInfo, Debris, UIS, playSfx, loopSound, loadSounds, setSfxVolume,
 	NumberSequence, NumberSequenceKeypoint, NumberRange, ColorSequence, ColorSequenceKeypoint, guiRootInst, setUiScale, setLowGraphics, physicsGround,
 	mergeFloor, start, perf,
-} from "./engine.js?v=1791275204";
-import * as Server from "./server.js?v=1791275204";
-import * as Online from "./online.js?v=1791275204";
+} from "./engine.js?v=1791284488";
+import * as Server from "./server.js?v=1791284488";
+import * as Online from "./online.js?v=1791284488";
 
 const V3 = (x, y, z) => new Vector3(x, y, z);
 const RGB = Color3.fromRGB;
@@ -1488,7 +1488,7 @@ let trackChunks, updateMovers, regenerate, canyonPath, canyonHalfGap, updatePads
 			canyonOffset = Math.random() * 1000;
 		}
 		// one run in forty has a casino in the canyon. with ?dev it's always there
-		Game.fork = !Game.race && (/[?&]dev\b/.test(location.search) || data.casinoNext === true || Math.random() < 0.025);
+		Game.fork = !Game.race && !Game.shop && (/[?&]dev\b/.test(location.search) || data.casinoNext === true || Math.random() < 0.025);
 		maxRow = -1;
 		lastKey = null;
 		updateChunks(x || 0, z || 0);
@@ -5246,6 +5246,7 @@ function deathView(vp, kind, delay, fov) {
 		if (y) task.delay(0, () => (left.el.scrollTop = y));
 	}
 
+	Game.onShop = () => shopPanel.frame.Visible && rebuildShop();
 	rebuildShop = () => {
 		for (const name in tabButtons) {
 			const b = tabButtons[name];
@@ -11001,7 +11002,7 @@ if (DEV) window.__dev = { lift: () => { Game.lift = runTime; }, goto: (k) => { p
 // ------------------------------------------------------------------ old version warning
 // every build has its own number, the page checks now and then whether a newer one is online
 (() => {
-	const BUILD = "1791275204";
+	const BUILD = "1791284488";
 	if (BUILD.startsWith("__")) return;
 	const bar = make("TextButton", {
 		AnchorPoint: V2(0.5, 0),
@@ -11341,6 +11342,27 @@ const PINK = RGB(255, 70, 170);
 	task.delay(2, watch);
 	setInterval(watch, 3000);
 
+	// the dev opens and closes the shop. open: the three paid planes are for sale and the casino stays shut
+	const PAID = CONFIG.skins.filter((x) => x.pack);
+	function shopIs(v) {
+		const on = !!(v && v.on === true);
+		Game.shop = on ? v : null;
+		Server.setShop(on);
+		for (const it of PAID) {
+			if (on) it.eur = "1,99 €";
+			else delete it.eur;
+		}
+		if (Game.onShop) Game.onShop(on);
+	}
+	Game.buyPack = (pack) => {
+		const uid = Online.account() ? Online.myId() : null;
+		if (!uid) return notify("log in first, so the plane lands on your account", BAD);
+		const link = Game.shop && Game.shop.links && Game.shop.links[pack];
+		if (!/^https:\/\/buy\.stripe\.com\//.test(link || "")) return notify("the shop is closed right now", BAD);
+		window.open(link + (link.includes("?") ? "&" : "?") + "client_reference_id=" + encodeURIComponent(uid + "__" + pack), "_blank");
+	};
+	task.delay(1, () => Online.enabled() && Online.listen("meta/shop", shopIs));
+
 	// small legal link in the corner of the menu
 	const il = button(menu, "IMPRESSUM", UO(110, 28), U2(1, -126, 1, -40), () => window.open("impressum.html", "_blank"), 0.7);
 	il.TextSize = 14;
@@ -11432,6 +11454,48 @@ const PINK = RGB(255, 70, 170);
 	};
 	const sb = button(r6, "SEND GIFT", U2(1, -10, 0, 60), UO(0, 5), send, 0.05);
 	sb.TextColor3 = GOOD;
+	// shop switch
+	const sp = panel("shopsw", "SHOP OR CASINO", UO(640, 470));
+	const links = {};
+	for (const it of CONFIG.skins.filter((x) => x.pack)) {
+		const r = row(sp.body, 64, 1);
+		links[it.pack] = box(r, it.id.toUpperCase() + " PAYMENT LINK", U2(1, -10, 0, 54), UO(0, 5));
+		links[it.pack].TextSize = 16;
+	}
+	const rs = row(sp.body, 70, 1);
+	let shopOn = false;
+	const label = () => {
+		tg.Text = shopOn ? "SHOP IS OPEN, CASINO IS SHUT" : "CASINO IS OPEN, SHOP IS SHUT";
+		tg.TextColor3 = shopOn ? RGB(255, 70, 170) : COIN;
+		sw.Text = shopOn ? "SHOP: ON" : "SHOP: OFF";
+	};
+	const tg = button(rs, "", U2(1, -10, 0, 60), UO(0, 5), async () => {
+		const want = !shopOn;
+		const l = {};
+		for (const k in links) if (links[k].Text.trim()) l[k] = links[k].Text.trim();
+		if (want && Object.keys(l).length < Object.keys(links).length) return notify("paste all three payment links first", BAD);
+		try {
+			await Online.put("meta/shop", { on: want, links: l });
+			shopOn = want;
+			label();
+			sfx("good");
+		} catch (e) {
+			notify("not allowed, log in with the dev account", BAD);
+			sfx("bad");
+		}
+	}, 0.05);
+	const sw = button(menu, "SHOP: OFF", UO(200, 40), U2(1, -216, 1, -184), async () => {
+		try {
+			const v = (await Online.get("meta/shop")) || {};
+			shopOn = v.on === true;
+			for (const k in links) links[k].Text = (v.links && v.links[k]) || "";
+		} catch (e) {}
+		label();
+		openPanel("shopsw");
+	}, 0.3);
+	sw.TextSize = 18;
+	sw.TextColor3 = GEM;
+	label();
 	const b = button(menu, "GIVE STUFF", UO(200, 40), U2(1, -216, 1, -138), () => openPanel("gift"), 0.3);
 	b.TextSize = 18;
 	b.TextColor3 = GEM;
@@ -11574,7 +11638,8 @@ const PINK = RGB(255, 70, 170);
 .cas-bulbs { flex:1; height:10px; background: radial-gradient(circle, #ffe9a0 0 3px, #0000 4px) 0 0/26px 10px repeat-x; animation: casBulbs 0.7s steps(2) infinite; opacity:.85; }
 @keyframes casBulbs { 50% { background-position:13px 0; opacity:.5; } }
 .cas-bal { display:flex; gap:10px; }
-.cas-pill { background:#000a; border:2px solid #ffffff22; border-radius:999px; padding:7px 16px; font-size:22px; font-weight:800; min-width:110px; text-align:center; transition: transform .15s, border-color .3s; }
+.c-revives { color:#ff6482; } .cas-pill.c-points { font-size:22px; border-color:#ffd35a66; }
+.cas-pill { background:#000a; border:2px solid #ffffff22; border-radius:999px; padding:6px 12px; font-size:17px; font-weight:800; min-width:64px; text-align:center; transition: transform .15s, border-color .3s; }
 .cas-pill.up { border-color:#6dff9c; transform:scale(1.12); } .cas-pill.down { border-color:#ff5d6c; }
 .c-coins, .c-points { color:#ffd35a; } .c-gems { color:#5fdcff; } .c-keys { color:#ff8ad8; }
 .cas-goal { font-size:14px; font-weight:800; letter-spacing:1px; color:#b9a9d6; align-self:center; text-align:right; } .cas-goal.ok { color:#7dffa8; }
@@ -11706,12 +11771,15 @@ const PINK = RGB(255, 70, 170);
 	h("div", "cas-logo", "CASINO", top);
 	h("div", "cas-bulbs", null, top);
 	const bal = h("div", "cas-bal", null, top);
-	const SYM = { coins: "●" };
-	const CURS = ["coins"];
+	const SYM = { points: "★", coins: "●", gems: "◆", keys: "✦", revives: "♥" };
+	const CURS = ["points"];
+	// everything you own is up top the whole time, stars first
+	const SHOW = ["points", "coins", "gems", "keys", "revives"];
 	const pills = {};
 	const goal = h("div", "cas-goal", "", bal);
-	for (const c of CURS) pills[c] = h("div", "cas-pill c-" + c, "", bal);
-	const leaveB = h("button", "cas-btn leave", "LEAVE CASINO ▶", top);
+	for (const c of SHOW) pills[c] = h("div", "cas-pill c-" + c, "", bal);
+	const buyB = h("button", "cas-btn", "BUY ★", top);
+	const leaveB = h("button", "cas-btn leave", "CASH OUT ▶", top);
 	const backB = h("button", "cas-btn cas-back", "◀ ALL GAMES", box);
 	// the warning before you get in. plain on purpose, it's meant to be read
 	const notice = h("div", "cas-notice", null, box);
@@ -11719,8 +11787,8 @@ const PINK = RGB(255, 70, 170);
 	h("h1", null, "You are about to enter a casino", nBox);
 	for (const t of [
 		"This works like a real casino. The games are games of chance. The odds are even, nothing here is tilted towards the house, but any single visit can go either way and you can lose everything you bring in.",
-		"You play with your Coins, the ones you earn by flying. What you lose is gone, what you win is yours right away. Coins cannot be bought.",
-		"Nothing here has a cash value and nothing can be exchanged for money.",
+		"You play with stars. Every visit starts you off with 500 of them, and you can buy more: one Coin is one star. Coins are earned by flying, they cannot be bought.",
+		"On your way out your stars turn into what you want: 1 star is 1 Coin, 10 stars are 1 Gem, 100 stars are 1 Key, 500 stars are 1 Revive. Whatever you don't swap becomes Coins. Nothing here has a cash value and nothing can be exchanged for money.",
 		"This is for entertainment only. Gambling with real money is a different thing: it can be addictive and it is not allowed for minors. If these themes aren't for you, just fly on.",
 	]) h("p", null, t, nBox);
 	const nLabel = h("label", "off", null, nBox);
@@ -11782,7 +11850,7 @@ const PINK = RGB(255, 70, 170);
 	const tick = h("div", "cas-ticker", null, box);
 	const tickIn = h("div", null, null, tick);
 	const GAME_NAME = { wheel: "LUCKY WHEEL", roulette: "ROULETTE", mines: "MINEFIELD", bj: "BLACKJACK" };
-	const HOUSE = ["THE ODDS ARE EVEN. YOUR NERVES ARE NOT", "SWAP COINS FOR STARS AT THE TOP", "NOBODY HAS HIT IT BIG YET. YOUR TURN", "ONE MORE ROUND NEVER HURT ANYONE. PROBABLY"];
+	const HOUSE = ["THE ODDS ARE EVEN. YOUR NERVES ARE NOT", "10 ★ A GEM, 100 ★ A KEY, 500 ★ A REVIVE", "NOBODY HAS HIT IT BIG YET. YOUR TURN", "ONE MORE ROUND NEVER HURT ANYONE. PROBABLY"];
 	let stopFeed = null, feedSig = "";
 	function drawTicker(all) {
 		const list = Object.values(all || {}).filter((e) => e && typeof e.n === "string" && e.w > 0).sort((a, b) => (b.at || 0) - (a.at || 0)).slice(0, 12);
@@ -11799,7 +11867,7 @@ const PINK = RGB(255, 70, 170);
 				if (e.k === "cash") {
 					say("who", who);
 					say("cash", "WALKED OUT WITH");
-					say("num", fmt(e.w) + " ●");
+					say("num", fmt(e.w) + " ★");
 				} else {
 					say("who", who);
 					say("win", "WON");
@@ -11825,6 +11893,9 @@ const PINK = RGB(255, 70, 170);
 	}
 	const fxC = h("canvas", "cas-fx", null, box);
 	const flashE = h("div", "cas-flash", null, box);
+	// one plain box for buying stars and for turning them into things on the way out
+	const dlg = h("div", "cas-notice", null, box);
+	const dBox = h("div", null, null, dlg);
 	const banner = h("div", "cas-banner", null, box);
 
 	const click = (e, fn) => e.addEventListener("click", (ev) => {
@@ -11839,14 +11910,12 @@ const PINK = RGB(255, 70, 170);
 	};
 
 	// ---------------- what you have. the numbers up top only move when the game on screen is done
-	const shown = { coins: 0 };
+	const shown = { points: 0, coins: 0, gems: 0, keys: 0, revives: 0 };
 	let cameWith = 0;
 	function drawBal() {
-		for (const c of CURS) pills[c].textContent = SYM[c] + " " + fmt(Math.round(shown[c]));
-		// what the points are worth when you walk out
-		const have = Math.round(shown.coins);
+		for (const c of SHOW) pills[c].textContent = SYM[c] + " " + fmt(Math.round(shown[c]));
 		goal.className = "cas-goal";
-		goal.textContent = have < lim().min.coins ? "OUT OF COINS" : "YOUR COINS";
+		goal.textContent = Math.round(shown.points) < lim().min.points ? "OUT OF STARS" : "";
 	}
 	function take(cur, n) {
 		shown[cur] -= n;
@@ -11854,7 +11923,7 @@ const PINK = RGB(255, 70, 170);
 		drawBal();
 	}
 	function settle() {
-		for (const c of CURS) {
+		for (const c of SHOW) {
 			const to = data[c] || 0, from = shown[c];
 			if (to === from) continue;
 			if (to > from) restart(pills[c], "up");
@@ -11943,7 +12012,7 @@ const PINK = RGB(255, 70, 170);
 	}
 
 	// ---------------- the bet box on the right, every game has one
-	const bet = { cur: "coins", amt: { coins: 100 } };
+	const bet = { cur: "points", amt: { points: 100 } };
 	const lim = () => CONFIG.casino;
 	const BETS = () => lim().curs || CURS;
 	// "100 ●" for the big buttons, so you always see what a press costs
@@ -12700,7 +12769,7 @@ const PINK = RGB(255, 70, 170);
 			Game.inCasino = true;
 			Game.hold = true;
 			fade(() => {
-				for (const c of CURS) shown[c] = data[c] || 0;
+				for (const c of SHOW) shown[c] = data[c] || 0;
 				drawBal();
 				for (const c of CURS) bet.amt[c] = clamp(bet.amt[c], lim().min[c], lim().max[c]);
 				root.Visible = true;
@@ -12732,18 +12801,101 @@ const PINK = RGB(255, 70, 170);
 				busy = false;
 				Game.casinoExit();
 				// how the visit went, in coins
-				const diff = Math.floor(data.coins || 0) - cameWith;
-				if (out && diff > 0) {
-					notify("casino: you walk out " + fmt(diff) + " coins up", GOOD);
+				if (out && out.paid > 0) {
+					notify("casino: your last " + fmt(out.paid) + " stars became coins", GOOD);
 					sfx("levelup");
-				} else if (out && diff < 0) notify("casino: you left " + fmt(-diff) + " coins there", BAD);
+				}
 			});
 		},
 	};
-	click(leaveB, () => {
+	const NAMES = { coins: ["COIN", "COINS"], gems: ["GEM", "GEMS"], keys: ["KEY", "KEYS"], revives: ["REVIVE", "REVIVES"] };
+	const closeDlg = () => dlg.classList.remove("on");
+	// a headline, some lines, then rows of buttons. a row is [label in front, [button text, what it does, off?]...]
+	function dialog(title, lines, rows) {
+		dBox.textContent = "";
+		h("h1", null, title, dBox);
+		for (const t of lines) h("p", null, t, dBox);
+		for (const [label, ...buttons] of rows) {
+			const r = h("div", null, null, dBox);
+			r.style.cssText = "display:flex;align-items:center;flex-wrap:wrap;gap:6px;margin:8px 0;max-width:none;font-size:15px;";
+			if (label) {
+				const l = h("span", null, label, r);
+				l.style.cssText = "min-width:200px;color:#fff;font-weight:700;";
+			}
+			for (const [text, fn, off] of buttons) {
+				const b = h("button", null, text, r);
+				b.style.margin = "0";
+				if (off) b.disabled = true;
+				else click(b, fn);
+			}
+		}
+		dlg.classList.add("on");
+	}
+	const have = () => "You have " + SHOW.map((c) => fmt(Math.floor(data[c] || 0)) + " " + SYM[c]).join("   ");
+	async function buyStars(n) {
+		if (busy || n < 1) return;
+		const r = await ask("cas_buy", n);
+		busy = false;
+		if (r) sfx("cas_chip");
+		settle();
+		openBuy();
+	}
+	function openBuy() {
+		const coins = Math.floor(data.coins || 0);
+		dialog("Buy stars", [have(), "One Coin is one star. You play every game here with stars."], [
+			["", ...[100, 1000, 10000, 100000].map((n) => ["+" + fmt(n) + " ★", () => buyStars(n), coins < n])],
+			["", ["ALL MY COINS (" + fmt(coins) + " ★)", () => buyStars(coins), coins < 1], ["DONE", closeDlg]],
+		]);
+	}
+	async function cash(to, n, leaving) {
+		if (busy || n < 1) return;
+		const r = await ask("cas_cash", { to, n });
+		busy = false;
+		if (r) sfx("cas_win");
+		settle();
+		openCash(leaving);
+	}
+	// what the stars are worth. this is also the door: leaving goes through here
+	function openCash(leaving) {
+		const stars = Math.floor(data.points || 0), R = lim().rates;
+		const row = (to, steps) => {
+			const max = Math.floor(stars / R[to]);
+			return [
+				R[to] + " ★  =  1 " + NAMES[to][0] + " " + SYM[to],
+				...steps.filter((n) => n < max).map((n) => ["+" + fmt(n) + " " + SYM[to], () => cash(to, n, leaving)]),
+				[max > 0 ? "ALL IN " + NAMES[to][1] + " (+" + fmt(max) + " " + SYM[to] + ")" : "NOT ENOUGH ★", () => cash(to, max, leaving), max < 1],
+			];
+		};
+		dialog(leaving ? "Cash out before you go" : "Cash out", [
+			have(),
+			"Turn your stars into what you want. Whatever is still left when you leave becomes Coins.",
+		], [
+			row("revives", [1]),
+			row("keys", [1, 10]),
+			row("gems", [10, 100]),
+			row("coins", [1000]),
+			leaving
+				? ["", [stars > 0 ? "LEAVE, THE LAST " + fmt(stars) + " ★ BECOME COINS" : "LEAVE THE CASINO", () => {
+					closeDlg();
+					sfx("close");
+					Game.casino.leave();
+				}], ["STAY", closeDlg]]
+				: ["", ["DONE", closeDlg]],
+		]);
+	}
+	click(buyB, () => {
 		if (busy) return;
-		sfx("close");
-		Game.casino.leave();
+		sfx("click");
+		openBuy();
+	});
+	click(leaveB, async () => {
+		if (busy) return;
+		// an open hand or minefield is settled first, so the stars you see are the stars you have
+		await mines.bail();
+		await bj.bail();
+		settle();
+		sfx("click");
+		openCash(true);
 	});
 	if (DEV) window.__dev.casino = () => Game.casino.enter();
 })();

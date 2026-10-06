@@ -61,7 +61,10 @@
       ".write": false
     },
     "meta": {
-      ".read": true
+      ".read": true,
+      "shop": {
+        ".write": "auth != null && auth.uid === 'Jj2BGaR4ZBSqqQxmWtX8Vym95Ji1'"
+      }
     },
     "realnames": {
       ".read": "auth != null && auth.uid === 'Jj2BGaR4ZBSqqQxmWtX8Vym95Ji1'",

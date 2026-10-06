@@ -7,6 +7,11 @@ let HOST = false;
 export function setHost(on) {
 	HOST = !!on;
 }
+// the paid shop and the casino are never open at the same time
+let SHOP = false;
+export function setShop(on) {
+	SHOP = !!on;
+}
 
 export const CONFIG = {
 	title: "DON'T CRASH!",
@@ -64,9 +69,9 @@ export const CONFIG = {
 		{ id: "Gold", price: 960 },
 		{ id: "Trident", price: 960 },
 		// these used to cost real money. now they're the big goal to save up for. keep: a reset doesn't take them away
-		{ id: "Phoenix", price: 5000, keep: true },
-		{ id: "Galaxy", price: 5000, keep: true },
-		{ id: "Razor", price: 5000, keep: true },
+		{ id: "Phoenix", price: 5000, keep: true, pack: "phoenix" },
+		{ id: "Galaxy", price: 5000, keep: true, pack: "galaxy" },
+		{ id: "Razor", price: 5000, keep: true, pack: "razor" },
 		// came with the special pack. not for sale right now, whoever has it keeps it
 		{ id: "Royal", price: 0, keep: true, gone: true },
 	],
@@ -557,6 +562,7 @@ function cosmetic(list, ownedKey, equipKey, currency, id) {
 				return [true, id + " equipped"];
 			}
 			if (item.gone) return [false, "that one isn't for sale right now"];
+			if (SHOP && item.pack) return [false, "that one is in the shop"];
 			if (d[currency] < item.price) return [false, "not enough " + currency];
 			d[currency] -= item.price;
 			d[ownedKey][id] = true;
@@ -1029,9 +1035,12 @@ handlers.buy_gems = (id) => {
 };
 // ---------------- the casino. the worker rolls everything, the browser only shows it. the house is always a bit ahead
 const CASINO = {
-	// you play with your coins, straight
-	min: { coins: 50 },
-	max: { coins: 250000 },
+	// you play with stars. every visit starts you off with some, more cost a coin each,
+	// and on the way out stars turn into whatever you want at these prices
+	gift: 500,
+	rates: { coins: 1, gems: 10, keys: 100, revives: 500 },
+	min: { points: 50 },
+	max: { points: 250000 },
 	// the wheel of fortune, 24 fields that add up to 24: on average you get back exactly what you put in
 	wheel: [0, 1.5, 0, 0.5, 2, 0, 1.5, 0, 0.5, 3, 0, 2, 0, 1.5, 0.5, 0, 5, 0, 2, 0, 0.5, 1.5, 2, 0],
 	// minefield: 5x5, the fair multiplier times this
@@ -1051,10 +1060,10 @@ function rnd(n) {
 	}
 	return Math.floor(Math.random() * n);
 }
-const CAS_CUR = ["coins"];
+const CAS_CUR = ["points"];
 CASINO.curs = CAS_CUR;
 function stake(cur, amt) {
-	if (!CAS_CUR.includes(cur)) return "you can only bet coins";
+	if (!CAS_CUR.includes(cur)) return "you can only bet stars";
 	if (!Number.isInteger(amt) || amt < CASINO.min[cur]) return "the smallest bet is " + CASINO.min[cur];
 	if (amt > CASINO.max[cur]) return "the biggest bet is " + CASINO.max[cur];
 	if ((s.data[cur] || 0) < amt) return "not enough " + cur;
@@ -1236,6 +1245,7 @@ handlers.cas_bj_double = () => {
 };
 // the way in: once per run, and only if you can have reached the canyon's end by now
 handlers.cas_enter = () => {
+	if (SHOP) return [false, "the casino is closed"];
 	if (HOST) {
 		if (!s.runStart || s.casUsed) return [false, "the casino is closed"];
 		const far = (Date.now() / 1000 - s.runStart) * 1200 + 1000 + (s.runFrom || 0);
@@ -1245,18 +1255,38 @@ handlers.cas_enter = () => {
 	s.data.casinoNext = false;
 	s.mines = null;
 	s.bj = null;
-	return [true, {}];
+	s.data.points = CASINO.gift;
+	return [true, { points: CASINO.gift }];
 };
-// the way out. coins are already yours, this only ends whatever game was still open.
-// stars from before the casino took coins are turned back: everything except the free thousand
+// coins into stars, one for one
+handlers.cas_buy = (amt) => {
+	if (!Number.isInteger(amt) || amt < 1 || amt > 100000000) return [false, "bad amount"];
+	if (s.mines || s.bj) return [false, "finish your game first"];
+	const d = s.data;
+	if (d.coins < amt) return [false, "not enough coins"];
+	d.coins -= amt;
+	d.points = (d.points || 0) + amt;
+	return [true, { points: d.points }];
+};
+// stars into coins, gems, keys or revives. n is how many of those you want
+handlers.cas_cash = (a) => {
+	if (!a || typeof a !== "object" || !CASINO.rates[a.to] || !Number.isInteger(a.n) || a.n < 1 || a.n > 100000000) return [false, "bad amount"];
+	if (s.mines || s.bj) return [false, "finish your game first"];
+	const d = s.data, cost = a.n * CASINO.rates[a.to];
+	if ((d.points || 0) < cost) return [false, "not enough stars"];
+	d.points -= cost;
+	d[a.to] = (d[a.to] || 0) + a.n;
+	return [true, { to: a.to, n: a.n, cost }];
+};
+// the way out. whatever stars are still in your pocket become coins, nothing is ever just gone
 handlers.cas_leave = () => {
 	if (s.mines) handlers.cas_mines_cash();
 	if (s.bj) bjDealer(s.bj);
-	const old = Math.floor(s.data.points || 0);
-	if (old > 0) s.data.coins += Math.max(0, old - 1000);
+	const left = Math.floor(s.data.points || 0);
+	s.data.coins += left;
 	s.data.points = 0;
 	s.data.casIn = 0;
-	return [true, {}];
+	return [true, { paid: left }];
 };
 // start over. what you paid real money for stays yours
 handlers.reset = () => {
