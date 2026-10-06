@@ -3,9 +3,9 @@ import {
 	camera, Lighting, Instance, workspace, markQueryRoot, Enum, OverlapParams, TweenService, TweenInfo, Debris, UIS, playSfx, loopSound, loadSounds, setSfxVolume,
 	NumberSequence, NumberSequenceKeypoint, NumberRange, ColorSequence, ColorSequenceKeypoint, guiRootInst, setUiScale, setLowGraphics, physicsGround,
 	mergeFloor, start, perf,
-} from "./engine.js?v=1791303615";
-import * as Server from "./server.js?v=1791303615";
-import * as Online from "./online.js?v=1791303615";
+} from "./engine.js?v=1791304033";
+import * as Server from "./server.js?v=1791304033";
+import * as Online from "./online.js?v=1791304033";
 
 const V3 = (x, y, z) => new Vector3(x, y, z);
 const RGB = Color3.fromRGB;
@@ -11002,7 +11002,7 @@ if (DEV) window.__dev = { lift: () => { Game.lift = runTime; }, goto: (k) => { p
 // ------------------------------------------------------------------ old version warning
 // every build has its own number, the page checks now and then whether a newer one is online
 (() => {
-	const BUILD = "1791303615";
+	const BUILD = "1791304033";
 	if (BUILD.startsWith("__")) return;
 	const bar = make("TextButton", {
 		AnchorPoint: V2(0.5, 0),
@@ -11343,6 +11343,15 @@ const PINK = RGB(255, 70, 170);
 	setInterval(watch, 3000);
 
 	// the dev opens and closes the shop. open: the three paid planes are for sale and the casino stays shut
+	const LINKS = {
+		phoenix: "https://buy.stripe.com/cNifZgbeZ8wv8oE8Q71sQ01",
+		galaxy: "https://buy.stripe.com/fZu7sK82N7srbAQ7M31sQ00",
+		razor: "https://buy.stripe.com/cNi7sKaaV4gf6gwd6n1sQ06",
+		special: "https://buy.stripe.com/dRmbJ02It3cb20g1nF1sQ04",
+		gems500: "https://buy.stripe.com/14AeVcerb7srcEUc2j1sQ03",
+		gems1000: "https://buy.stripe.com/14A8wO5UF287gVa1nF1sQ02",
+		gems2500: "https://buy.stripe.com/aFacN45UFeUTbAQ6HZ1sQ05",
+	};
 	const PAID = CONFIG.skins.filter((x) => x.pack);
 	function shopIs(v) {
 		const on = !!(v && v.on === true);
@@ -11353,11 +11362,12 @@ const PINK = RGB(255, 70, 170);
 			else delete it.eur;
 		}
 		if (Game.onShop) Game.onShop(on);
+		if (Game.onShopDev) Game.onShopDev(on);
 	}
 	Game.buyPack = (pack) => {
 		const uid = Online.account() ? Online.myId() : null;
 		if (!uid) return notify("log in first, so the plane lands on your account", BAD);
-		const link = Game.shop && Game.shop.links && Game.shop.links[pack];
+		const link = Game.shop && LINKS[pack];
 		if (!/^https:\/\/buy\.stripe\.com\//.test(link || "")) return notify("the shop is closed right now", BAD);
 		window.open(link + (link.includes("?") ? "&" : "?") + "client_reference_id=" + encodeURIComponent(uid + "__" + pack), "_blank");
 	};
@@ -11454,61 +11464,60 @@ const PINK = RGB(255, 70, 170);
 	};
 	const sb = button(r6, "SEND GIFT", U2(1, -10, 0, 60), UO(0, 5), send, 0.05);
 	sb.TextColor3 = GOOD;
-	// shop switch
-	const sp = panel("shopsw", "SHOP OR CASINO", UO(640, 540));
-	const links = {};
-	for (const it of CONFIG.skins.filter((x) => x.pack)) {
-		const r = row(sp.body, 64, 1);
-		links[it.pack] = box(r, it.id.toUpperCase() + " PAYMENT LINK", U2(1, -10, 0, 54), UO(0, 5));
-		links[it.pack].TextSize = 16;
-	}
-	// only goes into the database while the shop is open, the impressum page reads it from there
+	// shop switch: one click. the address for the impressum sits where only the dev account can read it,
+	// and is only copied to the public side while the shop is open
+	const sp = panel("shopsw", "ONE TIME ONLY", UO(640, 300));
 	const ra = row(sp.body, 64, 1);
-	const addr = box(ra, "FULL ADDRESS FOR THE IMPRESSUM", U2(1, -10, 0, 54), UO(0, 5));
-	addr.TextSize = 16;
+	const addr = box(ra, "YOUR FULL ADDRESS FOR THE IMPRESSUM", U2(1, -10, 0, 54), UO(0, 5));
+	addr.TextSize = 18;
 	addr.el.maxLength = 120;
-	try {
-		addr.Text = localStorage.getItem("dontcrash_dev_addr") || "";
-	} catch (e) {}
 	const rs = row(sp.body, 70, 1);
-	let shopOn = false;
+	let shopOn = false, busy = false;
 	const label = () => {
-		tg.Text = shopOn ? "SHOP IS OPEN, CASINO IS SHUT" : "CASINO IS OPEN, SHOP IS SHUT";
-		tg.TextColor3 = shopOn ? RGB(255, 70, 170) : COIN;
-		sw.Text = shopOn ? "SHOP: ON" : "SHOP: OFF";
+		sw.Text = shopOn ? "SHOP ON, CASINO OFF" : "CASINO ON, SHOP OFF";
+		sw.TextColor3 = shopOn ? RGB(255, 70, 170) : COIN;
 	};
-	const tg = button(rs, "", U2(1, -10, 0, 60), UO(0, 5), async () => {
-		const want = !shopOn;
-		const l = {};
-		for (const k in links) if (links[k].Text.trim()) l[k] = links[k].Text.trim();
-		if (want && Object.keys(l).length < Object.keys(links).length) return notify("paste all three payment links first", BAD);
+	async function flip(want, a) {
+		await Online.put("meta/shop", want ? { on: true, addr: a } : { on: false });
+		shopOn = want;
+		label();
+		sfx("good");
+		notify(want ? "shop is open, casino is shut" : "casino is open, shop is shut", GOOD);
+	}
+	const save = button(rs, "SAVE AND OPEN THE SHOP", U2(1, -10, 0, 60), UO(0, 5), async () => {
 		const a = addr.Text.trim();
-		if (want && a.length < 10) return notify("type your full address, the impressum needs it while you sell", BAD);
+		if (a.length < 10) return notify("type your full address", BAD);
 		try {
-			localStorage.setItem("dontcrash_dev_addr", a);
-		} catch (e) {}
+			await Online.put("secret/addr", a);
+			await flip(true, a);
+			closePanels();
+		} catch (e) {
+			notify("not allowed, log in with the dev account", BAD);
+		}
+	}, 0.05);
+	save.TextColor3 = GOOD;
+	const sw = button(menu, "", UO(200, 40), U2(1, -216, 1, -184), async () => {
+		if (busy) return;
+		busy = true;
 		try {
-			await Online.put("meta/shop", want ? { on: true, links: l, addr: a } : { on: false, links: l });
-			shopOn = want;
-			label();
-			sfx("good");
+			if (shopOn) await flip(false);
+			else {
+				const a = await Online.get("secret/addr");
+				if (typeof a === "string" && a.length >= 10) await flip(true, a);
+				else openPanel("shopsw");
+			}
 		} catch (e) {
 			notify("not allowed, log in with the dev account", BAD);
 			sfx("bad");
 		}
-	}, 0.05);
-	const sw = button(menu, "SHOP: OFF", UO(200, 40), U2(1, -216, 1, -184), async () => {
-		try {
-			const v = (await Online.get("meta/shop")) || {};
-			shopOn = v.on === true;
-			for (const k in links) links[k].Text = (v.links && v.links[k]) || "";
-		} catch (e) {}
-		label();
-		openPanel("shopsw");
+		busy = false;
 	}, 0.3);
-	sw.TextSize = 18;
-	sw.TextColor3 = GEM;
+	sw.TextSize = 15;
 	label();
+	Game.onShopDev = (on) => {
+		shopOn = on;
+		label();
+	};
 	const b = button(menu, "GIVE STUFF", UO(200, 40), U2(1, -216, 1, -138), () => openPanel("gift"), 0.3);
 	b.TextSize = 18;
 	b.TextColor3 = GEM;
