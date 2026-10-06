@@ -3,9 +3,9 @@ import {
 	camera, Lighting, Instance, workspace, markQueryRoot, Enum, OverlapParams, TweenService, TweenInfo, Debris, UIS, playSfx, loopSound, loadSounds, setSfxVolume,
 	NumberSequence, NumberSequenceKeypoint, NumberRange, ColorSequence, ColorSequenceKeypoint, guiRootInst, setUiScale, setLowGraphics, physicsGround,
 	mergeFloor, start, perf,
-} from "./engine.js?v=1791304555";
-import * as Server from "./server.js?v=1791304555";
-import * as Online from "./online.js?v=1791304555";
+} from "./engine.js?v=1791304599";
+import * as Server from "./server.js?v=1791304599";
+import * as Online from "./online.js?v=1791304599";
 
 const V3 = (x, y, z) => new Vector3(x, y, z);
 const RGB = Color3.fromRGB;
@@ -11002,7 +11002,7 @@ if (DEV) window.__dev = { lift: () => { Game.lift = runTime; }, goto: (k) => { p
 // ------------------------------------------------------------------ old version warning
 // every build has its own number, the page checks now and then whether a newer one is online
 (() => {
-	const BUILD = "1791304555";
+	const BUILD = "1791304599";
 	if (BUILD.startsWith("__")) return;
 	const bar = make("TextButton", {
 		AnchorPoint: V2(0.5, 0),
@@ -11374,7 +11374,7 @@ const PINK = RGB(255, 70, 170);
 		if (!uid) return notify("log in first, so the plane lands on your account", BAD);
 		const link = Game.shop && LINKS[pack];
 		if (!/^https:\/\/buy\.stripe\.com\//.test(link || "")) return notify("the shop is closed right now", BAD);
-		window.open(link + (link.includes("?") ? "&" : "?") + "client_reference_id=" + encodeURIComponent(uid + "__" + pack), "_blank");
+		location.href = link + (link.includes("?") ? "&" : "?") + "client_reference_id=" + encodeURIComponent(uid + "__" + pack);
 	};
 	task.delay(1, () => Online.enabled() && Online.listen("meta/shop", shopIs));
 
