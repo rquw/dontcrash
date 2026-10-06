@@ -168,8 +168,9 @@ function levelReward(level) {
 
 const DEFAULT = {
 	coins: 0, gems: 0, keys: 0, best: 0, revives: 0, farthest: 0, points: 0,
-	style: { own: {}, color: "", title: "", font: "", trail: "" },
+	style: { own: {}, color: "", title: "", font: "", effect: "", icon: "", marker: "", trail: "" },
 	styleV: 0,
+	rank: 0,
 	power: { coins: 0 },
 	skins: { Default: true }, skin: "Default",
 	// what you fly after the first boss and in space. empty = the standard jet / stealth
@@ -202,7 +203,7 @@ function resetStyle(d) {
 	if (d.styleV === 2) return;
 	const own = {};
 	for (const k in d.style.own || {}) if (k.startsWith("trail:")) own[k] = true;
-	d.style = { own, color: "", title: "", font: "", trail: d.style.trail || "" };
+	d.style = { own, color: "", title: "", font: "", effect: "", icon: "", marker: "", trail: d.style.trail || "" };
 	d.styleV = 2;
 }
 
@@ -324,7 +325,7 @@ function profileOf(d) {
 	const p = {
 		name: d.name || "player", best: d.best || 0, at: d.bestAt || 0, level: d.level || 1, xp: d.xp || 0, skin: d.skin, death: d.death,
 		stats: d.stats, created: d.created || 0, updated: Date.now(), ach: Object.keys(d.ach || {}).length,
-		nc: (d.style && d.style.color) || "", tt: (d.style && d.style.title) || "", nf: (d.style && d.style.font) || "", sv: d.styleV || 0,
+		nc: (d.style && d.style.color) || "", tt: (d.style && d.style.title) || "", nf: (d.style && d.style.font) || "", ne: (d.style && d.style.effect) || "", ni: (d.style && d.style.icon) || "", nm: (d.style && d.style.marker) || "", rk: d.rank || 0, sv: d.styleV || 0,
 	};
 	for (const [k, kind] of [["d", "day"], ["w", "week"], ["m", "month"]]) {
 		const o = (d.lb || {})[kind] || {};
@@ -908,13 +909,34 @@ CONFIG.style = {
 		{ id: "comic", name: "COMIC", css: "'Comic Sans MS', 'Chalkboard SE', 'Comic Neue', cursive", r: 3 }, { id: "impact", name: "IMPACT", css: "Impact, 'Arial Black', sans-serif", r: 3 },
 		{ id: "script", name: "SCRIPT", css: "'Brush Script MT', 'Snell Roundhand', 'Segoe Script', cursive", r: 4 },
 	],
+	// how your name moves or glows
+	effect: [
+		{ id: "glow", name: "GLOW", r: 1 }, { id: "shadow", name: "SHADOW", r: 1 }, { id: "outline", name: "OUTLINE", r: 1 }, { id: "underline", name: "UNDERLINE", r: 1 },
+		{ id: "neon", name: "NEON", r: 2 }, { id: "pulse", name: "PULSE", r: 2 }, { id: "flicker", name: "FLICKER", r: 2 },
+		{ id: "bounce", name: "BOUNCE", r: 3 }, { id: "fire", name: "ON FIRE", r: 3 },
+		{ id: "glitch", name: "GLITCH", r: 4 },
+	],
+	// a sign in front of your name
+	icon: [
+		{ id: "plane", name: "PLANE", sym: "\u2708", r: 1 }, { id: "flag", name: "FLAG", sym: "\u2691", r: 1 }, { id: "heart", name: "HEART", sym: "\u2665", r: 1 }, { id: "star", name: "STAR", sym: "\u2605", r: 1 },
+		{ id: "bolt", name: "BOLT", sym: "\u26A1", r: 2 }, { id: "skull", name: "SKULL", sym: "\u2620", r: 2 }, { id: "comet", name: "COMET", sym: "\u2604", r: 2 },
+		{ id: "diamond", name: "DIAMOND", sym: "\u2666", r: 3 }, { id: "hazard", name: "HAZARD", sym: "\u2622", r: 3 },
+		{ id: "crown", name: "CROWN", sym: "\u265B", r: 4 },
+	],
+	// what your best-run marker looks like in everyone else's game
+	marker: [
+		{ id: "red", name: "RED", hex: "#ff4050", r: 1 }, { id: "cyan", name: "CYAN", hex: "#40e0ff", r: 1 }, { id: "lime", name: "LIME", hex: "#9dff4a", r: 1 }, { id: "pink", name: "PINK", hex: "#ff60d0", r: 1 },
+		{ id: "purple", name: "PURPLE", hex: "#a060ff", r: 2 }, { id: "white", name: "WHITE", hex: "#ffffff", r: 2 },
+		{ id: "bigred", name: "BIG RED", hex: "#ff3030", big: 1, r: 3 }, { id: "biggold", name: "BIG GOLD", hex: "#ffd040", big: 1, r: 3 },
+		{ id: "rainbow", name: "RAINBOW", hex: "rainbow", big: 1, r: 4 },
+	],
 	trail: [
 		{ id: "red", hex: "#ff4050", price: 3000 }, { id: "green", hex: "#4dff8a", price: 5000 }, { id: "cyan", hex: "#40e0ff", price: 5000 },
 		{ id: "pink", hex: "#ff60d0", price: 8000 }, { id: "gold", hex: "#ffd040", price: 12000 }, { id: "rainbow", hex: "rainbow", price: 50000 },
 	],
 };
 // what one box costs, and how likely each rarity is. ten at once is just ten
-CONFIG.boxes = { color: 10000, title: 50000, font: 7500 };
+CONFIG.boxes = { color: 10000, title: 50000, font: 7500, effect: 25000, icon: 20000, marker: 15000 };
 CONFIG.boxOdds = [60, 27, 10, 3];
 CONFIG.boxDup = 0.3;
 // ten at once cost what eight do
@@ -956,6 +978,21 @@ handlers.box = (a) => {
 	d.coins += back;
 	return [true, { items: out, back }];
 };
+// a rank is nothing but a flex: it sits in front of your title and each one costs more than the last
+CONFIG.ranks = [
+	{ name: "BRONZE", price: 25000, hex: "#cd8a4a" }, { name: "SILVER", price: 75000, hex: "#c8ccd6" }, { name: "GOLD", price: 200000, hex: "#ffd35a" },
+	{ name: "PLATINUM", price: 500000, hex: "#8fe6e0" }, { name: "DIAMOND", price: 1000000, hex: "#6cc4ff" }, { name: "MASTER", price: 2500000, hex: "#b98aff" },
+	{ name: "GRANDMASTER", price: 5000000, hex: "#ff7ad8" }, { name: "CHAMPION", price: 10000000, hex: "#ff5d6c" }, { name: "LEGEND", price: 25000000, hex: "#ff9d3c" },
+	{ name: "IMMORTAL", price: 50000000, hex: "rainbow" },
+];
+handlers.rank_up = () => {
+	const d = s.data, next = CONFIG.ranks[d.rank || 0];
+	if (!next) return [false, "there is nothing above this"];
+	if (d.coins < next.price) return [false, "not enough coins"];
+	d.coins -= next.price;
+	d.rank = (d.rank || 0) + 1;
+	return [true, next.name];
+};
 // put it on if it's yours. trails are still bought straight, everything else comes out of a box. id "" takes it off
 handlers.style = (a) => {
 	if (!a || typeof a !== "object" || !CONFIG.style[a.kind]) return [false, "unknown item"];
@@ -992,12 +1029,9 @@ handlers.buy_gems = (id) => {
 };
 // ---------------- the casino. the worker rolls everything, the browser only shows it. the house is always a bit ahead
 const CASINO = {
-	// every visit hands you stars for free, and you can swap coins for more, one for one, and back.
-	// the free ones only turn into coins once you've won this much on top of what you brought in
-	gift: 1000,
-	cashAt: 2500,
-	min: { points: 50 },
-	max: { points: 50000 },
+	// you play with your coins, straight
+	min: { coins: 50 },
+	max: { coins: 250000 },
 	// the wheel of fortune, 24 fields that add up to 24: on average you get back exactly what you put in
 	wheel: [0, 1.5, 0, 0.5, 2, 0, 1.5, 0, 0.5, 3, 0, 2, 0, 1.5, 0.5, 0, 5, 0, 2, 0, 0.5, 1.5, 2, 0],
 	// minefield: 5x5, the fair multiplier times this
@@ -1017,10 +1051,10 @@ function rnd(n) {
 	}
 	return Math.floor(Math.random() * n);
 }
-const CAS_CUR = ["points"];
+const CAS_CUR = ["coins"];
 CASINO.curs = CAS_CUR;
 function stake(cur, amt) {
-	if (!CAS_CUR.includes(cur)) return "you can only bet casino points";
+	if (!CAS_CUR.includes(cur)) return "you can only bet coins";
 	if (!Number.isInteger(amt) || amt < CASINO.min[cur]) return "the smallest bet is " + CASINO.min[cur];
 	if (amt > CASINO.max[cur]) return "the biggest bet is " + CASINO.max[cur];
 	if ((s.data[cur] || 0) < amt) return "not enough " + cur;
@@ -1211,43 +1245,18 @@ handlers.cas_enter = () => {
 	s.data.casinoNext = false;
 	s.mines = null;
 	s.bj = null;
-	s.data.points = CASINO.gift;
-	s.data.casIn = 0;
-	return [true, { points: CASINO.gift }];
+	return [true, {}];
 };
-// how many stars could go back to coins right now. casIn is what you brought in and haven't taken back out
-function casCashable() {
-	const p = Math.floor(s.data.points || 0), base = s.data.casIn || 0;
-	return p - base >= CASINO.cashAt ? p : Math.max(0, p - CASINO.gift);
-}
-// coins for stars and stars for coins, one for one
-handlers.cas_swap = (a) => {
-	if (!a || typeof a !== "object" || !Number.isInteger(a.amt) || a.amt < 1 || a.amt > 100000000) return [false, "bad amount"];
-	if (s.mines || s.bj) return [false, "finish your game first"];
-	const d = s.data;
-	if (a.dir === "in") {
-		if (d.coins < a.amt) return [false, "not enough coins"];
-		d.coins -= a.amt;
-		d.points = (d.points || 0) + a.amt;
-		d.casIn = (d.casIn || 0) + a.amt;
-	} else if (a.dir === "out") {
-		if (a.amt > casCashable()) return [false, "you can't cash out that many yet"];
-		d.points -= a.amt;
-		d.coins += a.amt;
-		d.casIn = Math.max(0, (d.casIn || 0) - a.amt);
-	} else return [false, "bad amount"];
-	return [true, { points: d.points, coins: d.coins }];
-};
-// the way out. stars don't leave the building: you cash out what you can, the rest is gone
-handlers.cas_leave = (a) => {
+// the way out. coins are already yours, this only ends whatever game was still open.
+// stars from before the casino took coins are turned back: everything except the free thousand
+handlers.cas_leave = () => {
 	if (s.mines) handlers.cas_mines_cash();
 	if (s.bj) bjDealer(s.bj);
-	const p = Math.floor(s.data.points || 0);
-	const paid = a && a.cash === false ? 0 : casCashable();
+	const old = Math.floor(s.data.points || 0);
+	if (old > 0) s.data.coins += Math.max(0, old - 1000);
 	s.data.points = 0;
 	s.data.casIn = 0;
-	s.data.coins += paid;
-	return [true, { paid, lost: p - paid }];
+	return [true, {}];
 };
 // start over. what you paid real money for stays yours
 handlers.reset = () => {
@@ -1380,7 +1389,7 @@ async function whoIs(env, token) {
 }
 
 // what the browser may ask for. everything else isn't a thing
-const ACTIONS = new Set(["mission_claim", "mission_bonus", "claim_daily", "claim_hourly", "claim_play", "redeem", "shop_hint", "buy_code", "box", "buy_power", "loadout", "skin", "death", "tut_done", "unlock_start", "use_revive", "revive_gems", "paid", "buy_revive", "run_start", "run_end", "race_prize", "vs_played", "ach", "ach_retro", "reset", "cas_wheel", "cas_roulette", "cas_mines_start", "cas_mines_pick", "cas_mines_cash", "cas_bj_start", "cas_bj_hit", "cas_bj_stand", "cas_bj_double", "cas_enter", "cas_swap", "cas_leave", "buy_gems", "style"]);
+const ACTIONS = new Set(["mission_claim", "mission_bonus", "claim_daily", "claim_hourly", "claim_play", "redeem", "shop_hint", "buy_code", "box", "buy_power", "loadout", "skin", "death", "tut_done", "unlock_start", "use_revive", "revive_gems", "paid", "buy_revive", "run_start", "run_end", "race_prize", "vs_played", "ach", "ach_retro", "reset", "cas_wheel", "cas_roulette", "cas_mines_start", "cas_mines_pick", "cas_mines_cash", "cas_bj_start", "cas_bj_hit", "cas_bj_stand", "cas_bj_double", "cas_enter", "rank_up", "cas_leave", "buy_gems", "style"]);
 
 async function sync(req, env, ctx) {
 	let body;

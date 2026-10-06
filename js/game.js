@@ -3,9 +3,9 @@ import {
 	camera, Lighting, Instance, workspace, markQueryRoot, Enum, OverlapParams, TweenService, TweenInfo, Debris, UIS, playSfx, loopSound, loadSounds, setSfxVolume,
 	NumberSequence, NumberSequenceKeypoint, NumberRange, ColorSequence, ColorSequenceKeypoint, guiRootInst, setUiScale, setLowGraphics, physicsGround,
 	mergeFloor, start, perf,
-} from "./engine.js?v=1791273869";
-import * as Server from "./server.js?v=1791273869";
-import * as Online from "./online.js?v=1791273869";
+} from "./engine.js?v=1791274315";
+import * as Server from "./server.js?v=1791274315";
+import * as Online from "./online.js?v=1791274315";
 
 const V3 = (x, y, z) => new Vector3(x, y, z);
 const RGB = Color3.fromRGB;
@@ -4671,6 +4671,13 @@ function deathView(vp, kind, delay, fov) {
 		const l = text(parent, kind === "title" ? it.name : myName(), size, pos, ts, kind === "title" ? COIN : kind === "color" && it.hex !== "rainbow" ? Game.hexColor(it.hex) : WHITE);
 		if (kind === "color" && it.hex === "rainbow") rainbowLabels.push(l);
 		if (kind === "font") Game.applyFont(l, it.id);
+		if (kind === "effect") Game.applyEffect(l, it.id);
+		if (kind === "icon") l.Text = it.sym + " " + myName();
+		if (kind === "marker") {
+			l.Text = "\u25AC\u25AC " + it.name;
+			if (it.hex === "rainbow") rainbowLabels.push(l);
+			else l.TextColor3 = Game.hexColor(it.hex);
+		}
 		return l;
 	}
 	function wear(kind, it, on) {
@@ -4887,7 +4894,45 @@ function deathView(vp, kind, delay, fov) {
 			["color", "COLOUR BOX", "ROLLS A COLOUR FOR YOUR NAME"],
 			["title", "TITLE BOX", "ROLLS A TITLE THAT SITS NEXT TO YOUR NAME"],
 			["font", "FONT BOX", "ROLLS A FONT YOUR NAME IS WRITTEN IN"],
+			["effect", "EFFECT BOX", "ROLLS A GLOW OR A MOVE FOR YOUR NAME"],
+			["icon", "ICON BOX", "ROLLS A SIGN THAT STANDS IN FRONT OF YOUR NAME"],
+			["marker", "MARKER BOX", "ROLLS HOW YOUR BEST-RUN MARKER LOOKS IN EVERYONE'S GAME"],
 		];
+		// the rank ladder: nothing but a flex, and each step costs more than the last
+		{
+			const have = data.rank || 0, cur = CONFIG.ranks[have - 1], next = CONFIG.ranks[have];
+			const col = (r) => (r.hex === "rainbow" ? Color3.fromHSV((clock() * 0.35) % 1, 0.7, 1) : Game.hexColor(r.hex));
+			const rr = row(shopItems, 96, 0.35);
+			make("UICorner", { CornerRadius: UDim.new(0, 10), Parent: rr });
+			const bg = make("Frame", { Size: US(1, 1), BackgroundColor3: cur ? col(cur) : RGB(90, 92, 105), BackgroundTransparency: 0.78, ZIndex: 0, Parent: rr });
+			make("UICorner", { CornerRadius: UDim.new(0, 10), Parent: bg });
+			make("UIGradient", { Transparency: new NumberSequence(0, 1), Parent: bg });
+			text(rr, "RANK", U2(1, -260, 0, 16), UO(16, 10), 13, DIM, LEFT);
+			const rl = text(rr, cur ? "\u25C6 " + cur.name : "NO RANK YET", U2(1, -260, 0, 36), UO(16, 26), 32, cur ? col(cur) : DIM, LEFT);
+			if (cur && cur.hex === "rainbow") rainbowLabels.push(rl);
+			text(rr, next ? "EVERYONE SEES IT NEXT TO YOUR NAME.  NEXT: " + next.name : "THERE IS NOTHING ABOVE THIS", U2(1, -260, 0, 16), UO(16, 68), 12, DIM, LEFT);
+			// ten pips, one per rank
+			CONFIG.ranks.forEach((r, i) => {
+				const pip = make("Frame", { Position: U2(1, -236 + i * 22, 0, 12), Size: UO(18, 8), BackgroundColor3: i < have ? (r.hex === "rainbow" ? WHITE : Game.hexColor(r.hex)) : WHITE, BackgroundTransparency: i < have ? 0 : 0.86, Parent: rr });
+				make("UICorner", { CornerRadius: UDim.new(0, 4), Parent: pip });
+			});
+			if (next) {
+				const b = button(rr, "", UO(220, 52), U2(1, -236, 0, 30), () => {
+					if (Game.topUp("coins", next.price)) return;
+					const [ok, msg] = request("rank_up");
+					if (!ok) {
+						notify(msg, BAD);
+						sfx("bad");
+						return;
+					}
+					Game.pushProfile();
+					Game.reveal({ head: "RANK UP", name: next.name, label: "\u25C6 " + next.name, color: next.hex === "rainbow" ? COIN : Game.hexColor(next.hex), sub: "RANK " + (have + 1) + " OF " + CONFIG.ranks.length });
+					rebuildShop();
+				}, 0.1);
+				Icons.text(b, U2(1, 0, 0, 20), UO(0, 5), 15, WHITE).Text = "RANK UP";
+				Icons.text(b, U2(1, 0, 0, 22), UO(0, 25), 19, data.coins >= next.price ? COIN : DIM).Text = fmt(next.price) + " ●";
+			}
+		}
 		for (const [kind, head, sub] of BOXES) {
 			const list = CONFIG.style[kind];
 			const cost = (n) => Math.floor(CONFIG.boxes[kind] * n * (n === 10 ? CONFIG.boxTen || 1 : 1));
@@ -5909,6 +5954,42 @@ function xpBar(parent, size, pos, k, color) {
 		st.letterSpacing = it && it.wide ? "0.22em" : "";
 		st.fontStretch = it && it.stretch ? "condensed" : "";
 	};
+	// name effects are plain css, so they cost nothing to run
+	{
+		const css = document.createElement("style");
+		css.textContent = `
+.nfx-glow { filter: drop-shadow(0 0 6px currentColor); }
+.nfx-shadow { filter: drop-shadow(3px 3px 0 #000); }
+.nfx-outline { -webkit-text-stroke: 1.5px #000; paint-order: stroke fill; }
+.nfx-underline { text-decoration: underline; text-decoration-thickness: 2px; text-underline-offset: 3px; }
+.nfx-neon { filter: drop-shadow(0 0 3px #fff) drop-shadow(0 0 10px currentColor) drop-shadow(0 0 22px currentColor); }
+.nfx-pulse { animation: nfxPulse 1.2s ease-in-out infinite; }
+.nfx-flicker { animation: nfxFlicker 2.4s linear infinite; }
+.nfx-bounce { animation: nfxBounce .9s ease-in-out infinite; }
+.nfx-fire { animation: nfxFire .7s ease-in-out infinite alternate; }
+.nfx-glitch { animation: nfxGlitch 1.6s steps(1) infinite; }
+@keyframes nfxPulse { 50% { opacity: .45; } }
+@keyframes nfxFlicker { 0%, 41%, 44%, 70%, 73%, 100% { opacity: 1; } 42% { opacity: .2; } 71% { opacity: .3; } }
+@keyframes nfxBounce { 50% { translate: 0 -5px; } }
+@keyframes nfxFire { from { filter: drop-shadow(0 -2px 4px #ff3b1f) drop-shadow(0 0 10px #ff9d3c); } to { filter: drop-shadow(0 -5px 8px #ffd35a) drop-shadow(0 0 16px #ff5d2a); } }
+@keyframes nfxGlitch { 0%, 12%, 57%, 100% { translate: 0 0; filter: none; } 8% { translate: -3px 1px; filter: drop-shadow(3px 0 0 #00e5ff) drop-shadow(-3px 0 0 #ff2a6d); } 10% { translate: 2px -1px; } 55% { translate: 3px 0; filter: drop-shadow(-3px 0 0 #00e5ff) drop-shadow(3px 0 0 #ff2a6d); } }`;
+		document.head.appendChild(css);
+	}
+	Game.applyEffect = (label, id) => {
+		const cl = label.el.classList;
+		for (const c of [...cl]) if (c.startsWith("nfx-")) cl.remove(c);
+		if (id && CONFIG.style.effect.some((x) => x.id === id)) cl.add("nfx-" + id);
+	};
+	// the sign in front of a name. the label keeps what it said without it, so dressing it twice doesn't stack them
+	Game.applyIcon = (label, id) => {
+		const it = id && CONFIG.style.icon.find((x) => x.id === id);
+		const base = label._worn !== undefined && label.Text === label._worn ? label._plain : label.Text;
+		label._plain = base;
+		label._worn = it ? it.sym + " " + base : base;
+		if (label.Text !== label._worn) label.Text = label._worn;
+	};
+	const rankOf = (e) => (styled(e) && e.rk > 0 ? CONFIG.ranks[Math.min(e.rk, CONFIG.ranks.length) - 1] : null);
+	Game.rankOf = rankOf;
 	const nameColor = (e, fallback) => {
 		const it = styled(e) && e.nc && CONFIG.style.color.find((x) => x.id === e.nc);
 		if (!it) return fallback;
@@ -5916,7 +5997,8 @@ function xpBar(parent, size, pos, k, color) {
 	};
 	const titleOf = (e) => {
 		const it = styled(e) && e.tt && CONFIG.style.title.find((x) => x.id === e.tt);
-		return it ? it.name : "";
+		const r = rankOf(e);
+		return [r ? "\u25C6 " + r.name : "", it ? it.name : ""].filter(Boolean).join("   ");
 	};
 	const flashy = [];
 	RunService.RenderStepped.Connect(() => {
@@ -5931,6 +6013,8 @@ function xpBar(parent, size, pos, k, color) {
 		label.TextColor3 = nameColor(e, fallback);
 		if (styled(e) && e.nc === "rainbow") flashy.push(label);
 		Game.applyFont(label, styled(e) ? e.nf : "");
+		Game.applyEffect(label, styled(e) ? e.ne : "");
+		Game.applyIcon(label, styled(e) ? e.ni : "");
 	}
 	Game.dressName = dress;
 	Game.titleOf = titleOf;
@@ -6453,11 +6537,11 @@ Game.showXp = (award, my, alive) => {
 		make("UIGradient", { Transparency: new NumberSequence(0.1, 1), Rotation: 90, Parent: glow });
 		text(card, "THIS IS HOW EVERYONE SEES YOU", U2(1, 0, 0, 16), UO(0, 10), 12, DIM);
 		const nm = text(card, String(Online.account() || "YOU").toUpperCase(), U2(1, -20, 0, 56), UO(10, 28), 50, WHITE);
-		Game.dressName(nm, { nc: st.color, nf: st.font, sv: 2 }, WHITE);
-		const t = find("title");
-		text(card, t ? t.name : "NO TITLE", U2(1, 0, 0, 22), UO(0, 90), 18, t ? COIN : DIM);
+		Game.dressName(nm, { nc: st.color, nf: st.font, ne: st.effect, ni: st.icon, sv: 2 }, WHITE);
+		const under = Game.titleOf({ tt: st.title, rk: data.rank || 0, sv: 2 });
+		text(card, under || "NO TITLE", U2(1, 0, 0, 22), UO(0, 90), 18, under ? COIN : DIM);
 
-		for (const [kind, head] of [["color", "COLOUR"], ["title", "TITLE"], ["font", "FONT"]]) {
+		for (const [kind, head] of [["color", "COLOUR"], ["title", "TITLE"], ["font", "FONT"], ["effect", "EFFECT"], ["icon", "ICON"], ["marker", "MARKER"]]) {
 			const mine = CONFIG.style[kind].filter((it) => st.own[kind + ":" + it.id]);
 			const hr = row(bp.body, 34, 1);
 			text(hr, head + "   " + mine.length + " OF " + CONFIG.style[kind].length, U2(0.7, 0, 1, 0), UO(4, 0), 18, COIN, LEFT);
@@ -10884,7 +10968,7 @@ if (DEV) window.__dev = { lift: () => { Game.lift = runTime; }, goto: (k) => { p
 // ------------------------------------------------------------------ old version warning
 // every build has its own number, the page checks now and then whether a newer one is online
 (() => {
-	const BUILD = "1791273869";
+	const BUILD = "1791274315";
 	if (BUILD.startsWith("__")) return;
 	const bar = make("TextButton", {
 		AnchorPoint: V2(0.5, 0),
@@ -11331,7 +11415,7 @@ const PINK = RGB(255, 70, 170);
 	setTimeout(load, 4000);
 	setInterval(load, 300000);
 
-	function build(id, col) {
+	function build(id, col, big) {
 		const neon = (size) => {
 			const p = Instance.new("Part");
 			p.Anchored = true;
@@ -11341,12 +11425,12 @@ const PINK = RGB(255, 70, 170);
 			p.CastShadow = false;
 			p.Material = "Neon";
 			p.Color = col;
-			p.Transparency = 0.35;
+			p.Transparency = big ? 0.15 : 0.35;
 			p.Size = size;
 			return p;
 		};
 		// a line right across where it ended and a pole up to the sign, so you can tell how far away it is
-		const m = { line: neon(V3(700, 0.6, 0.6)), pole: neon(V3(0.6, 22, 0.6)), best: -1 };
+		const m = { line: neon(V3(700, big ? 1.4 : 0.6, big ? 1.4 : 0.6)), pole: neon(V3(big ? 1.4 : 0.6, 22, big ? 1.4 : 0.6)), best: -1 };
 		m.tag = make("Frame", { AnchorPoint: V2(0.5, 1), Size: UO(260, 74), BackgroundTransparency: 1, Visible: false, ZIndex: 2, Parent: gui });
 		m.scale = make("UIScale", { Parent: m.tag });
 		m.num = text(m.tag, "", U2(1, 0, 0, 44), UO(0, 0), 40, WHITE);
@@ -11354,25 +11438,42 @@ const PINK = RGB(255, 70, 170);
 		marks.set(id, m);
 		return m;
 	}
+	function drop(id) {
+		const m = marks.get(id);
+		if (!m) return;
+		m.line.Destroy();
+		m.pole.Destroy();
+		m.tag.Destroy();
+		marks.delete(id);
+	}
 
 	RunService.RenderStepped.Connect(() => {
 		const cam = camera.CFrame;
 		const seen = new Set();
 		let n = 0;
-		const put = (id, label, best, col, nc, at, nf, sv) => {
+		// e is how they dress their name: colour, font, effect, icon, and the marker they rolled
+		const put = (id, label, best, fallback, at, e) => {
 			if (seen.has(id) || !(best > 0)) return;
 			seen.add(id);
-			const m = marks.get(id) || build(id, col);
-			// the name wears the colour they bought
-			if (m.nc !== nc + "|" + nf) {
-				m.nc = nc + "|" + nf;
-				Game.dressName(m.who, { nc, nf, sv }, col);
+			const mk = e.sv === 2 && e.nm ? CONFIG.style.marker.find((x) => x.id === e.nm) : null;
+			const key = [e.nc, e.nf, e.ne, e.ni, e.nm, label].join("|");
+			let m = marks.get(id);
+			if (m && m.key !== key) {
+				drop(id);
+				m = null;
 			}
-			if (m.best !== best || m.label !== label) {
-				m.best = best;
-				m.label = label;
-				m.num.Text = fmt(Math.floor(best));
+			if (!m) {
+				const col = mk ? (mk.hex === "rainbow" ? WHITE : Game.hexColor(mk.hex)) : fallback;
+				m = build(id, col, !!(mk && mk.big));
+				m.key = key;
+				m.rainbow = !!(mk && mk.hex === "rainbow");
 				m.who.Text = label;
+				Game.dressName(m.who, e, col);
+			}
+			if (m.rainbow) m.line.Color = m.pole.Color = Color3.fromHSV((clock() * 0.35) % 1, 0.8, 1);
+			if (m.best !== best) {
+				m.best = best;
+				m.num.Text = fmt(Math.floor(best));
 			}
 			// where in the world that run ended. old records only know the distance, those count from the very start
 			const z = -((at > best ? at : best) - Game.loopBase);
@@ -11396,8 +11497,9 @@ const PINK = RGB(255, 70, 170);
 			m.tag.Visible = on;
 		};
 		const me = Online.account() ? Online.myId() : null;
-		put("me", "Your Best", data.best, GOOD, (data.style || {}).color || "", data.bestAt, (data.style || {}).font || "", 2);
-		for (const p of list) if (p.id !== me) put(p.id, p.name + "'s Best", p.best, COIN, p.nc || "", p.at, p.nf || "", p.sv);
+		const st = data.style || {};
+		put("me", "Your Best", data.best, GOOD, data.bestAt, { nc: st.color, nf: st.font, ne: st.effect, ni: st.icon, nm: st.marker, sv: 2 });
+		for (const p of list) if (p.id !== me) put(p.id, p.name + "'s Best", p.best, COIN, p.at, p);
 		for (const [id, m] of marks) {
 			if (seen.has(id)) continue;
 			m.line.Parent = m.pole.Parent = null;
@@ -11571,12 +11673,11 @@ const PINK = RGB(255, 70, 170);
 	h("div", "cas-logo", "CASINO", top);
 	h("div", "cas-bulbs", null, top);
 	const bal = h("div", "cas-bal", null, top);
-	const SYM = { points: "★" };
-	const CURS = ["points"];
+	const SYM = { coins: "●" };
+	const CURS = ["coins"];
 	const pills = {};
 	const goal = h("div", "cas-goal", "", bal);
 	for (const c of CURS) pills[c] = h("div", "cas-pill c-" + c, "", bal);
-	const exB = h("button", "cas-btn", "● ⇄ ★", top);
 	const leaveB = h("button", "cas-btn leave", "LEAVE CASINO ▶", top);
 	const backB = h("button", "cas-btn cas-back", "◀ ALL GAMES", box);
 	// the warning before you get in. plain on purpose, it's meant to be read
@@ -11585,115 +11686,11 @@ const PINK = RGB(255, 70, 170);
 	h("h1", null, "You are about to enter a casino", nBox);
 	for (const t of [
 		"This works like a real casino. The games are games of chance. The odds are even, nothing here is tilted towards the house, but any single visit can go either way and you can lose everything you bring in.",
-		"You play with stars. Every visit you get 1,000 stars for free, and you can swap Coins for more stars and back, one for one. Coins are earned by playing the game. They cannot be bought, and neither can stars.",
-		"Stars do not leave the casino: cash out before you go, what you leave behind is gone. The 1,000 free stars only pay out once you have won 2,500 on top of what you brought in. Nothing here has a cash value and nothing can be exchanged for money.",
+		"You play with your Coins, the ones you earn by flying. What you lose is gone, what you win is yours right away. Coins cannot be bought.",
+		"Nothing here has a cash value and nothing can be exchanged for money.",
 		"This is for entertainment only. Gambling with real money is a different thing: it can be addictive and it is not allowed for minors. If these themes aren't for you, just fly on.",
 	]) h("p", null, t, nBox);
 	const nLabel = h("label", "off", null, nBox);
-	// one plain box for the two questions the casino asks: how much to swap, and whether you really want to go
-	const dlg = h("div", "cas-notice", null, box);
-	const dBox = h("div", null, null, dlg);
-	const nCheck = h("input", null, null, nLabel);
-	nCheck.type = "checkbox";
-	const nText = h("span", null, "", nLabel);
-	const nGo = h("button", null, "CONTINUE", nBox);
-	const nNo = h("button", null, "No thanks, fly on", nBox);
-	let nTimer = null, entered = false;
-	function showNotice() {
-		clearInterval(nTimer);
-		let left = 5;
-		nCheck.checked = false;
-		nCheck.disabled = true;
-		nGo.disabled = true;
-		nLabel.className = "off";
-		nText.textContent = "I have read this and I agree (" + left + ")";
-		notice.classList.add("on");
-		nTimer = setInterval(() => {
-			left--;
-			if (left > 0) {
-				nText.textContent = "I have read this and I agree (" + left + ")";
-				return;
-			}
-			clearInterval(nTimer);
-			nText.textContent = "I have read this and I agree";
-			nCheck.disabled = false;
-			nLabel.className = "";
-		}, 1000);
-	}
-	nCheck.addEventListener("change", () => {
-		nGo.disabled = !nCheck.checked;
-	});
-	nLabel.addEventListener("click", (ev) => ev.stopPropagation());
-	nGo.addEventListener("click", async (ev) => {
-		ev.stopPropagation();
-		if (nGo.disabled) return;
-		nGo.disabled = true;
-		// the free points come from the worker
-		const [ok, r] = await Sync.ask("cas_enter");
-		if (!ok) {
-			notify(String(r || "the casino is closed"), BAD);
-			entered = false;
-			Game.casino.leave();
-			return;
-		}
-		entered = true;
-		notice.classList.remove("on");
-		sfx("cas_in");
-		settle();
-	});
-	nNo.addEventListener("click", (ev) => {
-		ev.stopPropagation();
-		clearInterval(nTimer);
-		entered = false;
-		Game.casino.leave();
-	});
-	// ---------------- the ticker along the bottom: who won what, live from everyone who's playing
-	const tick = h("div", "cas-ticker", null, box);
-	const tickIn = h("div", null, null, tick);
-	const GAME_NAME = { wheel: "LUCKY WHEEL", roulette: "ROULETTE", mines: "MINEFIELD", bj: "BLACKJACK" };
-	const HOUSE = ["THE ODDS ARE EVEN. YOUR NERVES ARE NOT", "SWAP COINS FOR STARS AT THE TOP", "NOBODY HAS HIT IT BIG YET. YOUR TURN", "ONE MORE ROUND NEVER HURT ANYONE. PROBABLY"];
-	let stopFeed = null, feedSig = "";
-	function drawTicker(all) {
-		const list = Object.values(all || {}).filter((e) => e && typeof e.n === "string" && e.w > 0).sort((a, b) => (b.at || 0) - (a.at || 0)).slice(0, 12);
-		const sig = list.map((e) => e.n + e.w + e.at).join("|");
-		if (sig === feedSig && tickIn.childNodes.length) return;
-		feedSig = sig;
-		tickIn.innerHTML = "";
-		const say = (cls, txt) => h("span", cls, txt, tickIn);
-		// twice in a row, so the loop has no gap
-		for (let k = 0; k < 2; k++) {
-			if (!list.length) for (const l of HOUSE) say("dim", l);
-			for (const e of list) {
-				const who = e.n.toUpperCase().slice(0, 16);
-				if (e.k === "cash") {
-					say("who", who);
-					say("cash", "WALKED OUT WITH");
-					say("num", fmt(e.w) + " ●");
-				} else {
-					say("who", who);
-					say("win", "WON");
-					say("num", fmt(e.w) + " ★");
-					say("dim", GAME_NAME[e.g] || "");
-				}
-				say("sep", "✦");
-			}
-		}
-		tickIn.style.animationDuration = Math.max(18, tickIn.childNodes.length * 1.1) + "s";
-	}
-	// chips and glasses somewhere in the room
-	let roomT = null;
-	function room(on) {
-		clearTimeout(roomT);
-		if (!on) return;
-		const go = () => {
-			if (!Game.inCasino) return;
-			if (!notice.classList.contains("on")) sfx("cas_chip", 0.7 + Math.random() * 0.7, 0.12 + Math.random() * 0.12, Math.random() * 1.6 - 0.8);
-			roomT = setTimeout(go, 900 + Math.random() * 3200);
-		};
-		roomT = setTimeout(go, 1500);
-	}
-	const fxC = h("canvas", "cas-fx", null, box);
-	const flashE = h("div", "cas-flash", null, box);
 	const banner = h("div", "cas-banner", null, box);
 
 	const click = (e, fn) => e.addEventListener("click", (ev) => {
@@ -11708,14 +11705,14 @@ const PINK = RGB(255, 70, 170);
 	};
 
 	// ---------------- what you have. the numbers up top only move when the game on screen is done
-	const shown = { points: 0 };
-	let leaveArmed = false;
+	const shown = { coins: 0 };
+	let cameWith = 0;
 	function drawBal() {
 		for (const c of CURS) pills[c].textContent = SYM[c] + " " + fmt(Math.round(shown[c]));
 		// what the points are worth when you walk out
-		const have = Math.round(shown.points), can = cashable();
-		goal.className = "cas-goal" + (can > 0 ? " ok" : "");
-		goal.textContent = can > 0 ? fmt(can) + " ★ CAN BE CASHED OUT" : have < lim().min.points ? "OUT OF STARS" : fmt(lim().cashAt + (data.casIn || 0) - have) + " MORE TO CASH OUT";
+		const have = Math.round(shown.coins);
+		goal.className = "cas-goal";
+		goal.textContent = have < lim().min.coins ? "OUT OF COINS" : "YOUR COINS";
 	}
 	function take(cur, n) {
 		shown[cur] -= n;
@@ -11812,7 +11809,7 @@ const PINK = RGB(255, 70, 170);
 	}
 
 	// ---------------- the bet box on the right, every game has one
-	const bet = { cur: "points", amt: { points: 100 } };
+	const bet = { cur: "coins", amt: { coins: 100 } };
 	const lim = () => CONFIG.casino;
 	const BETS = () => lim().curs || CURS;
 	// "100 ●" for the big buttons, so you always see what a press costs
@@ -12588,7 +12585,7 @@ const PINK = RGB(255, 70, 170);
 			busy = true;
 			let out = null;
 			if (entered) {
-				const [ok, r] = await Sync.ask("cas_leave", { cash: cash !== false });
+				const [ok, r] = await Sync.ask("cas_leave");
 				if (ok) out = r;
 			}
 			entered = false;
@@ -12600,81 +12597,19 @@ const PINK = RGB(255, 70, 170);
 				notice.classList.remove("on");
 				busy = false;
 				Game.casinoExit();
-				if (out && out.paid) {
-					notify("casino: " + fmt(out.paid) + " stars paid out as coins", GOOD);
+				// how the visit went, in coins
+				const diff = Math.floor(data.coins || 0) - cameWith;
+				if (out && diff > 0) {
+					notify("casino: you walk out " + fmt(diff) + " coins up", GOOD);
 					sfx("levelup");
-				} else if (out && out.lost) notify("casino: " + fmt(out.lost) + " stars left behind", BAD);
+				} else if (out && diff < 0) notify("casino: you left " + fmt(-diff) + " coins there", BAD);
 			});
 		},
 	};
-	// how many of your stars could go back to coins right now, the same sum the worker does
-	function cashable() {
-		const p = Math.floor(data.points || 0), base = data.casIn || 0;
-		return p - base >= lim().cashAt ? p : Math.max(0, p - lim().gift);
-	}
-	function dialog(title, lines, buttons) {
-		dBox.textContent = "";
-		h("h1", null, title, dBox);
-		for (const t of lines) h("p", null, t, dBox);
-		for (const [label, fn, off] of buttons) {
-			const b = h("button", null, label, dBox);
-			b.style.marginTop = "8px";
-			if (off) b.disabled = true;
-			else click(b, fn);
-		}
-		dlg.classList.add("on");
-	}
-	const closeDlg = () => dlg.classList.remove("on");
-	async function swap(dir, amt) {
-		if (busy || amt < 1) return;
-		const r = await ask("cas_swap", { dir, amt });
-		busy = false;
-		if (r) sfx(dir === "in" ? "cas_chip" : "cas_win");
-		settle();
-		openEx();
-	}
-	function openEx() {
-		const coins = Math.floor(data.coins || 0), stars = Math.floor(data.points || 0), can = cashable();
-		dialog("Exchange", [
-			"One Coin is one star, both ways. You have " + fmt(coins) + " Coins and " + fmt(stars) + " stars.",
-			can < stars ? fmt(can) + " of your stars can go back to Coins right now. The 1,000 free stars only pay out once you have won " + fmt(lim().cashAt) + " on top of what you brought in." : "All of your stars can go back to Coins.",
-		], [
-			...[1000, 10000, 100000].map((n) => ["BUY " + fmt(n) + " ★", () => swap("in", n), coins < n]),
-			["BUY FOR ALL " + fmt(coins) + " ●", () => swap("in", coins), coins < 1],
-			["CASH OUT " + fmt(can) + " ★", () => swap("out", can), can < 1],
-			["DONE", closeDlg],
-		]);
-	}
-	click(exB, () => {
-		if (busy) return;
-		sfx("click");
-		openEx();
-	});
-	// stars don't leave the building, so walking out with some left gets a question first
 	click(leaveB, () => {
 		if (busy) return;
-		const stars = Math.floor(data.points || 0), can = cashable();
-		if (stars < 1) {
-			sfx("close");
-			Game.casino.leave(false);
-			return;
-		}
-		sfx("bad");
-		dialog("You still have " + fmt(stars) + " stars", [
-			can > 0
-				? fmt(can) + " of them can be cashed out as Coins. Whatever you leave behind is gone."
-				: "None of them can be cashed out yet: the free stars only pay out once you have won " + fmt(lim().cashAt) + " on top of what you brought in. If you leave now they are gone.",
-		], [
-			["CASH OUT " + fmt(can) + " ● AND LEAVE", () => {
-				closeDlg();
-				Game.casino.leave(true);
-			}, can < 1],
-			["LEAVE WITHOUT THEM", () => {
-				closeDlg();
-				Game.casino.leave(false);
-			}],
-			["STAY", closeDlg],
-		]);
+		sfx("close");
+		Game.casino.leave();
 	});
 	if (DEV) window.__dev.casino = () => Game.casino.enter();
 })();
