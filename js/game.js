@@ -3,9 +3,9 @@ import {
 	camera, Lighting, Instance, workspace, markQueryRoot, Enum, OverlapParams, TweenService, TweenInfo, Debris, UIS, playSfx, loopSound, loadSounds, setSfxVolume,
 	NumberSequence, NumberSequenceKeypoint, NumberRange, ColorSequence, ColorSequenceKeypoint, guiRootInst, setUiScale, setLowGraphics, physicsGround,
 	mergeFloor, start, perf,
-} from "./engine.js?v=1791192699";
-import * as Server from "./server.js?v=1791192699";
-import * as Online from "./online.js?v=1791192699";
+} from "./engine.js?v=1791273869";
+import * as Server from "./server.js?v=1791273869";
+import * as Online from "./online.js?v=1791273869";
 
 const V3 = (x, y, z) => new Vector3(x, y, z);
 const RGB = Color3.fromRGB;
@@ -550,7 +550,7 @@ let trackChunks, updateMovers, regenerate, canyonPath, canyonHalfGap, updatePads
 	};
 
 	// ---------------- the casino. now and then the canyon splits near its end: left goes on, right ends in a black door
-	const FORK = { len: 900, ramp: 320, off: 58, gap: 30, door: 540, sign: 178 };
+	const FORK = { len: 900, ramp: 320, off: 78, gap: 46, door: 540, sign: 178 };
 	const smooth = (x) => {
 		x = clamp(x, 0, 1);
 		return x * x * (3 - 2 * x);
@@ -632,6 +632,7 @@ let trackChunks, updateMovers, regenerate, canyonPath, canyonHalfGap, updatePads
 			veil.Material = "Neon";
 			veil.Transparency = 0.86 - i * 0.14;
 			veil.CastShadow = false;
+			veil.CanQuery = false;
 		}
 		const o = at(d - 86);
 		if (!o) return;
@@ -639,10 +640,12 @@ let trackChunks, updateMovers, regenerate, canyonPath, canyonHalfGap, updatePads
 			const post = block(V3(1.6, 132, 1.6), V3(o[0] + sx * (o[1] - 1.2), 66, -(d - 86)), RGB(255, 200, 60), folder);
 			post.Material = "Neon";
 			post.CastShadow = false;
+			post.CanQuery = false;
 		}
 		const lintel = block(V3(o[1] * 2, 1.6, 1.6), V3(o[0], 60, -(d - 86)), RGB(255, 200, 60), folder);
 		lintel.Material = "Neon";
 		lintel.CastShadow = false;
+		lintel.CanQuery = false;
 	}
 
 	const amount = (rng, n) => Math.floor(n + rng.NextNumber());
@@ -1484,8 +1487,8 @@ let trackChunks, updateMovers, regenerate, canyonPath, canyonHalfGap, updatePads
 			seed = random(1, 1e6);
 			canyonOffset = Math.random() * 1000;
 		}
-		// one run in a thousand has a casino in the canyon. with ?dev it's always there
-		Game.fork = !Game.race && (/[?&]dev\b/.test(location.search) || data.casinoNext === true || Math.random() < 0.001);
+		// one run in forty has a casino in the canyon. with ?dev it's always there
+		Game.fork = !Game.race && (/[?&]dev\b/.test(location.search) || data.casinoNext === true || Math.random() < 0.025);
 		maxRow = -1;
 		lastKey = null;
 		updateChunks(x || 0, z || 0);
@@ -4456,8 +4459,9 @@ function deathView(vp, kind, delay, fov) {
 	{
 		const tabs = make("Frame", { Size: U2(1, -10, 0, 48), BackgroundTransparency: 1, LayoutOrder: -1, Parent: shopPanel.body });
 		make("UIListLayout", { FillDirection: "row", Padding: UDim.new(0, 6), Parent: tabs });
-		[["SKINS", "user"], ["DEATH EFFECTS", "skull"], ["UPGRADES", "coin"], ["GEMS", "gem"]].forEach(([name, icon], idx) => {
-			const b = button(tabs, name, U2(name === "DEATH EFFECTS" ? 0.31 : 0.23, -5, 1, 0), null, () => {
+		// what people come for first: planes, then how their name looks, then the rest
+		[["SKINS", "PLANES", "user"], ["BOXES", "BOXES", "gift"], ["DEATH EFFECTS", "CRASH FX", "skull"], ["UPGRADES", "EXTRAS", "coin"], ["GEMS", "GEMS", "gem"]].forEach(([name, label, icon], idx) => {
+			const b = button(tabs, label, U2(0.2, -5, 1, 0), null, () => {
 				if (shopTab === name) return;
 				shopTab = name;
 				rebuildShop();
@@ -4885,7 +4889,8 @@ function deathView(vp, kind, delay, fov) {
 			["font", "FONT BOX", "ROLLS A FONT YOUR NAME IS WRITTEN IN"],
 		];
 		for (const [kind, head, sub] of BOXES) {
-			const list = CONFIG.style[kind], price = CONFIG.boxes[kind];
+			const list = CONFIG.style[kind];
+			const cost = (n) => Math.floor(CONFIG.boxes[kind] * n * (n === 10 ? CONFIG.boxTen || 1 : 1));
 			const have = list.filter((it) => st.own[kind + ":" + it.id]).length;
 			const hr = row(shopItems, 78, 0.45);
 			make("UICorner", { CornerRadius: UDim.new(0, 10), Parent: hr });
@@ -4896,7 +4901,7 @@ function deathView(vp, kind, delay, fov) {
 			text(hr, sub, U2(1, -490, 0, 14), UO(70, 54), 11, DIM, LEFT);
 			[[1, 406], [10, 200]].forEach(([n, right]) => {
 				const b = button(hr, "", UO(194, 54), U2(1, -right, 0.5, -27), () => {
-					if (Game.topUp("coins", price * n)) return;
+					if (Game.topUp("coins", cost(n))) return;
 					const [ok, res] = request("box", { kind, n });
 					if (!ok) {
 						notify(res, BAD);
@@ -4907,8 +4912,8 @@ function deathView(vp, kind, delay, fov) {
 					sfx("whoosh", 0.7);
 					rollShow(kind, head, res.items, res.back);
 				}, 0.1);
-				Icons.text(b, U2(1, 0, 0, 22), UO(0, 6), 17, WHITE).Text = n === 1 ? "OPEN 1" : "OPEN 10";
-				Icons.text(b, U2(1, 0, 0, 22), UO(0, 27), 19, data.coins >= price * n ? COIN : DIM).Text = fmt(price * n) + " ●";
+				Icons.text(b, U2(1, 0, 0, 22), UO(0, 6), 17, n === 1 ? WHITE : GOOD).Text = n === 1 ? "OPEN 1" : "OPEN 10   SAVE " + Math.round((1 - (CONFIG.boxTen || 1)) * 100) + "%";
+				Icons.text(b, U2(1, 0, 0, 22), UO(0, 27), 19, data.coins >= cost(n) ? COIN : DIM).Text = fmt(cost(n)) + " ●";
 			});
 			const grid = make("Frame", { Size: U2(1, -10, 0, 0), AutomaticSize: "Y", BackgroundTransparency: 1, LayoutOrder: nextOrder(), Parent: shopItems });
 			make("UIGridLayout", { CellSize: UO(134, 60), CellPadding: UO(6, 6), SortOrder: "LayoutOrder", Parent: grid });
@@ -5016,7 +5021,6 @@ function deathView(vp, kind, delay, fov) {
 			}, 0.1);
 			Icons.text(b, US(1, 1), null, 24, maxed ? DIM : data.coins >= price ? COIN : DIM).Text = maxed ? "MAX" : fmt(price) + " ●";
 		}
-		styleShop();
 		// revives: find them as rare hearts, or buy them for gems
 		const r = row(shopItems, 96, 0.45);
 		make("UICorner", { CornerRadius: UDim.new(0, 10), Parent: r });
@@ -5176,6 +5180,7 @@ function deathView(vp, kind, delay, fov) {
 		for (const c of shopItems.GetChildren()) if (!c.IsA("UIListLayout")) c.Destroy();
 		Game.spinning = Game.spinning.filter((s) => s.model.Parent && !s.model._destroyed);
 		if (shopTab === "UPGRADES") upgrades();
+		else if (shopTab === "BOXES") styleShop();
 		else if (shopTab === "GEMS") Game.gemShop(shopItems);
 		else if (shopTab === "SKINS") {
 			Game.skinView = Game.skinView || data.skin;
@@ -6458,7 +6463,7 @@ Game.showXp = (award, my, alive) => {
 			text(hr, head + "   " + mine.length + " OF " + CONFIG.style[kind].length, U2(0.7, 0, 1, 0), UO(4, 0), 18, COIN, LEFT);
 			if (!mine.length) {
 				const r = row(bp.body, 48, 1);
-				const more = button(r, "ROLL ONE FROM A " + head + " BOX IN THE SHOP", U2(1, -10, 0, 40), UO(0, 4), () => Game.openShop("UPGRADES"), 0.4);
+				const more = button(r, "ROLL ONE FROM A " + head + " BOX IN THE SHOP", U2(1, -10, 0, 40), UO(0, 4), () => Game.openShop("BOXES"), 0.4);
 				more.TextSize = 16;
 				more.TextColor3 = GEM;
 				continue;
@@ -10879,7 +10884,7 @@ if (DEV) window.__dev = { lift: () => { Game.lift = runTime; }, goto: (k) => { p
 // ------------------------------------------------------------------ old version warning
 // every build has its own number, the page checks now and then whether a newer one is online
 (() => {
-	const BUILD = "1791192699";
+	const BUILD = "1791273869";
 	if (BUILD.startsWith("__")) return;
 	const bar = make("TextButton", {
 		AnchorPoint: V2(0.5, 0),
@@ -11571,6 +11576,7 @@ const PINK = RGB(255, 70, 170);
 	const pills = {};
 	const goal = h("div", "cas-goal", "", bal);
 	for (const c of CURS) pills[c] = h("div", "cas-pill c-" + c, "", bal);
+	const exB = h("button", "cas-btn", "● ⇄ ★", top);
 	const leaveB = h("button", "cas-btn leave", "LEAVE CASINO ▶", top);
 	const backB = h("button", "cas-btn cas-back", "◀ ALL GAMES", box);
 	// the warning before you get in. plain on purpose, it's meant to be read
@@ -11578,12 +11584,15 @@ const PINK = RGB(255, 70, 170);
 	const nBox = h("div", null, null, notice);
 	h("h1", null, "You are about to enter a casino", nBox);
 	for (const t of [
-		"This works like a real casino. The games are games of chance, the odds are in favour of the house, and most of the time you will walk out with nothing.",
-		"You do not bet anything you own. Every visit you get 1,000 casino points for free, and those are all you can play with. No money, Gems, Coins or Keys can be bet, and points cannot be bought.",
-		"When you leave with 2,500 points or more, your points are paid out as Coins, one Coin per point. With fewer than 2,500 the points are simply gone. Points have no cash value and nothing here can be exchanged for money.",
+		"This works like a real casino. The games are games of chance. The odds are even, nothing here is tilted towards the house, but any single visit can go either way and you can lose everything you bring in.",
+		"You play with stars. Every visit you get 1,000 stars for free, and you can swap Coins for more stars and back, one for one. Coins are earned by playing the game. They cannot be bought, and neither can stars.",
+		"Stars do not leave the casino: cash out before you go, what you leave behind is gone. The 1,000 free stars only pay out once you have won 2,500 on top of what you brought in. Nothing here has a cash value and nothing can be exchanged for money.",
 		"This is for entertainment only. Gambling with real money is a different thing: it can be addictive and it is not allowed for minors. If these themes aren't for you, just fly on.",
 	]) h("p", null, t, nBox);
 	const nLabel = h("label", "off", null, nBox);
+	// one plain box for the two questions the casino asks: how much to swap, and whether you really want to go
+	const dlg = h("div", "cas-notice", null, box);
+	const dBox = h("div", null, null, dlg);
 	const nCheck = h("input", null, null, nLabel);
 	nCheck.type = "checkbox";
 	const nText = h("span", null, "", nLabel);
@@ -11642,7 +11651,7 @@ const PINK = RGB(255, 70, 170);
 	const tick = h("div", "cas-ticker", null, box);
 	const tickIn = h("div", null, null, tick);
 	const GAME_NAME = { wheel: "LUCKY WHEEL", roulette: "ROULETTE", mines: "MINEFIELD", bj: "BLACKJACK" };
-	const HOUSE = ["THE HOUSE ALWAYS WINS. ALMOST ALWAYS", "2,500 ★ AND YOU WALK OUT WITH COINS", "NOBODY HAS HIT IT BIG YET. YOUR TURN", "ONE MORE ROUND NEVER HURT ANYONE. PROBABLY"];
+	const HOUSE = ["THE ODDS ARE EVEN. YOUR NERVES ARE NOT", "SWAP COINS FOR STARS AT THE TOP", "NOBODY HAS HIT IT BIG YET. YOUR TURN", "ONE MORE ROUND NEVER HURT ANYONE. PROBABLY"];
 	let stopFeed = null, feedSig = "";
 	function drawTicker(all) {
 		const list = Object.values(all || {}).filter((e) => e && typeof e.n === "string" && e.w > 0).sort((a, b) => (b.at || 0) - (a.at || 0)).slice(0, 12);
@@ -11704,10 +11713,9 @@ const PINK = RGB(255, 70, 170);
 	function drawBal() {
 		for (const c of CURS) pills[c].textContent = SYM[c] + " " + fmt(Math.round(shown[c]));
 		// what the points are worth when you walk out
-		const need = lim().cashAt, have = Math.round(shown.points);
-		goal.className = "cas-goal" + (have >= need ? " ok" : "");
-		goal.textContent = have >= need ? "ENOUGH TO CASH OUT" : have < lim().min.points ? "OUT OF POINTS" : fmt(need - have) + " MORE TO CASH OUT";
-		if (!leaveArmed) leaveB.textContent = have >= need ? "CASH OUT " + fmt(have) + " ● ▶" : "LEAVE CASINO ▶";
+		const have = Math.round(shown.points), can = cashable();
+		goal.className = "cas-goal" + (can > 0 ? " ok" : "");
+		goal.textContent = can > 0 ? fmt(can) + " ★ CAN BE CASHED OUT" : have < lim().min.points ? "OUT OF STARS" : fmt(lim().cashAt + (data.casIn || 0) - have) + " MORE TO CASH OUT";
 	}
 	function take(cur, n) {
 		shown[cur] -= n;
@@ -11879,7 +11887,7 @@ const PINK = RGB(255, 70, 170);
 		});
 		return a;
 	}
-	card("roulette", "ROULETTE", "Red or black, or go all in on one number for 36x", "art-roul");
+	card("roulette", "ROULETTE", "Red or black, or go all in on one number for 37x", "art-roul");
 	const ma = card("mines", "MINEFIELD", "Every safe field pays more. One bomb and it's gone", "art-mines");
 	for (let i = 0; i < 9; i++) h("i", i === 4 ? "b" : i % 2 ? "g" : "", null, ma);
 	card("wheel", "LUCKY WHEEL", "One spin, up to 5x your bet", "art-wheel");
@@ -12443,7 +12451,7 @@ const PINK = RGB(255, 70, 170);
 		function drawSide() {
 			const live = !!game && !game.over;
 			info.classList.remove("bad");
-			if (!live) info.textContent = "BLACKJACK PAYS 6 TO 5. SAME SCORE: MONEY BACK";
+			if (!live) info.textContent = "BLACKJACK PAYS 3 TO 2. SAME SCORE: MONEY BACK";
 			go.textContent = "DEAL FOR " + betText();
 			go.disabled = live || !canPay(bet.amt[bet.cur]);
 			hitB.disabled = standB.disabled = !live;
@@ -12573,14 +12581,14 @@ const PINK = RGB(255, 70, 170);
 				if (!stopFeed && Online.enabled()) stopFeed = Online.listen("meta/feed", (v) => drawTicker(v), 'orderBy="$key"&limitToLast=12');
 			});
 		},
-		async leave() {
+		async leave(cash) {
 			if (!Game.inCasino || busy) return;
 			await mines.bail();
 			await bj.bail();
 			busy = true;
 			let out = null;
 			if (entered) {
-				const [ok, r] = await Sync.ask("cas_leave");
+				const [ok, r] = await Sync.ask("cas_leave", { cash: cash !== false });
 				if (ok) out = r;
 			}
 			entered = false;
@@ -12593,31 +12601,80 @@ const PINK = RGB(255, 70, 170);
 				busy = false;
 				Game.casinoExit();
 				if (out && out.paid) {
-					notify("casino: " + fmt(out.paid) + " points paid out as coins", GOOD);
+					notify("casino: " + fmt(out.paid) + " stars paid out as coins", GOOD);
 					sfx("levelup");
-				} else if (out && out.lost) notify("casino: " + fmt(out.lost) + " points gone, you needed " + fmt(lim().cashAt) + " to cash out", BAD);
+				} else if (out && out.lost) notify("casino: " + fmt(out.lost) + " stars left behind", BAD);
 			});
 		},
 	};
-	// leaving with points that aren't enough yet throws them away, so that takes a second press
-	let armT = null;
+	// how many of your stars could go back to coins right now, the same sum the worker does
+	function cashable() {
+		const p = Math.floor(data.points || 0), base = data.casIn || 0;
+		return p - base >= lim().cashAt ? p : Math.max(0, p - lim().gift);
+	}
+	function dialog(title, lines, buttons) {
+		dBox.textContent = "";
+		h("h1", null, title, dBox);
+		for (const t of lines) h("p", null, t, dBox);
+		for (const [label, fn, off] of buttons) {
+			const b = h("button", null, label, dBox);
+			b.style.marginTop = "8px";
+			if (off) b.disabled = true;
+			else click(b, fn);
+		}
+		dlg.classList.add("on");
+	}
+	const closeDlg = () => dlg.classList.remove("on");
+	async function swap(dir, amt) {
+		if (busy || amt < 1) return;
+		const r = await ask("cas_swap", { dir, amt });
+		busy = false;
+		if (r) sfx(dir === "in" ? "cas_chip" : "cas_win");
+		settle();
+		openEx();
+	}
+	function openEx() {
+		const coins = Math.floor(data.coins || 0), stars = Math.floor(data.points || 0), can = cashable();
+		dialog("Exchange", [
+			"One Coin is one star, both ways. You have " + fmt(coins) + " Coins and " + fmt(stars) + " stars.",
+			can < stars ? fmt(can) + " of your stars can go back to Coins right now. The 1,000 free stars only pay out once you have won " + fmt(lim().cashAt) + " on top of what you brought in." : "All of your stars can go back to Coins.",
+		], [
+			...[1000, 10000, 100000].map((n) => ["BUY " + fmt(n) + " ★", () => swap("in", n), coins < n]),
+			["BUY FOR ALL " + fmt(coins) + " ●", () => swap("in", coins), coins < 1],
+			["CASH OUT " + fmt(can) + " ★", () => swap("out", can), can < 1],
+			["DONE", closeDlg],
+		]);
+	}
+	click(exB, () => {
+		if (busy) return;
+		sfx("click");
+		openEx();
+	});
+	// stars don't leave the building, so walking out with some left gets a question first
 	click(leaveB, () => {
-		const have = Math.round(shown.points);
-		if (!leaveArmed && have >= lim().min.points && have < lim().cashAt) {
-			leaveArmed = true;
-			leaveB.textContent = "SURE? YOUR " + fmt(have) + " ★ ARE GONE";
-			sfx("bad");
-			clearTimeout(armT);
-			armT = setTimeout(() => {
-				leaveArmed = false;
-				drawBal();
-			}, 3000);
+		if (busy) return;
+		const stars = Math.floor(data.points || 0), can = cashable();
+		if (stars < 1) {
+			sfx("close");
+			Game.casino.leave(false);
 			return;
 		}
-		clearTimeout(armT);
-		leaveArmed = false;
-		sfx("close");
-		Game.casino.leave();
+		sfx("bad");
+		dialog("You still have " + fmt(stars) + " stars", [
+			can > 0
+				? fmt(can) + " of them can be cashed out as Coins. Whatever you leave behind is gone."
+				: "None of them can be cashed out yet: the free stars only pay out once you have won " + fmt(lim().cashAt) + " on top of what you brought in. If you leave now they are gone.",
+		], [
+			["CASH OUT " + fmt(can) + " ● AND LEAVE", () => {
+				closeDlg();
+				Game.casino.leave(true);
+			}, can < 1],
+			["LEAVE WITHOUT THEM", () => {
+				closeDlg();
+				Game.casino.leave(false);
+			}],
+			["STAY", closeDlg],
+		]);
 	});
 	if (DEV) window.__dev.casino = () => Game.casino.enter();
 })();

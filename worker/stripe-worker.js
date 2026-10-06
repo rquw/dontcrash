@@ -917,6 +917,8 @@ CONFIG.style = {
 CONFIG.boxes = { color: 10000, title: 50000, font: 7500 };
 CONFIG.boxOdds = [60, 27, 10, 3];
 CONFIG.boxDup = 0.3;
+// ten at once cost what eight do
+CONFIG.boxTen = 0.8;
 // not Math.random: the browser and the worker have to roll the same thing
 function boxRoll(d) {
 	d.rolls = (d.rolls || 0) + 1;
@@ -928,7 +930,7 @@ function boxRoll(d) {
 handlers.box = (a) => {
 	if (!a || typeof a !== "object" || !CONFIG.boxes[a.kind]) return [false, "unknown box"];
 	const n = a.n === 10 ? 10 : 1;
-	const price = CONFIG.boxes[a.kind] * n;
+	const price = Math.floor(CONFIG.boxes[a.kind] * n * (n === 10 ? CONFIG.boxTen : 1));
 	const d = s.data, st = d.style;
 	if (d.coins < price) return [false, "not enough coins"];
 	d.coins -= price;
@@ -990,20 +992,20 @@ handlers.buy_gems = (id) => {
 };
 // ---------------- the casino. the worker rolls everything, the browser only shows it. the house is always a bit ahead
 const CASINO = {
-	// you never bet anything you own. every visit hands you points for free, and only what you carry out
-	// above the line turns into coins, one for one
+	// every visit hands you stars for free, and you can swap coins for more, one for one, and back.
+	// the free ones only turn into coins once you've won this much on top of what you brought in
 	gift: 1000,
 	cashAt: 2500,
 	min: { points: 50 },
 	max: { points: 50000 },
-	// the wheel of fortune, 24 fields. on average you get back about 92%
-	wheel: [0, 1.5, 0, 0.5, 2, 0, 1.5, 0, 0.5, 3, 0, 2, 0, 1.5, 0.5, 0, 5, 0, 2, 0, 0.5, 1.5, 0, 0],
+	// the wheel of fortune, 24 fields that add up to 24: on average you get back exactly what you put in
+	wheel: [0, 1.5, 0, 0.5, 2, 0, 1.5, 0, 0.5, 3, 0, 2, 0, 1.5, 0.5, 0, 5, 0, 2, 0, 0.5, 1.5, 2, 0],
 	// minefield: 5x5, the fair multiplier times this
-	minesEdge: 0.94,
+	minesEdge: 1,
 	minesMax: 20,
 	minesCap: 100,
-	// blackjack: what a natural 21 pays on top of your bet. 6 to 5, the stingy kind
-	bjNatural: 1.2,
+	// blackjack: what a natural 21 pays on top of your bet. 3 to 2, the fair kind
+	bjNatural: 1.5,
 	reds: [1, 3, 5, 7, 9, 12, 14, 16, 18, 19, 21, 23, 25, 27, 30, 32, 34, 36],
 };
 CONFIG.casino = CASINO;
@@ -1041,7 +1043,8 @@ handlers.cas_wheel = (a) => {
 	casinoStat(a.cur, a.amt, win);
 	return [true, { i, mult, win, bet: a.amt, cur: a.cur }];
 };
-// one zero, 36 numbers. colours and halves pay double, a dozen triple, a single number 36 times
+// one zero, 36 numbers. colours and halves pay double, a dozen triple, a single number 37 times.
+// on zero the outside bets get their stake back, so nothing here leans towards the house
 handlers.cas_roulette = (a) => {
 	if (!a || typeof a !== "object" || !Array.isArray(a.bets) || a.bets.length < 1 || a.bets.length > 20) return [false, "bad bet"];
 	let total = 0;
@@ -1058,8 +1061,8 @@ handlers.cas_roulette = (a) => {
 	let win = 0;
 	for (const b of a.bets) {
 		let m = 0;
-		if (b.k === "n") m = b.n === n ? 36 : 0;
-		else if (n === 0) m = 0;
+		if (b.k === "n") m = b.n === n ? 37 : 0;
+		else if (n === 0) m = 1;
 		else if (b.k === "red") m = red ? 2 : 0;
 		else if (b.k === "black") m = red ? 0 : 2;
 		else if (b.k === "even") m = n % 2 === 0 ? 2 : 0;
@@ -1209,19 +1212,42 @@ handlers.cas_enter = () => {
 	s.mines = null;
 	s.bj = null;
 	s.data.points = CASINO.gift;
+	s.data.casIn = 0;
 	return [true, { points: CASINO.gift }];
 };
-// the way out: enough points become coins, too few are just gone
-handlers.cas_leave = () => {
+// how many stars could go back to coins right now. casIn is what you brought in and haven't taken back out
+function casCashable() {
+	const p = Math.floor(s.data.points || 0), base = s.data.casIn || 0;
+	return p - base >= CASINO.cashAt ? p : Math.max(0, p - CASINO.gift);
+}
+// coins for stars and stars for coins, one for one
+handlers.cas_swap = (a) => {
+	if (!a || typeof a !== "object" || !Number.isInteger(a.amt) || a.amt < 1 || a.amt > 100000000) return [false, "bad amount"];
+	if (s.mines || s.bj) return [false, "finish your game first"];
+	const d = s.data;
+	if (a.dir === "in") {
+		if (d.coins < a.amt) return [false, "not enough coins"];
+		d.coins -= a.amt;
+		d.points = (d.points || 0) + a.amt;
+		d.casIn = (d.casIn || 0) + a.amt;
+	} else if (a.dir === "out") {
+		if (a.amt > casCashable()) return [false, "you can't cash out that many yet"];
+		d.points -= a.amt;
+		d.coins += a.amt;
+		d.casIn = Math.max(0, (d.casIn || 0) - a.amt);
+	} else return [false, "bad amount"];
+	return [true, { points: d.points, coins: d.coins }];
+};
+// the way out. stars don't leave the building: you cash out what you can, the rest is gone
+handlers.cas_leave = (a) => {
 	if (s.mines) handlers.cas_mines_cash();
 	if (s.bj) bjDealer(s.bj);
 	const p = Math.floor(s.data.points || 0);
+	const paid = a && a.cash === false ? 0 : casCashable();
 	s.data.points = 0;
-	if (p >= CASINO.cashAt) {
-		s.data.coins += p;
-		return [true, { paid: p }];
-	}
-	return [true, { paid: 0, lost: p }];
+	s.data.casIn = 0;
+	s.data.coins += paid;
+	return [true, { paid, lost: p - paid }];
 };
 // start over. what you paid real money for stays yours
 handlers.reset = () => {
@@ -1354,7 +1380,7 @@ async function whoIs(env, token) {
 }
 
 // what the browser may ask for. everything else isn't a thing
-const ACTIONS = new Set(["mission_claim", "mission_bonus", "claim_daily", "claim_hourly", "claim_play", "redeem", "shop_hint", "buy_code", "box", "buy_power", "loadout", "skin", "death", "tut_done", "unlock_start", "use_revive", "revive_gems", "paid", "buy_revive", "run_start", "run_end", "race_prize", "vs_played", "ach", "ach_retro", "reset", "cas_wheel", "cas_roulette", "cas_mines_start", "cas_mines_pick", "cas_mines_cash", "cas_bj_start", "cas_bj_hit", "cas_bj_stand", "cas_bj_double", "cas_enter", "cas_leave", "buy_gems", "style"]);
+const ACTIONS = new Set(["mission_claim", "mission_bonus", "claim_daily", "claim_hourly", "claim_play", "redeem", "shop_hint", "buy_code", "box", "buy_power", "loadout", "skin", "death", "tut_done", "unlock_start", "use_revive", "revive_gems", "paid", "buy_revive", "run_start", "run_end", "race_prize", "vs_played", "ach", "ach_retro", "reset", "cas_wheel", "cas_roulette", "cas_mines_start", "cas_mines_pick", "cas_mines_cash", "cas_bj_start", "cas_bj_hit", "cas_bj_stand", "cas_bj_double", "cas_enter", "cas_swap", "cas_leave", "buy_gems", "style"]);
 
 async function sync(req, env, ctx) {
 	let body;
