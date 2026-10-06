@@ -3,9 +3,9 @@ import {
 	camera, Lighting, Instance, workspace, markQueryRoot, Enum, OverlapParams, TweenService, TweenInfo, Debris, UIS, playSfx, loopSound, loadSounds, setSfxVolume,
 	NumberSequence, NumberSequenceKeypoint, NumberRange, ColorSequence, ColorSequenceKeypoint, guiRootInst, setUiScale, setLowGraphics, physicsGround,
 	mergeFloor, start, perf,
-} from "./engine.js?v=1791304271";
-import * as Server from "./server.js?v=1791304271";
-import * as Online from "./online.js?v=1791304271";
+} from "./engine.js?v=1791304555";
+import * as Server from "./server.js?v=1791304555";
+import * as Online from "./online.js?v=1791304555";
 
 const V3 = (x, y, z) => new Vector3(x, y, z);
 const RGB = Color3.fromRGB;
@@ -11002,7 +11002,7 @@ if (DEV) window.__dev = { lift: () => { Game.lift = runTime; }, goto: (k) => { p
 // ------------------------------------------------------------------ old version warning
 // every build has its own number, the page checks now and then whether a newer one is online
 (() => {
-	const BUILD = "1791304271";
+	const BUILD = "1791304555";
 	if (BUILD.startsWith("__")) return;
 	const bar = make("TextButton", {
 		AnchorPoint: V2(0.5, 0),
@@ -11815,7 +11815,7 @@ const PINK = RGB(255, 70, 170);
 	for (const t of [
 		"This works like a real casino. The games are games of chance. The odds are even, nothing here is tilted towards the house, but any single visit can go either way and you can lose everything you bring in.",
 		"You play with stars. Every visit starts you off with 500 of them, and you can buy more: one Coin is one star. Coins are earned by flying, they cannot be bought.",
-		"On your way out your stars turn into what you want: 1 star is 1 Coin, 10 stars are 1 Gem, 100 stars are 1 Key, 500 stars are 1 Revive. Whatever you don't swap becomes Coins. Nothing here has a cash value and nothing can be exchanged for money.",
+		"On your way out, what you won on top of what you came in with can become Gems, Keys or Revives: 10 stars are 1 Gem, 100 stars are 1 Key, 500 stars are 1 Revive. Everything else goes back to Coins, 1 star is 1 Coin. Nothing here has a cash value and nothing can be exchanged for money.",
 		"This is for entertainment only. Gambling with real money is a different thing: it can be addictive and it is not allowed for minors. If these themes aren't for you, just fly on.",
 	]) h("p", null, t, nBox);
 	const nLabel = h("label", "off", null, nBox);
@@ -11877,7 +11877,7 @@ const PINK = RGB(255, 70, 170);
 	const tick = h("div", "cas-ticker", null, box);
 	const tickIn = h("div", null, null, tick);
 	const GAME_NAME = { wheel: "LUCKY WHEEL", roulette: "ROULETTE", mines: "MINEFIELD", bj: "BLACKJACK" };
-	const HOUSE = ["THE ODDS ARE EVEN. YOUR NERVES ARE NOT", "10 ★ A GEM, 100 ★ A KEY, 500 ★ A REVIVE", "NOBODY HAS HIT IT BIG YET. YOUR TURN", "ONE MORE ROUND NEVER HURT ANYONE. PROBABLY"];
+	const HOUSE = ["THE ODDS ARE EVEN. YOUR NERVES ARE NOT", "WIN 10 ★ FOR A GEM, 100 ★ FOR A KEY, 500 ★ FOR A REVIVE", "NOBODY HAS HIT IT BIG YET. YOUR TURN", "ONE MORE ROUND NEVER HURT ANYONE. PROBABLY"];
 	let stopFeed = null, feedSig = "";
 	function drawTicker(all) {
 		const list = Object.values(all || {}).filter((e) => e && typeof e.n === "string" && e.w > 0).sort((a, b) => (b.at || 0) - (a.at || 0)).slice(0, 12);
@@ -12885,17 +12885,18 @@ const PINK = RGB(255, 70, 170);
 	// what the stars are worth. this is also the door: leaving goes through here
 	function openCash(leaving) {
 		const stars = Math.floor(data.points || 0), R = lim().rates;
+		const won = Math.max(0, stars - Math.floor(data.casIn || 0));
 		const row = (to, steps) => {
-			const max = Math.floor(stars / R[to]);
+			const max = Math.floor((to === "coins" ? stars : won) / R[to]);
 			return [
 				R[to] + " ★  =  1 " + NAMES[to][0] + " " + SYM[to],
 				...steps.filter((n) => n < max).map((n) => ["+" + fmt(n) + " " + SYM[to], () => cash(to, n, leaving)]),
-				[max > 0 ? "ALL IN " + NAMES[to][1] + " (+" + fmt(max) + " " + SYM[to] + ")" : "NOT ENOUGH ★", () => cash(to, max, leaving), max < 1],
+				[max > 0 ? "ALL IN " + NAMES[to][1] + " (+" + fmt(max) + " " + SYM[to] + ")" : to === "coins" ? "NOT ENOUGH ★" : "NOT ENOUGH WON", () => cash(to, max, leaving), max < 1],
 			];
 		};
 		dialog(leaving ? "Cash out before you go" : "Cash out", [
 			have(),
-			"Turn your stars into what you want. Whatever is still left when you leave becomes Coins.",
+			"You won " + fmt(won) + " ★ in here. Only what you won can become Gems, Keys or Revives. Everything else goes back to Coins when you leave.",
 		], [
 			row("revives", [1]),
 			row("keys", [1, 10]),

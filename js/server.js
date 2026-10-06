@@ -1256,6 +1256,8 @@ handlers.cas_enter = () => {
 	s.mines = null;
 	s.bj = null;
 	s.data.points = CASINO.gift;
+	// what you walked in with. only what you win on top of it can become gems, keys or revives
+	s.data.casIn = CASINO.gift;
 	return [true, { points: CASINO.gift }];
 };
 // coins into stars, one for one
@@ -1266,6 +1268,7 @@ handlers.cas_buy = (amt) => {
 	if (d.coins < amt) return [false, "not enough coins"];
 	d.coins -= amt;
 	d.points = (d.points || 0) + amt;
+	d.casIn = (d.casIn || 0) + amt;
 	return [true, { points: d.points }];
 };
 // stars into coins, gems, keys or revives. n is how many of those you want
@@ -1274,8 +1277,11 @@ handlers.cas_cash = (a) => {
 	if (s.mines || s.bj) return [false, "finish your game first"];
 	const d = s.data, cost = a.n * CASINO.rates[a.to];
 	if ((d.points || 0) < cost) return [false, "not enough stars"];
+	if (a.to !== "coins" && d.points - (d.casIn || 0) < cost) return [false, "only what you won can become that"];
 	d.points -= cost;
 	d[a.to] = (d[a.to] || 0) + a.n;
+	// taking your own stake back out as coins doesn't count against you later
+	if (a.to === "coins") d.casIn = Math.min(d.casIn || 0, d.points);
 	return [true, { to: a.to, n: a.n, cost }];
 };
 // the way out. whatever stars are still in your pocket become coins, nothing is ever just gone
