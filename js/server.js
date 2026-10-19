@@ -26,6 +26,9 @@ export const CONFIG = {
 	// the last part of the turrets is the motorway, the last part of the city is the desert. that way nothing behind them moves
 	trafficLen: 5000,
 	desertLen: 4000,
+	// the first part of the sea is volcanoes, the last part ice
+	volcanoLen: 4500,
+	glacierLen: 4500,
 	cityLen: 14900,
 	mapBonus: 250,
 	bossBonus: 750,
@@ -44,11 +47,18 @@ export const CONFIG = {
 		{ id: "city", name: "CITY", keys: 10, coins: 4500 },
 		{ id: "desert", name: "DESERT", keys: 10, coins: 5000 },
 		{ id: "boss2", name: "BOSS 2", keys: 10, coins: 5500 },
+		{ id: "volcano", name: "VOLCANO", keys: 16, coins: 6500 },
 		{ id: "sea", name: "SEA", keys: 16, coins: 7000 },
+		{ id: "glacier", name: "GLACIER", keys: 16, coins: 7800 },
 		{ id: "space", name: "SPACE", keys: 16, coins: 8500 },
 	],
 	bossHp: 8,
-	powers: [{ id: "coins", name: "Coin multiplier", desc: "+25% coins per level", max: 10, base: 300 }],
+	powers: [
+		{ id: "coins", name: "Coin multiplier", desc: "+25% coins per level", max: 10, base: 300, step: 0.25, show: "x" },
+		{ id: "tank", name: "Bigger tank", desc: "fuel lasts 8% longer per level", max: 5, base: 2000, step: 0.08, show: "+" },
+		{ id: "magnet", name: "Magnet", desc: "+20% pickup reach per level", max: 5, base: 1500, step: 0.2, show: "+" },
+		{ id: "xp", name: "Fast learner", desc: "+10% xp per level", max: 5, base: 2500, step: 0.1, show: "+" },
+	],
 	skins: [
 		{ id: "Default", price: 0 },
 		{ id: "Jet", price: 60 },
@@ -68,6 +78,17 @@ export const CONFIG = {
 		{ id: "Firebird", price: 720 },
 		{ id: "Gold", price: 960 },
 		{ id: "Trident", price: 960 },
+		// the hangar: these cost coins, the big things to save up for
+		{ id: "Hornet", price: 20000, cur: "coins" },
+		{ id: "Crane", price: 30000, cur: "coins" },
+		{ id: "Balloon", price: 45000, cur: "coins" },
+		{ id: "Submarine", price: 60000, cur: "coins" },
+		{ id: "Manta", price: 80000, cur: "coins" },
+		{ id: "Satellite", price: 110000, cur: "coins" },
+		{ id: "Koi", price: 150000, cur: "coins" },
+		{ id: "Storm", price: 220000, cur: "coins" },
+		{ id: "Comet", price: 350000, cur: "coins" },
+		{ id: "Eclipse", price: 500000, cur: "coins" },
 		// these used to cost real money. now they're the big goal to save up for. keep: a reset doesn't take them away
 		{ id: "Phoenix", price: 5000, keep: true, pack: "phoenix" },
 		{ id: "Galaxy", price: 5000, keep: true, pack: "galaxy" },
@@ -149,7 +170,9 @@ const BEYOND = BOSS_START + CONFIG.beyondGap;
 const SEA_AT = BEYOND + CONFIG.turretsLen + CONFIG.cityLen + (CONFIG.boss2 ? 1500 : 100);
 CONFIG.beyondAt = BEYOND;
 CONFIG.seaAt = SEA_AT;
-const AT = { boss: BOSS_START, turrets: BEYOND, traffic: BEYOND + CONFIG.turretsLen - CONFIG.trafficLen, desert: BEYOND + CONFIG.turretsLen + CONFIG.cityLen - CONFIG.desertLen, city: BEYOND + CONFIG.turretsLen, boss2: BEYOND + CONFIG.turretsLen + CONFIG.cityLen, sea: SEA_AT, space: SEA_AT + CONFIG.seaLen + 1500 };
+const AT = { boss: BOSS_START, turrets: BEYOND, traffic: BEYOND + CONFIG.turretsLen - CONFIG.trafficLen, desert: BEYOND + CONFIG.turretsLen + CONFIG.cityLen - CONFIG.desertLen, city: BEYOND + CONFIG.turretsLen, boss2: BEYOND + CONFIG.turretsLen + CONFIG.cityLen, volcano: SEA_AT, sea: SEA_AT + CONFIG.volcanoLen, glacier: SEA_AT + CONFIG.seaLen - CONFIG.glacierLen, space: SEA_AT + CONFIG.seaLen + 1500 };
+// where each map is done
+const STAGE_END = { towers: 3000, moving: 10200, canyon: 18800, smash: 29200, turrets: BEYOND + CONFIG.turretsLen - CONFIG.trafficLen, traffic: BEYOND + CONFIG.turretsLen, city: BEYOND + CONFIG.turretsLen + CONFIG.cityLen - CONFIG.desertLen, desert: BEYOND + CONFIG.turretsLen + CONFIG.cityLen, volcano: SEA_AT + CONFIG.volcanoLen, sea: SEA_AT + CONFIG.seaLen - CONFIG.glacierLen, glacier: SEA_AT + CONFIG.seaLen };
 for (const st of CONFIG.stages) AT[st.id] = st.start;
 const startById = {};
 if (!CONFIG.boss2) CONFIG.starts = CONFIG.starts.filter((st) => st.id !== "boss2");
@@ -563,8 +586,9 @@ function cosmetic(list, ownedKey, equipKey, currency, id) {
 			}
 			if (item.gone) return [false, "that one isn't for sale right now"];
 			if (SHOP && item.pack) return [false, "that one is in the shop"];
-			if (d[currency] < item.price) return [false, "not enough " + currency];
-			d[currency] -= item.price;
+			const cur = item.cur || currency;
+			if (d[cur] < item.price) return [false, "not enough " + cur];
+			d[cur] -= item.price;
 			d[ownedKey][id] = true;
 			d[equipKey] = id;
 			return [true, id + " unlocked"];
@@ -760,7 +784,7 @@ handlers.run_end = (r) => {
 	st.loops = Math.max(st.loops, num(r.loop, Math.floor(dist / 60000)));
 	st.time += Math.min(elapsed, 36000);
 	// xp, and a reward for every level you hit
-	const xp = Math.max(5, Math.floor(dist / 25) + maps * 40 + bosses * 150 + kills * 2 + glass * 3 + (gemPads + keyPads) * 10);
+	const xp = Math.floor(Math.max(5, Math.floor(dist / 25) + maps * 40 + bosses * 150 + kills * 2 + glass * 3 + (gemPads + keyPads) * 10) * (1 + 0.1 * ((d.power && d.power.xp) || 0)));
 	award.xp = xp;
 	award.levelFrom = d.level;
 	award.xpFrom = d.xp;
@@ -813,7 +837,7 @@ const ACH_REWARDS = {
 	space: { gems: 100, keys: 2 }, fullcircle: { gems: 300, keys: 5 },
 	run5k: { gems: 10 }, run25k: { gems: 60 }, glass50: { gems: 25 }, close10: { gems: 15 }, kills50: { gems: 25 }, saved: { gems: 15 }, nodamage: { gems: 30 },
 	heart: { gems: 10 }, revive: { gems: 10 }, pickups100: { gems: 40 }, rich: { gems: 30 }, skins3: { gems: 30 }, codes5: { gems: 20 },
-	dist100k: { gems: 50 }, runs100: { gems: 50 }, level10: { gems: 50, keys: 2 }, vswin: { gems: 40 }, vs10: { gems: 50 }, hyper: { gems: 15 }, overdrive: { gems: 40 }, traffic: { gems: 25 }, desert: { gems: 30 },
+	dist100k: { gems: 50 }, runs100: { gems: 50 }, level10: { gems: 50, keys: 2 }, vswin: { gems: 40 }, vs10: { gems: 50 }, hyper: { gems: 15 }, overdrive: { gems: 40 }, traffic: { gems: 25 }, desert: { gems: 30 }, volcano: { gems: 40 }, glacier: { gems: 50 },
 };
 CONFIG.achRewards = ACH_REWARDS;
 // can the save back the achievement up? the worker only hands one out when it can
@@ -821,7 +845,7 @@ function earned(d, id) {
 	const st = d.stats || {};
 	const far = Math.max(d.farthest || 0, d.best || 0);
 	const mr = d.maxRun || {};
-	const stage = { towers: 3000, moving: 10200, canyon: 18800, smash: 29200, turrets: BEYOND + CONFIG.turretsLen - CONFIG.trafficLen, traffic: BEYOND + CONFIG.turretsLen, city: BEYOND + CONFIG.turretsLen + CONFIG.cityLen - CONFIG.desertLen, desert: BEYOND + CONFIG.turretsLen + CONFIG.cityLen, sea: SEA_AT + CONFIG.seaLen };
+	const stage = STAGE_END;
 	if (stage[id]) return far >= stage[id] - 50;
 	switch (id) {
 		case "boss": return (st.bosses || 0) >= 1;
@@ -854,7 +878,7 @@ function earnedNow(id) {
 	const dist = elapsed * 1200 + 1000;
 	const from = s.runFrom || 0, far = from + dist;
 	const cap = Math.floor(dist / 200) + 1;
-	const stage = { towers: 3000, moving: 10200, canyon: 18800, smash: 29200, turrets: BEYOND + CONFIG.turretsLen - CONFIG.trafficLen, traffic: BEYOND + CONFIG.turretsLen, city: BEYOND + CONFIG.turretsLen + CONFIG.cityLen - CONFIG.desertLen, desert: BEYOND + CONFIG.turretsLen + CONFIG.cityLen, sea: SEA_AT + CONFIG.seaLen };
+	const stage = STAGE_END;
 	if (stage[id]) return far >= stage[id] - 50;
 	switch (id) {
 		case "boss": return far >= BOSS_START;
@@ -877,7 +901,7 @@ export function checkAch() {
 	const d = s.data;
 	d.ach = d.ach || {};
 	d.achPaid = d.achPaid || {};
-	for (const id of ["towers", "moving", "canyon", "smash", "turrets", "traffic", "city", "desert", "sea", "boss", "space", "run5k", "run25k", "glass50", "close10", "kills50", "heart", "revive", "pickups100", "rich", "skins3", "codes5", "dist100k", "runs100", "level10", "vs10"]) {
+	for (const id of ["towers", "moving", "canyon", "smash", "turrets", "traffic", "city", "desert", "volcano", "sea", "glacier", "boss", "space", "run5k", "run25k", "glass50", "close10", "kills50", "heart", "revive", "pickups100", "rich", "skins3", "codes5", "dist100k", "runs100", "level10", "vs10"]) {
 		if (d.ach[id] || !earned(d, id)) continue;
 		d.ach[id] = Date.now();
 		if (ACH_REWARDS[id] && !d.achPaid[id]) {

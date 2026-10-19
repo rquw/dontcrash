@@ -3,9 +3,9 @@ import {
 	camera, Lighting, Instance, workspace, markQueryRoot, Enum, OverlapParams, TweenService, TweenInfo, Debris, UIS, playSfx, loopSound, loadSounds, setSfxVolume,
 	NumberSequence, NumberSequenceKeypoint, NumberRange, ColorSequence, ColorSequenceKeypoint, guiRootInst, setUiScale, setLowGraphics, physicsGround,
 	mergeFloor, start, perf,
-} from "./engine.js?v=1791304599";
-import * as Server from "./server.js?v=1791304599";
-import * as Online from "./online.js?v=1791304599";
+} from "./engine.js?v=1792437648";
+import * as Server from "./server.js?v=1792437648";
+import * as Online from "./online.js?v=1792437648";
 
 const V3 = (x, y, z) => new Vector3(x, y, z);
 const RGB = Color3.fromRGB;
@@ -249,7 +249,7 @@ let BOSS_START;
 	}
 	BOSS_START = acc;
 })();
-const MAP_STAGES = { towers: true, moving: true, canyon: true, smash: true, turrets: true, traffic: true, city: true, desert: true, sea: true };
+const MAP_STAGES = { towers: true, moving: true, canyon: true, smash: true, turrets: true, traffic: true, city: true, desert: true, volcano: true, sea: true, glacier: true };
 
 const PAD = {
 	fuel: [RGB(255, 45, 35), "FUEL"],
@@ -470,6 +470,9 @@ const LANG_PATTERNS = [["^FLY ([\\d,]+) STUDS$", "FLIEG $1 STUDS", "VUELA $1 STU
 // the desert is the last stretch of what used to be all city, same idea
 const TRAFFIC_LEN = CONFIG.trafficLen || 5000;
 const DESERT_LEN = CONFIG.desertLen || 4000;
+// the sea starts with volcanoes and ends in ice, the open water is in between
+const VOLCANO_LEN = CONFIG.volcanoLen || 4500;
+const GLACIER_LEN = CONFIG.glacierLen || 4500;
 
 function stageFor(d) {
 	if (Game.introEnd && d < Game.introEnd) return ["intro", 0];
@@ -491,14 +494,19 @@ function stageFor(d) {
 			Game.boss2.done = true;
 		}
 		if (m.sea == null || d < m.sea) return ["boss2", 0];
-		if (m.final == null || d < m.final) return ["sea", Math.min((d - m.sea) / Game.SEA_LEN, 1)];
+		if (m.final == null || d < m.final) {
+			const k = d - m.sea, S = Game.SEA_LEN;
+			if (k < VOLCANO_LEN) return ["volcano", k / VOLCANO_LEN];
+			if (k < S - GLACIER_LEN) return ["sea", (k - VOLCANO_LEN) / (S - VOLCANO_LEN - GLACIER_LEN)];
+			return ["glacier", Math.min((k - (S - GLACIER_LEN)) / GLACIER_LEN, 1)];
+		}
 		return ["beyond", (d - m.final) / 1000];
 	}
 	return ["boss", 0];
 }
 
 function stageName(id) {
-	const n = STAGE_BY_ID[id] ? STAGE_BY_ID[id].name : { boss: "BOSS", turrets: "TURRETS", traffic: "TRAFFIC", desert: "DESERT", city: "CITY", boss2: CONFIG.boss2 === false ? "SEA" : "BOSS", sea: "SEA", beyond: "SPACE", intro: "" }[id];
+	const n = STAGE_BY_ID[id] ? STAGE_BY_ID[id].name : { boss: "BOSS", turrets: "TURRETS", traffic: "TRAFFIC", desert: "DESERT", volcano: "VOLCANO", glacier: "GLACIER", city: "CITY", boss2: CONFIG.boss2 === false ? "SEA" : "BOSS", sea: "SEA", beyond: "SPACE", intro: "" }[id];
 	return (n === undefined ? String(id) : n).replace(/^\d+\s*/, "");
 }
 
@@ -531,6 +539,18 @@ let trackChunks, updateMovers, regenerate, canyonPath, canyonHalfGap, updatePads
 		if (stage === "boss2" && CONFIG.boss2 === false) return RGB(s * 0.95, s * 0.85, s * 0.6);
 		if (stage === "boss2") return RGB(s * 0.6, s * 0.45, s * 0.35);
 		if (stage === "sea") return RGB(20 + h * 8, 70 + h * 14, 140 + h * 12);
+		if (stage === "volcano") {
+			// crust with lava showing through the cracks
+			const n = Math.sin(x / 37 + d / 53) + Math.cos(d / 41 - x / 71) + Math.sin((x + d) / 23) * 0.4;
+			if (n > 1.15) return RGB(255, 110 + h * 20, 25);
+			if (n > 0.9) return RGB(160, 50, 20);
+			return RGB(40 + h * 6, 30 + h * 4, 30 + h * 3);
+		}
+		if (stage === "glacier") {
+			const n = Math.sin(x / 45 + d / 61) + Math.cos(d / 37 - x / 83);
+			if (n > 1.35) return RGB(30, 80, 130);
+			return RGB(196 + h * 6, 222 + h * 4, 242 + h * 2);
+		}
 		return RGB(s * 0.6, s, s * 0.5);
 	}
 
@@ -949,6 +969,120 @@ let trackChunks, updateMovers, regenerate, canyonPath, canyonHalfGap, updatePads
 		}
 	}
 
+	// ---------------- volcano: islands of black rock in a lava sea. the craters throw lava bombs, geysers shoot up out of the ground
+	const LAVA = RGB(255, 105, 20);
+	function volcano(folder, movers, rng, x0, z0, t, far) {
+		if (rng.NextNumber() < 0.3 + t * 0.2) {
+			const x = x0 + rng.NextNumber(30, CHUNK - 30), z = z0 - rng.NextNumber(30, CHUNK - 30);
+			const R = rng.NextNumber(50, 80), H = rng.NextNumber(100, 145), L = 8, lh = H / L;
+			// which side the lava runs down, and where along it
+			const face = rng.NextInteger(0, 3), along = rng.NextNumber(-0.3, 0.3);
+			for (let i = 0; i < L; i++) {
+				const w = R * 2 * (1 - i / L) + 12;
+				const b = block(V3(w, lh, w), V3(x, lh * (i + 0.5), z), dark(RGB(112, 82, 70), rng.NextNumber(0, 0.4)), folder);
+				b.SetAttribute("Break", true);
+				if (!far) {
+					const fx = [1, -1, 0, 0][face], fz = [0, 0, 1, -1][face];
+					const side = along * w;
+					deco(V3(fz ? 5 : 1, lh + 0.2, fx ? 5 : 1), V3(x + fx * (w / 2 + 0.3) + (fz ? side : 0), lh * (i + 0.5), z + fz * (w / 2 + 0.3) + (fx ? side : 0)), LAVA, folder, true);
+				}
+			}
+			deco(V3(R * 0.5, 2, R * 0.5), V3(x, H + 1, z), LAVA, folder, true);
+			if (!far) {
+				// smoke going up out of the crater
+				for (let i = 0; i < 4; i++) {
+					const s = 16 + i * 9;
+					const puff = deco(V3(s, 14, s), V3(x, H + 14 + i * 16, z), RGB(70, 60, 58).Lerp(RGB(150, 140, 135), i / 4), folder);
+					puff.Transparency = 0.35 + i * 0.12;
+					movers.push({ part: puff, base: puff.Position, a: V3(4 + i * 3, 0, 0), f: 0.4, ph: i, spin: (i % 2 ? -1 : 1) * 0.6 });
+				}
+				// lava bombs flying over the crater and down the sides. glowing, so you see them coming
+				const nb = 2 + Math.floor(t * 2.5);
+				for (let i = 0; i < nb; i++) {
+					const s = rng.NextNumber(7, 10);
+					const bomb = block(V3(s, s, s), V3(x, H, z), RGB(255, 120 + rng.NextInteger(0, 60), 30), folder);
+					bomb.Shape = "Ball";
+					bomb.Material = "Neon";
+					const a = rng.NextNumber(0, 6.28), f = rng.NextNumber(0.45, 0.7);
+					movers.push({ part: bomb, base: V3(x, H - 10, z), a: V3(Math.cos(a), 0, Math.sin(a)).mul(R * 1.3), f, ph: rng.NextNumber(0, 6.28), a2: Vector3.yAxis.mul(50), f2: f * 2, spin: 2 });
+				}
+			}
+		}
+		// basalt columns sticking out of the lava
+		const n = amount(rng, 0.5 + t * 0.9);
+		for (let i = 0; i < n; i++) {
+			const w = rng.NextInteger(14, 24), h = rng.NextInteger(70, 120);
+			const x = x0 + rng.NextNumber(w, CHUNK - w), z = z0 - rng.NextNumber(w, CHUNK - w);
+			const c = block(V3(w, h, w), V3(x, h / 2, z), dark(RGB(92, 78, 76), rng.NextNumber(0, 0.3)), folder);
+			c.SetAttribute("Break", true);
+			const cap = block(V3(w * 0.7, 8, w * 0.7), V3(x, h + 4, z), RGB(40, 36, 38), c);
+			cap.CanQuery = false;
+			if (!far) deco(V3(w + 0.4, 1.2, w + 0.4), V3(x, h * rng.NextNumber(0.3, 0.8), z), LAVA, folder, true);
+		}
+		// geysers: the glowing ring warns you, then a pillar of lava comes up through where you fly
+		if (!far && rng.NextNumber() < 0.3 + t * 0.25) {
+			const x = x0 + rng.NextNumber(20, CHUNK - 20), z = z0 - rng.NextNumber(20, CHUNK - 20);
+			deco(V3(20, 1, 20), V3(x, 2.6, z), RGB(255, 170, 60), folder, true);
+			const g = block(V3(11, 130, 11), V3(x, -50, z), LAVA, folder);
+			g.Material = "Neon";
+			movers.push({ part: g, base: V3(x, -45, z), a: Vector3.yAxis.mul(75), f: rng.NextNumber(0.55, 0.85), ph: rng.NextNumber(0, 6.28) });
+		}
+	}
+
+	// ---------------- glacier: icebergs, gates of ice to fly through, floes sliding across, northern lights up top
+	function glacier(folder, movers, rng, x0, z0, t, far) {
+		const ice = RGB(206, 232, 250), blue = RGB(130, 190, 236), deep = RGB(70, 140, 205);
+		const n = amount(rng, 0.45 + t * 0.7);
+		for (let i = 0; i < n; i++) {
+			const W = rng.NextNumber(36, 64), H = rng.NextNumber(85, 150);
+			const x = x0 + rng.NextNumber(W / 2, CHUNK - W / 2), z = z0 - rng.NextNumber(W / 2, CHUNK - W / 2);
+			const b = block(V3(W, H, W * 0.8), V3(x, H / 2, z), ice, folder);
+			b.CFrame = CFrame.fromPos(b.Position).mul(Ang(0, rng.NextNumber(0, 3.14), 0));
+			b.SetAttribute("Break", true);
+			const s = block(V3(W * 0.55, H * 0.6, W * 0.5), V3(x + rng.NextNumber(-W, W) * 0.45, H * 0.3, z + rng.NextNumber(-W, W) * 0.3), blue, folder);
+			s.SetAttribute("Break", true);
+			const top = block(V3(W * 0.6, 10, W * 0.5), V3(x, H + 5, z), RGB(250, 252, 255), b);
+			top.CanQuery = false;
+			if (!far) deco(V3(W + 0.6, 3, W * 0.8 + 0.6), V3(x, H * 0.35, z), deep, folder);
+		}
+		// spires: thin and tall, in steps
+		if (rng.NextNumber() < 0.4) {
+			const x = x0 + rng.NextNumber(20, CHUNK - 20), z = z0 - rng.NextNumber(20, CHUNK - 20);
+			let y = 0;
+			for (let i = 0; i < 4; i++) {
+				const w = 22 - i * 4.5, h = 40 - i * 4;
+				block(V3(w, h, w), V3(x, y + h / 2, z), blue.Lerp(ice, i / 4), folder).SetAttribute("Break", true);
+				y += h;
+			}
+		}
+		// a gate: two pillars and a beam, icicles hanging off it. the gap is plenty wide
+		if (!far && rng.NextNumber() < 0.28 + t * 0.15) {
+			const gap = rng.NextNumber(55, 85), cx = x0 + rng.NextNumber(40, CHUNK - 40), z = z0 - rng.NextNumber(30, CHUNK - 30);
+			for (const sd of [-1, 1]) block(V3(16, 112, 16), V3(cx + sd * (gap / 2 + 8), 56, z), blue, folder).SetAttribute("Break", true);
+			block(V3(gap + 32, 14, 16), V3(cx, 105, z), ice, folder).SetAttribute("Break", true);
+			for (let i = 0; i < 9; i++) {
+				const l = rng.NextNumber(6, 15);
+				deco(V3(1.6, l, 1.6), V3(cx - gap / 2 + (i + 0.5) * (gap / 9), 98 - l / 2, z + rng.NextNumber(-5, 5)), RGB(200, 235, 255), folder, true).Transparency = 0.3;
+			}
+		}
+		// floes sliding across, tall enough that you have to go round them
+		if (!far && rng.NextNumber() < 0.3 + t * 0.2) {
+			const x = x0 + rng.NextNumber(0, CHUNK), z = z0 - rng.NextNumber(20, CHUNK - 20);
+			const floe = block(V3(rng.NextNumber(26, 40), 110, 16), V3(x, 50, z), ice, folder);
+			floe.SetAttribute("Break", true);
+			movers.push({ part: floe, base: floe.Position, a: Vector3.xAxis.mul(rng.NextNumber(60, 110)), f: rng.NextNumber(0.3, 0.5), ph: rng.NextNumber(0, 6.28) });
+		}
+		// northern lights, way up
+		if (rng.NextNumber() < 0.1) {
+			const x = x0 + rng.NextNumber(0, CHUNK), z = z0 - rng.NextNumber(0, CHUNK);
+			for (let i = 0; i < 3; i++) {
+				const r = deco(V3(rng.NextNumber(200, 320), 22 - i * 5, 1.5), V3(x + i * 30, 380 + i * 16, z - i * 40), i % 2 ? RGB(150, 90, 255) : RGB(70, 255, 170), folder, true);
+				r.Transparency = 0.78;
+				movers.push({ part: r, base: r.Position, a: Vector3.yAxis.mul(10), f: 0.3 + i * 0.1, ph: i, spin: 0.05 });
+			}
+		}
+	}
+
 	function movingWall(folder, movers, rng, x0, z0, t) {
 		const p = block(V3(rng.NextInteger(40, 110), 45, 8), V3(x0 + rng.NextNumber(0, CHUNK), 10, z0 - rng.NextNumber(15, CHUNK - 15)), RGB(230, 120, 50), folder);
 		p.SetAttribute("Break", true);
@@ -1284,6 +1418,8 @@ let trackChunks, updateMovers, regenerate, canyonPath, canyonHalfGap, updatePads
 					if (stage === "chill") h = Math.max(1, 3 + 2.5 * Math.sin(tx / 35 + d / 50) + 2.5 * Math.cos(d / 80 - tx / 60));
 					else if (stage === "boss" || stage === "boss2") h = rng.NextInteger(1, 2);
 					else if (stage === "sea") h = 1.5 + Math.sin(tx / 40 + d / 55) * 0.6 + Math.cos(d / 70 - tx / 90) * 0.5;
+					else if (stage === "volcano") h = 1.2 + Math.abs(Math.sin(tx / 29 + d / 47)) * 1.6;
+					else if (stage === "glacier") h = 2 + Math.sin(tx / 33 + d / 41) * 1.2 + rng.NextNumber(0, 0.6);
 					else h = rng.NextInteger(1, 10);
 					// floor tiles are merged into one mesh per chunk, they still exist for queries
 					const f = Instance.new("Part");
@@ -1351,6 +1487,10 @@ let trackChunks, updateMovers, regenerate, canyonPath, canyonHalfGap, updatePads
 			} else if (stage === "city") {
 				const far = Math.abs(x0 + CHUNK / 2 - pos.X) > 900;
 				cityBlocks(folder, rng, x0, z0, far ? Math.min(1, amount(rng, 0.7)) : amount(rng, (0.6 + t * 0.8) * mult), far);
+			} else if (stage === "volcano") {
+				volcano(folder, movers, rng, x0, z0, t, Math.abs(x0 + CHUNK / 2 - pos.X) > 420);
+			} else if (stage === "glacier") {
+				glacier(folder, movers, rng, x0, z0, t, Math.abs(x0 + CHUNK / 2 - pos.X) > 420);
 			} else if (stage === "sea") {
 				ships(folder, rng, x0, z0, amount(rng, 0.18 + t * 0.2));
 			} else if (stage === "beyond") {
@@ -2149,9 +2289,263 @@ let buildPlane;
 		}
 	};
 
+	// ---------------- the hangar: ten planes you save coins up for
+	const HALF = Math.PI / 2;
+	SKIN_BUILD.Hornet = (add) => {
+		const yel = RGB(255, 196, 20), blk = RGB(26, 22, 20), wing = RGB(205, 232, 255);
+		add("Part", V3(1.8, 1.7, 1.9), blk, CFn(0, 0.1, -3.7), { Shape: "Ball" });
+		for (const s of [-1, 1]) {
+			add("Part", V3(0.8, 1.05, 1), RGB(150, 26, 18), CFn(s * 0.72, 0.25, -4), { Shape: "Ball" });
+			add("Part", V3(0.14, 0.14, 2.2), blk, CFn(s * 0.45, 1.25, -4.7).mul(Ang(0.7, s * 0.35, 0)));
+			add("Part", V3(0.22, 0.22, 0.22), yel, CFn(s * 0.82, 1.95, -5.4), NEON);
+			// two pairs of see-through wings
+			add("Part", V3(5.6, 0.08, 2.1), wing, CFn(s * 3.2, 1.35, -1.9).mul(Ang(0, s * 0.22, 0)), tagged(s < 0 ? "wingL" : "wingR", { Transparency: 0.45 }));
+			add("Part", V3(4, 0.08, 1.6), wing, CFn(s * 2.6, 1.3, -0.4).mul(Ang(0, s * 0.5, 0)), tagged(s < 0 ? "wingL" : "wingR", { Transparency: 0.5 }));
+			add("Part", V3(5.6, 0.1, 0.12), RGB(140, 170, 200), CFn(s * 3.2, 1.36, -2.95).mul(Ang(0, s * 0.22, 0)), tagged(s < 0 ? "wingL" : "wingR"));
+		}
+		add("Part", V3(2.3, 2.1, 2.7), yel, CFn(0, 0.2, -1.7), { Shape: "Ball" });
+		add("Part", V3(1.2, 0.5, 1.6), blk, CFn(0, 1.1, -1.7));
+		// the sting end, black and yellow rings getting smaller
+		for (let i = 0; i < 5; i++) add("Part", V3(2.5 - i * 0.32, 2.3 - i * 0.3, 1.15), i % 2 ? blk : yel, CFn(0, 0.05 - i * 0.06, 0.4 + i * 1.05), tagged("abd", { Shape: "Ball" }));
+		add("Part", V3(0.3, 0.3, 1.5), blk, CFn(0, -0.2, 5.8), tagged("abd"));
+	};
+	SKIN_BUILD.Crane = (add) => {
+		const paper = RGB(232, 58, 60), fold = RGB(190, 38, 44), white = RGB(250, 247, 238);
+		add("Part", V3(2.2, 2.2, 2.2), paper, CFn(0, 0, 0).mul(Ang(0.62, 0.785, 0)));
+		add("WedgePart", V3(1.8, 1.4, 4.2), fold, CFn(0, -0.9, 0.4).mul(Ang(Math.PI, 0, 0)));
+		// neck and tail point up and away like the real fold
+		add("Part", V3(0.45, 0.45, 5.2), paper, CFn(0, 2, -3.1).mul(Ang(-0.72, 0, 0)), tagged("neck"));
+		add("Part", V3(0.42, 0.42, 1.7), fold, CFn(0, 3.75, -5.35).mul(Ang(0.65, 0, 0)), tagged("neck"));
+		add("Part", V3(0.45, 0.45, 5.2), paper, CFn(0, 2, 3.1).mul(Ang(0.72, 0, 0)));
+		for (const s of [-1, 1]) {
+			const w = s < 0 ? "wingL" : "wingR";
+			add("WedgePart", V3(0.14, 7.4, 4.6), white, CFn(s * 4.1, 0.35, 0.5).mul(Ang(0, 0, -s * HALF)), tagged(w));
+			add("WedgePart", V3(0.16, 5.4, 3.4), paper, CFn(s * 3.2, 0.45, 0.6).mul(Ang(0, 0, -s * HALF)), tagged(w));
+			add("Part", V3(7.4, 0.18, 0.12), fold, CFn(s * 4.1, 0.46, -1.75), tagged(w));
+		}
+	};
+	SKIN_BUILD.Balloon = (add) => {
+		const red = RGB(228, 56, 48), yel = RGB(255, 206, 60), white = RGB(248, 244, 236), wicker = RGB(150, 100, 52);
+		add("Part", V3(9, 10, 9), red, CFn(0, 4.2, 0), tagged("bal", { Shape: "Ball" }));
+		// stripes are slices of a slightly bigger ball
+		for (let i = 0; i < 3; i++) add("Part", V3(1.3, 10.1, 9.1), i === 1 ? white : yel, CFn(0, 4.2, 0).mul(Ang(0, (i * Math.PI) / 3, 0)), tagged("bal", { Shape: "Ball" }));
+		add("Part", V3(1.4, 3.4, 3.4), red, CFn(0, -0.7, 0).mul(Ang(0, 0, HALF)), tagged("bal", { Shape: "Cylinder" }));
+		for (const sx of [-1, 1]) for (const sz of [-1, 1]) add("Part", V3(0.12, 2.6, 0.12), RGB(90, 70, 50), CFn(sx * 1.1, -2.6, sz * 1.1), tagged("bal"));
+		add("Part", V3(2.6, 1.8, 2.6), wicker, CFn(0, -4.6, 0), tagged("bal"));
+		add("Part", V3(2.9, 0.35, 2.9), RGB(110, 70, 35), CFn(0, -3.7, 0), tagged("bal"));
+		add("Part", V3(0.7, 0.7, 0.7), RGB(255, 170, 50), CFn(0, -2.5, 0), tagged("bal", { Material: "Neon", _flame: true }));
+		// a little flag on the basket
+		add("Part", V3(0.1, 1.6, 0.1), RGB(90, 70, 50), CFn(1.2, -2.9, 1.2), tagged("bal"));
+		add("Part", V3(0.06, 0.6, 1), RGB(80, 170, 255), CFn(1.2, -2.4, 1.7), tagged("flag"));
+	};
+	SKIN_BUILD.Submarine = (add) => {
+		const yel = RGB(255, 204, 30), dk = RGB(60, 62, 72), glass = RGB(120, 230, 255);
+		add("Part", V3(10, 3.2, 3.2), yel, CFn().mul(Ang(0, HALF, 0)), { Shape: "Cylinder" });
+		add("Part", V3(3.2, 3.2, 3.6), yel, CFn(0, 0, -5), { Shape: "Ball" });
+		add("Part", V3(2.4, 2.4, 3.4), yel, CFn(0, 0, 5), { Shape: "Ball" });
+		add("Part", V3(1.6, 1.9, 3), yel, CFn(0, 2.2, -0.8));
+		add("Part", V3(1.8, 0.3, 3.2), dk, CFn(0, 3.2, -0.8));
+		add("Part", V3(0.25, 1.6, 0.25), dk, CFn(0, 4, -1.4), tagged("scope"));
+		add("Part", V3(0.3, 0.3, 0.9), dk, CFn(0, 4.75, -1.7), tagged("scope"));
+		add("Part", V3(0.2, 0.2, 0.1), glass, CFn(0, 4.75, -2.17), tagged("scope", NEON));
+		for (const z of [-3, -1.2, 0.6, 2.4]) for (const s of [-1, 1]) add("Part", V3(0.7, 0.7, 0.7), glass, CFn(s * 1.5, 0.35, z), { Material: "Neon", Shape: "Ball" });
+		add("Part", V3(4.2, 0.2, 1.2), dk, CFn(0, 0, 4.6));
+		add("Part", V3(0.2, 2.8, 1.2), dk, CFn(0, 0, 4.6));
+		add("Part", V3(5.2, 0.2, 1), dk, CFn(0, 0.5, -2.6));
+		add("Part", V3(0.8, 0.8, 0.8), dk, CFn(0, 0, 6.6), tagged("prop", { Shape: "Ball" }));
+		for (let i = 0; i < 3; i++) add("Part", V3(0.3, 2.4, 0.45), RGB(200, 150, 40), CFn(0, 0, 6.7).mul(Ang(0, 0, (i * 2 * Math.PI) / 3)).mul(CFn(0, 1.1, 0)), tagged("prop", { Material: "Metal" }));
+	};
+	SKIN_BUILD.Manta = (add) => {
+		const top = RGB(28, 38, 60), belly = RGB(220, 230, 240), spot = RGB(80, 240, 255);
+		add("Part", V3(3, 1, 5.2), top, CFn());
+		add("Part", V3(2.6, 0.3, 4.8), belly, CFn(0, -0.55, 0));
+		for (const s of [-1, 1]) {
+			add("Part", V3(0.6, 0.5, 1.7), top, CFn(s * 1.15, -0.05, -3.2).mul(Ang(0, -s * 0.15, 0)));
+			// three pieces per wing, so it can ripple like a real ray
+			for (let i = 0; i < 3; i++) {
+				const tag = (s < 0 ? "L" : "R") + i;
+				const cf = CFn(s * (2.7 + i * 2.3), 0, 0.3 + i * 0.6).mul(Ang(0, s * 0.28, 0));
+				add("Part", V3(2.4, 0.5 - i * 0.1, 4.4 - i * 1.15), top, cf, tagged(tag));
+				add("Part", V3(2.3, 0.18, 4.2 - i * 1.15), belly, cf.mul(CFn(0, -0.3, 0)), tagged(tag));
+				add("Part", V3(0.55, 0.12, 0.55), spot, cf.mul(CFn(0, 0.3 - i * 0.05, -0.3)), tagged(tag, NEON));
+			}
+		}
+		add("Part", V3(0.25, 0.25, 6.4), top, CFn(0, 0, 5.6), tagged("tail"));
+		add("Part", V3(0.35, 0.35, 0.35), spot, CFn(0, 0, 8.8), tagged("tail", { Material: "Neon", Shape: "Ball" }));
+		for (const s of [-1, 1]) add("Part", V3(0.35, 0.35, 0.35), spot, CFn(s * 0.7, 0.45, -2.2), { Material: "Neon", Shape: "Ball" });
+	};
+	SKIN_BUILD.Satellite = (add) => {
+		const foil = RGB(222, 168, 48), cell = RGB(28, 58, 140), line = RGB(170, 200, 255), white = RGB(235, 235, 240);
+		const M = { Material: "Metal" };
+		add("Part", V3(2.6, 2.6, 3.6), foil, CFn(), M);
+		add("Part", V3(2.7, 0.35, 3.7), RGB(245, 205, 95), CFn(0, 0.8, 0), M);
+		add("Part", V3(2.7, 0.35, 3.7), RGB(190, 140, 40), CFn(0, -0.8, 0), M);
+		for (const s of [-1, 1]) {
+			add("Part", V3(2.2, 0.25, 0.25), white, CFn(s * 2.4, 0, 0), tagged("pan", M));
+			add("Part", V3(6.2, 0.15, 3), cell, CFn(s * 6.5, 0, 0), tagged("pan"));
+			for (let k = 0; k < 5; k++) add("Part", V3(0.08, 0.18, 3), line, CFn(s * (3.6 + k * 1.45), 0, 0), tagged("pan"));
+			add("Part", V3(6.2, 0.18, 0.08), line, CFn(s * 6.5, 0, 0), tagged("pan"));
+		}
+		add("Part", V3(0.3, 3.6, 3.6), white, CFn(0, 0, -2.4).mul(Ang(0, HALF, 0)), tagged("dish", { Shape: "Cylinder" }));
+		add("Part", V3(0.15, 0.15, 1.8), white, CFn(0, 0, -3.4), tagged("dish"));
+		add("Part", V3(0.4, 0.4, 0.4), RGB(255, 60, 60), CFn(0, 0, -4.3), tagged("blink", { Material: "Neon", Shape: "Ball" }));
+		add("Part", V3(0.1, 2.6, 0.1), white, CFn(0.8, 2.4, 1));
+		add("Part", V3(0.3, 0.3, 0.3), RGB(80, 255, 140), CFn(0.8, 3.75, 1), { Material: "Neon", Shape: "Ball" });
+		add("Part", V3(1.1, 1.1, 0.6), RGB(60, 62, 72), CFn(0, 0, 2.1), M);
+	};
+	SKIN_BUILD.Koi = (add) => {
+		const white = RGB(250, 248, 244), orange = RGB(255, 112, 30), red = RGB(222, 40, 30), gold = RGB(255, 205, 90);
+		const body = [[2.1, 1.9, 2.3, -3.6], [2.6, 2.3, 2.5, -1.7], [2.5, 2.2, 2.4, 0.2], [1.9, 1.7, 2.1, 2], [1.2, 1.1, 1.9, 3.6]];
+		body.forEach(([w, h, d, z], i) => {
+			add("Part", V3(w, h, d), white, CFn(0, 0, z), tagged("k" + i, { Shape: "Ball" }));
+			// the patches that make it a koi
+			if (i !== 3) add("Part", V3(w * 0.82, h * 0.55, d * 0.9), i % 2 ? red : orange, CFn(i === 2 ? 0.3 : -0.2, h * 0.24, z), tagged("k" + i, { Shape: "Ball" }));
+		});
+		for (const s of [-1, 1]) {
+			add("Part", V3(0.45, 0.45, 0.45), RGB(15, 15, 15), CFn(s * 0.85, 0.35, -4.2), tagged("k0", { Shape: "Ball" }));
+			add("Part", V3(0.08, 0.08, 1.6), gold, CFn(s * 0.6, -0.4, -5.1).mul(Ang(0.3, s * 0.6, 0)), tagged("k0"));
+			add("Part", V3(2.4, 0.1, 1.4), white, CFn(s * 1.8, -0.5, -1.7).mul(Ang(0, s * 0.45, s * 0.3)), tagged("k1", { Transparency: 0.3 }));
+		}
+		add("Part", V3(0.12, 1.1, 2.6), orange, CFn(0, 1.5, 0), tagged("k2", { Transparency: 0.15 }));
+		for (const s of [-1, 1]) add("Part", V3(0.12, 2.6, 2.4), orange, CFn(0, s * 0.8, 5.2).mul(Ang(s * -0.55, 0, 0)), tagged("k5", { Transparency: 0.15 }));
+	};
+	SKIN_BUILD.Storm = (add) => {
+		const puffs = [[0, 0, 0, 5], [-2.6, 0.6, 1, 4], [2.6, 0.4, 0.8, 4.2], [-4.8, -0.2, 1.6, 3], [4.8, -0.1, 1.4, 3.2], [0, 1.8, -0.6, 3.6], [-1.5, -0.6, -2.7, 3], [1.6, -0.5, -2.5, 3], [0, -0.3, 3.1, 3.4], [-1.3, 1.5, 1.7, 3], [1.5, 1.6, 1.9, 2.8], [-3.4, 1, -1, 2.6], [3.4, 1.1, -0.8, 2.6]];
+		puffs.forEach(([x, y, z, r], i) => {
+			const g = 70 + ((i * 37) % 4) * 18;
+			add("Part", V3(r, r * 0.85, r), RGB(g, g + 4, g + 18), CFn(x, y, z), tagged("cloud", { Shape: "Ball" }));
+		});
+		add("Part", V3(3.4, 2.4, 3.4), RGB(150, 190, 255), CFn(0, -0.2, 0), tagged("core", { Material: "Neon", Shape: "Ball", Transparency: 0.55 }));
+		// two bolts hanging under it, they flash on their own
+		[[-2.2, "b1"], [2, "b2"]].forEach(([x, tag], j) => {
+			let p = V3(x, -2.2, 0.5 - j);
+			for (let i = 0; i < 4; i++) {
+				const dx = i % 2 ? 0.7 : -0.7;
+				const to = p.add(V3(dx, -1.4, 0));
+				add("Part", V3(0.25, 1.7, 0.25), RGB(205, 232, 255), CFrame.lookAt(p.add(to).div(2), to).mul(Ang(HALF, 0, 0)), tagged(tag, NEON));
+				p = to;
+			}
+		});
+	};
+	SKIN_BUILD.Comet = (add) => {
+		const ice = RGB(200, 245, 255), cyan = RGB(90, 220, 255), rock = RGB(70, 78, 96);
+		add("Part", V3(3.4, 3.4, 3.4), ice, CFn(), tagged("core", { Material: "Neon", Shape: "Ball" }));
+		add("Part", V3(4, 4, 4), RGB(140, 200, 240), CFn(), { Shape: "Ball", Transparency: 0.55 });
+		for (let i = 0; i < 7; i++) {
+			const a = (i / 7) * Math.PI * 2, r = 3.3 + (i % 3) * 0.4, s = 0.6 + ((i * 13) % 5) * 0.15;
+			add("Part", V3(s, s * 0.8, s), i % 2 ? rock : RGB(100, 110, 130), CFn(Math.cos(a) * r, Math.sin(a) * r, 0.3).mul(Ang(a, a * 2, 0)), tagged("rocks"));
+		}
+		for (const s of [-1, 1]) {
+			add("Part", V3(5.2, 0.3, 0.7), cyan, CFn(s * 3.2, 0, 1).mul(Ang(0, -s * 0.5, 0)), NEON);
+			add("Part", V3(3, 0.25, 0.5), RGB(220, 250, 255), CFn(s * 2.4, -0.6, 1.6).mul(Ang(0, -s * 0.8, s * 0.3)), NEON);
+		}
+		add("Part", V3(2.6, 2.6, 8), cyan, CFn(0, 0, 5.5), tagged("tail", { Material: "Neon", Shape: "Ball", Transparency: 0.6 }));
+		add("Part", V3(1.6, 1.6, 12), RGB(180, 240, 255), CFn(0, 0, 9), tagged("tail", { Material: "Neon", Shape: "Ball", Transparency: 0.75 }));
+	};
+	SKIN_BUILD.Eclipse = (add) => {
+		const black = RGB(6, 6, 10), gold = RGB(255, 196, 70), purple = RGB(160, 70, 255);
+		add("Part", V3(3.6, 3.6, 3.6), black, CFn(), { Shape: "Ball", Material: "Metal" });
+		add("Part", V3(4.3, 4.3, 4.3), RGB(255, 160, 40), CFn(), tagged("glow", { Material: "Neon", Shape: "Ball", Transparency: 0.55 }));
+		// the corona: shards all the way round, facing you from behind
+		for (let i = 0; i < 16; i++) {
+			const a = (i / 16) * Math.PI * 2, l = i % 2 ? 1.2 : 2;
+			add("Part", V3(0.32, l, 0.3), gold, CFn().mul(Ang(0, 0, a)).mul(CFn(0, 2.6 + l / 2, 0)), tagged("cor", NEON));
+		}
+		for (let i = 0; i < 24; i++) {
+			const a = (i / 24) * Math.PI * 2;
+			add("Part", V3(0.25, 0.9, 0.2), purple, CFn().mul(Ang(0, 0, a)).mul(CFn(0, 5.6, 0)), tagged("ring", NEON));
+		}
+		for (const s of [-1, 1]) {
+			add("WedgePart", V3(0.2, 6, 4), RGB(16, 12, 26), CFn(s * 3.6, 0, 1.2).mul(Ang(0, 0, -s * HALF)), { Material: "Metal" });
+			add("Part", V3(7.2, 0.22, 0.22), gold, CFn(s * 3.6, 0.12, 1.2).mul(Ang(0, -s * 0.588, 0)), NEON);
+		}
+	};
+
 	// ---------------- moving parts. every frame the part's spot on the plane gets a new offset.
 	// m.s is how hard you're steering right now, -1 left to 1 right, so things can lean into the turn
 	const SKIN_ANIM = {
+		Hornet: (t, m) => {
+			for (const s of [-1, 1]) {
+				const root = CFn(s * 0.6, 1.3, -1.6);
+				m.all(s < 0 ? "wingL" : "wingR", root.mul(Ang(0, 0, -s * Math.sin(t * 46 + (s < 0 ? 0 : 0.4)) * 0.55)).mul(root.Inverse()));
+			}
+			const p = CFn(0, 0.1, -0.4);
+			m.all("abd", p.mul(Ang(Math.sin(t * 3) * 0.08 - 0.05, -m.s * 0.3, 0)).mul(p.Inverse()));
+		},
+		Crane: (t, m) => {
+			const flap = Math.sin(t * 3.2) * 0.42 * (1 - Math.abs(m.s) * 0.5);
+			for (const s of [-1, 1]) {
+				const root = CFn(s * 0.4, 0.4, 0);
+				m.all(s < 0 ? "wingL" : "wingR", root.mul(Ang(0, 0, -s * flap - m.s * 0.15)).mul(root.Inverse()));
+			}
+			const n = CFn(0, 0.8, -1.2);
+			m.all("neck", n.mul(Ang(Math.sin(t * 3.2 + 1) * 0.06, -m.s * 0.3, 0)).mul(n.Inverse()));
+		},
+		Balloon: (t, m) => {
+			const p = CFn(0, -4.5, 0);
+			const sway = p.mul(Ang(Math.sin(t * 1.1) * 0.06, 0, -m.s * 0.22 + Math.sin(t * 0.8) * 0.05)).mul(p.Inverse());
+			m.all("bal", sway);
+			const f = CFn(1.2, -2.4, 1.2);
+			m.all("flag", sway.mul(f).mul(Ang(0, Math.sin(t * 7) * 0.4 + m.s * 0.5, 0)).mul(f.Inverse()));
+			m.glow(1.2 + Math.sin(t * 11) * 0.3 + Math.sin(t * 29) * 0.2);
+		},
+		Submarine: (t, m) => {
+			const hub = CFn(0, 0, 6.7);
+			m.all("prop", hub.mul(Ang(0, 0, t * 14 + m.spin)).mul(hub.Inverse()));
+			const sc = CFn(0, 4, -1.4);
+			m.all("scope", sc.mul(Ang(0, Math.sin(t * 0.7) * 1.2 - m.s * 0.5, 0)).mul(sc.Inverse()));
+		},
+		Manta: (t, m) => {
+			for (const s of [-1, 1]) {
+				let cf = CFn();
+				for (let i = 0; i < 3; i++) {
+					const hinge = CFn(s * (1.5 + i * 2.3), 0, 0.2 + i * 0.6);
+					const a = Math.sin(t * 3.4 - i * 0.8) * (0.16 + i * 0.06) + s * m.s * 0.1;
+					cf = cf.mul(hinge).mul(Ang(0, 0, -s * a)).mul(hinge.Inverse());
+					m.all((s < 0 ? "L" : "R") + i, cf);
+				}
+			}
+			const tp = CFn(0, 0, 2.4);
+			m.all("tail", tp.mul(Ang(Math.sin(t * 2.6) * 0.1, Math.sin(t * 2) * 0.18 - m.s * 0.35, 0)).mul(tp.Inverse()));
+			m.glow(1.3 + Math.sin(t * 2) * 0.4);
+		},
+		Satellite: (t, m) => {
+			m.all("pan", Ang(t * 0.6, 0, 0));
+			const d = CFn(0, 0, -2.4);
+			m.all("dish", d.mul(Ang(Math.sin(t * 0.9) * 0.35, Math.cos(t * 0.7) * 0.35 - m.s * 0.3, 0)).mul(d.Inverse()));
+			m.alpha("blink", Math.floor(t * 1.5) % 2 ? 0 : 0.9);
+		},
+		Koi: (t, m) => {
+			for (let i = 0; i <= 5; i++) {
+				const z = [-3.6, -1.7, 0.2, 2, 3.6, 5.2][i];
+				const ph = t * 6 - i * 0.9;
+				const amp = 0.04 + i * 0.07;
+				const p = CFn(0, 0, z);
+				m.all("k" + i, CFn(Math.sin(ph) * amp * 2 - m.s * i * 0.12, 0, 0).mul(p).mul(Ang(0, Math.cos(ph) * amp - m.s * i * 0.06, 0)).mul(p.Inverse()));
+			}
+		},
+		Storm: (t, m) => {
+			m.all("cloud", Ang(Math.sin(t * 0.9) * 0.04, Math.sin(t * 0.7) * 0.08, -m.s * 0.15));
+			m.all("core", Ang(0, 0, -m.s * 0.15));
+			const f1 = Math.sin(t * 13) + Math.sin(t * 7.3) > 1.25, f2 = Math.sin(t * 11 + 2) + Math.sin(t * 5.1) > 1.3;
+			m.alpha("b1", f1 ? 0 : 1);
+			m.alpha("b2", f2 ? 0 : 1);
+			m.glow(f1 || f2 ? 4 : 0.5);
+		},
+		Comet: (t, m) => {
+			m.all("core", Ang(t * 0.9, t * 0.6, 0));
+			m.all("rocks", Ang(0, 0, t * 1.6));
+			const tp = CFn(0, 0, 1.6);
+			m.all("tail", tp.mul(Ang(Math.sin(t * 2.4) * 0.03, -m.s * 0.35 + Math.sin(t * 3) * 0.04, 0)).mul(tp.Inverse()));
+			m.glow(1.6 + Math.sin(t * 5) * 0.4);
+		},
+		Eclipse: (t, m) => {
+			const tip = Ang(0, -m.s * 0.25, 0);
+			m.all("cor", tip.mul(Ang(0, 0, t * 0.7)));
+			m.all("ring", tip.mul(Ang(0.25 + m.s * 0.2, 0, 0)).mul(Ang(0, 0, -t * 1.3)));
+			m.alpha("glow", 0.5 + Math.sin(t * 3) * 0.15);
+			m.glow(1.8 + Math.sin(t * 3) * 0.5);
+		},
 		Trident: (t, m) => {
 			const lean = Ang(0, -m.s * 0.14, 0);
 			m.all("tri", lean.mul(Ang(0, 0, Math.sin(t * 1.3) * 0.25 - m.s * 0.2)));
@@ -2258,6 +2652,10 @@ let buildPlane;
 			glow(b) {
 				if (model._glow) model._glow.Brightness = b;
 			},
+			alpha(tag, a) {
+				const list = byTag[tag];
+				if (list) for (const e of list) if (e.p.Transparency !== a) e.p.Transparency = a;
+			},
 		};
 		animated.push({ id, model, main, api, off: Math.random() * 10 });
 	}
@@ -2265,6 +2663,65 @@ let buildPlane;
 
 	// every skin leaves something behind it
 	const FX = {
+		Hornet: (fx) => {
+			fx.trail(V3(0, -0.2, 6.4), { Lifetime: 0.5, Width: 0.5, Color: new ColorSequence(RGB(255, 210, 40), RGB(40, 30, 20)), Transparency: new NumberSequence(0.2, 1), LightEmission: 0.6 });
+			fx.emit(V3(0, 1.3, -1.6), { Texture: "sparkles", Color: new ColorSequence(RGB(255, 230, 90)), LightEmission: 0.8, Size: new NumberSequence(0.5, 0), Lifetime: new NumberRange(0.3, 0.6), Rate: 20, Speed: new NumberRange(3, 7), SpreadAngle: V2(90, 90), EmissionDirection: "Back" });
+		},
+		Crane: (fx) => {
+			for (const x of [-7.8, 7.8]) fx.trail(V3(x, 0.4, 2.8), { Lifetime: 0.9, Width: 0.25, Color: new ColorSequence(RGB(255, 250, 240)), Transparency: new NumberSequence(0.3, 1) });
+			for (const c of [RGB(232, 58, 60), RGB(250, 247, 238)]) {
+				fx.emit(V3(0, 0, 2), { Texture: "sparkles", Color: new ColorSequence(c), LightEmission: 0.3, Size: new NumberSequence(0.7, 0.2), Lifetime: new NumberRange(0.8, 1.4), Rate: 6, Speed: new NumberRange(2, 5), SpreadAngle: V2(120, 120), Acceleration: V3(0, -8, 0), RotSpeed: new NumberRange(-200, 200) });
+			}
+		},
+		Balloon: (fx) => {
+			const burner = fx.tagged("bal").find((p) => p._flame);
+			if (burner) fx.emitOn(burner, V3(0, 0.4, 0), { Texture: "fire", Color: new ColorSequence(RGB(255, 230, 120), RGB(255, 80, 20)), LightEmission: 1, Size: new NumberSequence(1.1, 0), Lifetime: new NumberRange(0.15, 0.3), Rate: 50, Speed: new NumberRange(6, 10), EmissionDirection: "Top", SpreadAngle: V2(10, 10) });
+			fx.emit(V3(0, 9, 0), { Texture: "smoke", Color: new ColorSequence(RGB(240, 240, 240), RGB(180, 180, 180)), Size: new NumberSequence(1.2, 3.5), Transparency: new NumberSequence(0.6, 1), Lifetime: new NumberRange(0.8, 1.4), Rate: 6, Speed: new NumberRange(2, 4), EmissionDirection: "Back", SpreadAngle: V2(20, 20) });
+		},
+		Submarine: (fx) => {
+			const hub = fx.tagged("prop")[0];
+			fx.emit(V3(0, 0, 7), { Texture: "sparkles", Color: new ColorSequence(RGB(200, 245, 255), RGB(120, 200, 255)), LightEmission: 0.5, Size: new NumberSequence(0.6, 0.9), Transparency: new NumberSequence(0.2, 1), Lifetime: new NumberRange(0.6, 1.1), Rate: 35, Speed: new NumberRange(4, 9), EmissionDirection: "Back", SpreadAngle: V2(30, 30), Acceleration: V3(0, 6, 0) });
+			if (hub) fx.trailOn(hub, V3(), { Lifetime: 0.6, Width: 1.4, Color: new ColorSequence(RGB(220, 250, 255), RGB(90, 170, 230)), Transparency: new NumberSequence(0.4, 1) });
+		},
+		Manta: (fx) => {
+			for (const tag of ["L2", "R2"]) {
+				const p = fx.tagged(tag)[0];
+				if (p) fx.trailOn(p, V3(0, 0, 0.8), { Lifetime: 0.8, Width: 0.45, Color: new ColorSequence(RGB(80, 240, 255), RGB(40, 90, 255)), Transparency: new NumberSequence(0.1, 1), LightEmission: 1 });
+			}
+			const tail = fx.tagged("tail")[1];
+			if (tail) fx.trailOn(tail, V3(), { Lifetime: 1, Width: 0.35, Color: new ColorSequence(RGB(80, 240, 255)), Transparency: new NumberSequence(0, 1), LightEmission: 1 });
+			fx.emit(V3(0, 0, 2), { Texture: "sparkles", Color: new ColorSequence(RGB(120, 250, 255)), LightEmission: 1, Size: new NumberSequence(0.5, 0), Lifetime: new NumberRange(0.6, 1.2), Rate: 18, Speed: new NumberRange(1, 4), SpreadAngle: V2(180, 180) });
+		},
+		Satellite: (fx) => {
+			fx.flame(V3(0, 0, 2.5), RGB(220, 240, 255), RGB(60, 140, 255), 0.9, 60);
+			fx.emit(V3(0, 0, 0), { Texture: "sparkles", Color: new ColorSequence(RGB(170, 210, 255)), LightEmission: 1, Size: new NumberSequence(0.35, 0), Lifetime: new NumberRange(0.4, 0.8), Rate: 12, Speed: new NumberRange(2, 5), SpreadAngle: V2(180, 180) });
+			for (const x of [-9.6, 9.6]) fx.trail(V3(x, 0, 0), { Lifetime: 0.6, Width: 0.3, Color: new ColorSequence(RGB(120, 170, 255)), Transparency: new NumberSequence(0.3, 1), LightEmission: 1 });
+		},
+		Koi: (fx) => {
+			const tail = fx.tagged("k5")[0];
+			if (tail) fx.trailOn(tail, V3(), { Lifetime: 0.7, Width: 1.4, Color: new ColorSequence(RGB(255, 140, 50), RGB(255, 255, 255)), Transparency: new NumberSequence(0.3, 1), LightEmission: 0.4 });
+			fx.emit(V3(0, 0, 3), { Texture: "sparkles", Color: new ColorSequence(RGB(190, 235, 255), RGB(110, 190, 255)), LightEmission: 0.5, Size: new NumberSequence(0.7, 0.2), Lifetime: new NumberRange(0.6, 1), Rate: 22, Speed: new NumberRange(3, 7), SpreadAngle: V2(50, 50), EmissionDirection: "Back", Acceleration: V3(0, -14, 0) });
+		},
+		Storm: (fx) => {
+			fx.emit(V3(0, -2, 0.5), { Texture: "sparkles", Color: new ColorSequence(RGB(170, 200, 240)), LightEmission: 0.4, Size: new NumberSequence(0.35, 0.2), Lifetime: new NumberRange(0.4, 0.7), Rate: 60, Speed: new NumberRange(20, 30), EmissionDirection: "Bottom", SpreadAngle: V2(25, 25), Acceleration: V3(0, -30, 0) });
+			fx.trail(V3(0, 0, 2), { Lifetime: 1.2, Width: 6, Color: new ColorSequence(RGB(140, 145, 160), RGB(80, 85, 100)), Transparency: new NumberSequence(0.6, 1) });
+			for (const tag of ["b1", "b2"]) {
+				const p = fx.tagged(tag)[3];
+				if (p) fx.emitOn(p, V3(0, -0.8, 0), { Texture: "sparkles", Color: new ColorSequence(RGB(220, 240, 255), RGB(120, 170, 255)), LightEmission: 1, Size: new NumberSequence(0.6, 0), Lifetime: new NumberRange(0.15, 0.3), Rate: 25, Speed: new NumberRange(6, 14), SpreadAngle: V2(180, 180) });
+			}
+		},
+		Comet: (fx) => {
+			fx.trail(V3(0, 0, 1.5), { Lifetime: 2, Width: 3.4, Color: new ColorSequence([ColorSequenceKeypoint.new(0, RGB(255, 255, 255)), ColorSequenceKeypoint.new(0.4, RGB(110, 225, 255)), ColorSequenceKeypoint.new(1, RGB(40, 90, 220))]), Transparency: new NumberSequence(0.05, 1), LightEmission: 1 });
+			fx.trail(V3(0, 0, 1.5), { Lifetime: 2.6, Width: 8, Color: new ColorSequence(RGB(90, 200, 255), RGB(40, 60, 180)), Transparency: new NumberSequence(0.75, 1), LightEmission: 1 });
+			fx.emit(V3(0, 0, 1), { Texture: "sparkles", Color: new ColorSequence(RGB(230, 250, 255), RGB(90, 210, 255)), LightEmission: 1, Size: new NumberSequence(0.8, 0), Lifetime: new NumberRange(0.8, 1.6), Rate: 70, Speed: new NumberRange(4, 12), EmissionDirection: "Back", SpreadAngle: V2(25, 25), Drag: 0.6 });
+			fx.emit(V3(0, 0, 2), { Texture: "smoke", Color: new ColorSequence(RGB(210, 240, 255), RGB(120, 170, 220)), Size: new NumberSequence(1.5, 4), Transparency: new NumberSequence(0.55, 1), Lifetime: new NumberRange(0.8, 1.2), Rate: 20, Speed: new NumberRange(3, 6), EmissionDirection: "Back", SpreadAngle: V2(15, 15) });
+		},
+		Eclipse: (fx) => {
+			fx.trail(V3(0, 0, 1.5), { Lifetime: 1.4, Width: 3.6, Color: new ColorSequence([ColorSequenceKeypoint.new(0, RGB(255, 230, 140)), ColorSequenceKeypoint.new(0.5, RGB(255, 140, 40)), ColorSequenceKeypoint.new(1, RGB(140, 40, 255))]), Transparency: new NumberSequence(0.1, 1), LightEmission: 1 });
+			fx.trail(V3(0, 0, 1.5), { Lifetime: 2.2, Width: 9, Color: new ColorSequence(RGB(30, 10, 60), RGB(120, 40, 220)), Transparency: new NumberSequence(0.7, 1), LightEmission: 0.6 });
+			for (const x of [-6.6, 6.6]) fx.trail(V3(x, 0, 3.2), { Lifetime: 0.9, Width: 0.35, Color: new ColorSequence(RGB(255, 210, 90)), Transparency: new NumberSequence(0, 1), LightEmission: 1 });
+			fx.tagged("cor").filter((_, i) => i % 4 === 0).forEach((p) => fx.emitOn(p, V3(0, 0.8, 0), { Texture: "sparkles", Color: new ColorSequence(RGB(255, 230, 140), RGB(255, 120, 30)), LightEmission: 1, Size: new NumberSequence(0.5, 0), Lifetime: new NumberRange(0.3, 0.6), Rate: 18, Speed: new NumberRange(2, 6), SpreadAngle: V2(60, 60) }));
+		},
 		Default: (fx) => {
 			for (const x of [-6, 6]) fx.trail(V3(x, 0, 0), { Lifetime: 0.7, Width: 0.25, Color: new ColorSequence(new Color3(1, 1, 1)), Transparency: new NumberSequence(0.45, 1) });
 		},
@@ -2494,7 +2951,7 @@ let buildPlane;
 				if (tr.hex === "rainbow") model._rainbow = (model._rainbow || []).concat(t);
 			}
 		}
-		const LIGHT = { Trident: RGB(90, 200, 255), Firebird: RGB(255, 120, 30), Phoenix: RGB(255, 110, 20), Galaxy: RGB(160, 80, 255), Razor: RGB(255, 40, 150), Royal: RGB(255, 200, 80) };
+		const LIGHT = { Trident: RGB(90, 200, 255), Firebird: RGB(255, 120, 30), Phoenix: RGB(255, 110, 20), Galaxy: RGB(160, 80, 255), Razor: RGB(255, 40, 150), Royal: RGB(255, 200, 80), Balloon: RGB(255, 160, 60), Manta: RGB(80, 240, 255), Storm: RGB(150, 190, 255), Comet: RGB(120, 220, 255), Eclipse: RGB(255, 180, 60) };
 		if (LIGHT[id]) {
 			const glow = Instance.new("PointLight");
 			glow.Range = id === "Phoenix" ? 26 : id === "Firebird" ? 18 : 20;
@@ -4502,6 +4959,16 @@ function deathView(vp, kind, delay, fov) {
 			Galaxy: ["a tiny planet with wings and two spinning rings", "orbiting moons, stardust spirals, a nebula trail"],
 			Razor: ["four blades spinning like a drill", "spiral blade trails and sparks"],
 			Royal: ["only in the special pack. floating crown included", "a waving cape, orbiting gold orbs, golden sparkles"],
+			Hornet: ["angry, striped and very loud", "buzzing wings, a yellow streak"],
+			Crane: ["folded from one sheet, no glue", "flapping paper wings, paper bits"],
+			Balloon: ["slow is a mindset", "a real burner flame, puffs of smoke"],
+			Submarine: ["wrong element, right attitude", "spinning propeller, a trail of bubbles"],
+			Manta: ["a ray that swims through the sky", "rippling wings, glowing spots"],
+			Satellite: ["borrowed it from orbit", "turning solar panels, a scanning dish"],
+			Koi: ["good luck, but airborne", "a swimming tail, splashing water"],
+			Storm: ["bring your own weather", "lightning flashes, rain under you"],
+			Comet: ["a chunk of ice with a long tail", "orbiting rocks, a tail two planes long"],
+			Eclipse: ["the sun is gone and you're flying it", "a spinning corona, golden sparks"],
 		},
 		death: {
 			Default: ["a normal explosion", "fire, smoke, debris"],
@@ -4527,7 +4994,14 @@ function deathView(vp, kind, delay, fov) {
 	});
 
 	// the rarer, the more it glows
-	function rarity(price, isSkin) {
+	function rarity(price, isSkin, cur) {
+		// hangar planes go by coins
+		if (cur === "coins") {
+			if (price >= 300000) return ["MYTHIC", RGB(255, 60, 60)];
+			if (price >= 150000) return ["LEGENDARY", RGB(255, 190, 60)];
+			if (price >= 60000) return ["EPIC", RGB(200, 110, 255)];
+			return ["RARE", RGB(90, 180, 255)];
+		}
 		const p = isSkin ? price : price * 25;
 		if (isSkin && p >= 1000) return ["EXCLUSIVE", RGB(255, 70, 170)];
 		if (p >= 350) return ["LEGENDARY", RGB(255, 190, 60)];
@@ -4540,12 +5014,13 @@ function deathView(vp, kind, delay, fov) {
 	// a skin counts as equipped when it sits in any of the three backpack slots
 	const inUse = (id, isSkin) => (isSkin ? [data.skin, data.skin2, data.skin3].includes(id) : data.death === id);
 	function actionButton(parent, item, isSkin, owned, equipped, size, pos) {
-		const money = isSkin ? data.gems : data.keys;
+		const cur = isSkin ? item.cur || "gems" : "keys";
+		const money = data[cur] || 0;
 		let label, c, base = 0.1;
 		if (inUse(item.id, isSkin)) [label, c] = ["EQUIPPED", GOOD];
 		else if (owned[item.id]) [label, c] = ["EQUIP", WHITE];
 		else if (item.eur) [label, c] = [item.eur === "SPECIAL PACK" ? "IN THE SPECIAL PACK" : item.eur + "  BUY", RGB(255, 70, 170)];
-		else [label, c] = [fmt(item.price) + (isSkin ? " ◆" : " ✦") + "  BUY", money >= item.price ? (isSkin ? GEM : KEY) : DIM];
+		else [label, c] = [fmt(item.price) + (cur === "coins" ? " ●" : isSkin ? " ◆" : " ✦") + "  BUY", money >= item.price ? (cur === "coins" ? COIN : isSkin ? GEM : KEY) : DIM];
 		const b = button(parent, "", size, pos, async () => {
 			// your skins go through the backpack: that's where you pick which of your three planes it is
 			if (isSkin && owned[item.id]) {
@@ -4561,11 +5036,11 @@ function deathView(vp, kind, delay, fov) {
 				} else Game.buyPack(item.pack);
 				return;
 			}
-			if (!owned[item.id] && Game.topUp(isSkin ? "gems" : "keys", item.price)) return;
+			if (!owned[item.id] && Game.topUp(cur, item.price)) return;
 			const [ok, msg] = request(isSkin ? "skin" : "death", item.id);
 			if (ok && !had) {
 				Game.pushProfile();
-				const [rn, rc] = rarity(item.price, isSkin);
+				const [rn, rc] = rarity(item.price, isSkin, item.cur);
 				Game.reveal({
 					head: isSkin ? "NEW SKIN" : "NEW CRASH EFFECT", name: niceName(item.id), tag: rn, color: rc,
 					skin: isSkin ? item.id : null, death: isSkin ? null : item.id,
@@ -4594,7 +5069,7 @@ function deathView(vp, kind, delay, fov) {
 		const it = list.find((x) => x.id === viewId) || list[0];
 		const r = row(shopItems, 260, 1);
 		r.Size = U2(1, 0, 0, 260);
-		const [rn, rc] = rarity(it.price, isSkin);
+		const [rn, rc] = rarity(it.price, isSkin, it.cur);
 		// coloured glow behind the preview in the rarity colour
 		const vp = planeView(r, isSkin ? it.id : null, U2(0.58, 0, 1, 0), null, { bg: RGB(20, 22, 32), bgT: 0.05, round: 10, wind: V3(-28, 0, -12) });
 		make("UIGradient", { Color: new ColorSequence(RGB(255, 255, 255), rc.Lerp(WHITE, 0.4)), Rotation: 90, Parent: vp });
@@ -4621,7 +5096,7 @@ function deathView(vp, kind, delay, fov) {
 		const grid = make("Frame", { Size: U2(1, 0, 0, 0), AutomaticSize: "Y", BackgroundTransparency: 1, LayoutOrder: nextOrder(), Parent: shopItems });
 		make("UIGridLayout", { CellSize: UO(172, 176), CellPadding: UO(8, 8), SortOrder: "LayoutOrder", Parent: grid });
 		list.forEach((it, idx) => {
-			const [, rc] = rarity(it.price, isSkin);
+			const [, rc] = rarity(it.price, isSkin, it.cur);
 			const sel = it.id === viewId;
 			const c = button(grid, "", new UDim2(), null, () => {
 				if (sel) return;
@@ -4652,8 +5127,9 @@ function deathView(vp, kind, delay, fov) {
 				st.Text = it.eur === "SPECIAL PACK" ? "SPECIAL PACK" : it.eur;
 				st.TextColor3 = RGB(255, 70, 170);
 			} else {
-				st.Text = fmt(it.price) + (isSkin ? " ◆" : " ✦");
-				st.TextColor3 = (isSkin ? data.gems : data.keys) >= it.price ? (isSkin ? GEM : KEY) : DIM;
+				const coins = it.cur === "coins";
+				st.Text = fmt(it.price) + (coins ? " ●" : isSkin ? " ◆" : " ✦");
+				st.TextColor3 = (coins ? data.coins : isSkin ? data.gems : data.keys) >= it.price ? (coins ? COIN : isSkin ? GEM : KEY) : DIM;
 			}
 			if (sel) make("UIStroke", { Color: WHITE, Thickness: 2, Transparency: 0.1, ApplyStrokeMode: "Border", Parent: c });
 			const sc = c.FindFirstChildOfClass("UIScale");
@@ -5079,9 +5555,10 @@ function deathView(vp, kind, delay, fov) {
 			ic.Position = U2(0, 26, 0.5, 0);
 			text(r, p.name.toUpperCase(), UO(400, 34), UO(140, 20), 30, WHITE, LEFT);
 			text(r, p.desc.toUpperCase(), UO(400, 22), UO(140, 54), 17, DIM, LEFT);
-			const now = (1 + 0.25 * lvl).toFixed(2).replace(/\.?0+$/, "");
-			const next = (1 + 0.25 * (lvl + 1)).toFixed(2).replace(/\.?0+$/, "");
-			text(r, maxed ? "x" + now + "  MAXED" : "x" + now + "   →   x" + next, UO(400, 44), UO(140, 80), 38, COIN, LEFT);
+			const val = (n) => (p.show === "x" ? "x" + (1 + p.step * n).toFixed(2).replace(/\.?0+$/, "") : "+" + Math.round(p.step * n * 100) + "%");
+			const now = val(lvl);
+			const next = val(lvl + 1);
+			text(r, maxed ? now + "  MAXED" : now + "   →   " + next, UO(400, 44), UO(140, 80), 38, COIN, LEFT);
 			const pips = make("Frame", { Position: UO(140, 132), Size: UO(360, 14), BackgroundTransparency: 1, Parent: r });
 			make("UIListLayout", { FillDirection: "row", Padding: UDim.new(0, 4), Parent: pips });
 			for (let i = 0; i < p.max; i++) {
@@ -5092,7 +5569,7 @@ function deathView(vp, kind, delay, fov) {
 				if (maxed) sfx("bad");
 				else if (!Game.topUp("coins", price)) {
 					const [ok, msg] = request("buy_power", p.id);
-					if (ok) Game.reveal({ head: "UPGRADED", name: p.name.toUpperCase(), label: "x" + next, color: COIN, sub: "LEVEL " + (lvl + 1) + " OF " + p.max });
+					if (ok) Game.reveal({ head: "UPGRADED", name: p.name.toUpperCase(), label: next, color: COIN, sub: "LEVEL " + (lvl + 1) + " OF " + p.max });
 					else result(ok, msg);
 				}
 			}, 0.1);
@@ -5179,7 +5656,7 @@ function deathView(vp, kind, delay, fov) {
 			for (const c of right.GetChildren()) if (!c.IsA("UICorner")) c.Destroy();
 			Game.spinning = Game.spinning.filter((x) => x.model.Parent && !x.model._destroyed);
 			const it = list.find((x) => x.id === Game[viewKey]) || list[0];
-			const [rn, rc] = rarity(it.price, isSkin);
+			const [rn, rc] = rarity(it.price, isSkin, it.cur);
 			const vp = planeView(right, isSkin ? it.id : null, U2(1, -16, 0, 180), UO(8, 8), { bg: RGB(20, 22, 32), bgT: 0.05, round: 10, wind: V3(-28, 0, -12) });
 			make("UIGradient", { Color: new ColorSequence(RGB(255, 255, 255), rc.Lerp(WHITE, 0.4)), Rotation: 90, Parent: vp });
 			if (!isSkin) deathView(vp, it.id);
@@ -5203,7 +5680,7 @@ function deathView(vp, kind, delay, fov) {
 		}
 
 		list.forEach((it, idx) => {
-			const [, rc] = rarity(it.price, isSkin);
+			const [, rc] = rarity(it.price, isSkin, it.cur);
 			const c = button(left, "", new UDim2(), null, () => {
 				if (Game[viewKey] === it.id) return;
 				Game[viewKey] = it.id;
@@ -5235,8 +5712,9 @@ function deathView(vp, kind, delay, fov) {
 				st.Text = it.eur === "SPECIAL PACK" ? "SPECIAL PACK" : it.eur;
 				st.TextColor3 = RGB(255, 70, 170);
 			} else {
-				st.Text = fmt(it.price) + (isSkin ? " ◆" : " ✦");
-				st.TextColor3 = (isSkin ? data.gems : data.keys) >= it.price ? (isSkin ? GEM : KEY) : DIM;
+				const coins = it.cur === "coins";
+				st.Text = fmt(it.price) + (coins ? " ●" : isSkin ? " ◆" : " ✦");
+				st.TextColor3 = (coins ? data.coins : isSkin ? data.gems : data.keys) >= it.price ? (coins ? COIN : isSkin ? GEM : KEY) : DIM;
 			}
 			strokes[it.id] = make("UIStroke", { Color: WHITE, Thickness: 2, Transparency: it.id === Game[viewKey] ? 0.05 : 1, ApplyStrokeMode: "Border", Parent: c });
 		});
@@ -5480,11 +5958,11 @@ let showResults;
 // ------------------------------------------------------------------ revive (only with revives you collected)
 
 (() => {
-	const ORDER = ["towers", "moving", "canyon", "smash", "boss", "turrets", "traffic", "city", "desert", "boss2", "sea", "beyond"];
+	const ORDER = ["towers", "moving", "canyon", "smash", "boss", "turrets", "traffic", "city", "desert", "boss2", "volcano", "sea", "glacier", "beyond"];
 	Game.STAGE_ORDER = ORDER;
 	const WAIT = 6;
 	// gems for a revive in each stage, dying again in the same stage makes it pricier
-	const PRICE = [100, 120, 150, 180, 220, 260, 280, 300, 310, 320, 350, 400];
+	const PRICE = [100, 120, 150, 180, 220, 260, 280, 300, 310, 320, 330, 350, 370, 400];
 	const box = make("CanvasGroup", {
 		AnchorPoint: V2(0.5, 0.5),
 		Position: US(0.5, 0.5),
@@ -7322,24 +7800,24 @@ let startBoss, updateBoss, resetSky;
 				const k = Math.min(1, (t - laserEnd) / MISSILE_TIME);
 				// now and then one of them is green. never two at once, and never one right after the other
 				const side = Math.random() < 0.5 ? -1 : 1;
-				if (!b.green && !b.shot && t >= (b.nextGreen || 0) && (b.sinceGreen >= 3 || (b.sinceGreen >= 1 && Math.random() < 0.3))) {
+				if (!b.green && !b.shot && t >= (b.nextGreen || 0) && (b.sinceGreen >= 2 || (b.sinceGreen >= 1 && Math.random() < 0.4))) {
 					b.sinceGreen = 0;
 					fireGreen(b, side);
 				} else {
 					b.sinceGreen++;
-					if (k > 0.5 && Math.random() < 0.4) {
+					if (k > 0.6 && Math.random() < 0.3) {
 						launch(-1, k);
 						launch(1, k);
 					} else launch(side, k);
 				}
-				b.nextMissile = t + 1.3 - k * 0.5;
+				b.nextMissile = t + 1.45 - k * 0.45;
 			}
 			// lasers don't stop completely while the missiles fly
 			if (b.nextSnipe == null) b.nextSnipe = t + 2.5;
 			if (t >= b.nextSnipe) {
 				shoot(lead(0.9), 0.9);
 				sfx("laser_charge", 1.05);
-				b.nextSnipe = t + 2.8 - Math.min(1, (t - laserEnd) / MISSILE_TIME);
+				b.nextSnipe = t + 3.2 - Math.min(1, (t - laserEnd) / MISSILE_TIME);
 			}
 		}
 
@@ -8818,6 +9296,11 @@ function onStage(nw, old) {
 			});
 		}
 		if (nw === "sea") Game.mood(Game.sky.clock, RGB(170, 200, 230), 3);
+		if (nw === "volcano") Game.mood(17.4, RGB(130, 60, 40), 4, RGB(210, 140, 115));
+		if (nw === "glacier") Game.mood(12, RGB(176, 204, 232), 4, RGB(190, 205, 230));
+		for (const [id, msg, col] of [["volcano", "WATCH OUT FOR THE LAVA!", RGB(255, 120, 40)], ["glacier", "FLY THROUGH THE ICE GATES!", RGB(150, 220, 255)]]) {
+			if (nw === id) task.delay(2.2, () => curStage === id && !dead && banner(msg, col, 3));
+		}
 	}
 }
 
@@ -8887,7 +9370,7 @@ Game.hitToppled = (b, at) => {
 };
 
 Game.alt = () => {
-	if (curStage === "sea" || (curStage === "boss2" && Game.boss2.done)) return 70;
+	if (curStage === "sea" || curStage === "volcano" || curStage === "glacier" || (curStage === "boss2" && Game.boss2.done)) return 70;
 	// a twister throws you up, then you glide back down
 	if (Game.lift != null) {
 		const k = runTime - Game.lift;
@@ -8923,17 +9406,17 @@ Game.startAt = (id) => {
 	if (!st) return;
 	const at = st.at;
 	Game.safeRow = Math.floor(at / CHUNK);
-	if (["turrets", "traffic", "city", "desert", "boss2", "sea", "space"].includes(id)) {
+	if (["turrets", "traffic", "city", "desert", "boss2", "volcano", "sea", "glacier", "space"].includes(id)) {
 		bossDone = true;
 		beyondStart = CONFIG.beyondAt;
 		Game.flow.tier = id === "space" ? 3 : 2;
 	}
-	if (id === "sea" || id === "space") {
+	if (id === "volcano" || id === "sea" || id === "glacier" || id === "space") {
 		Game.boss2.done = true;
 		Game.marks.sea = CONFIG.seaAt;
 	}
 	if (id === "space") Game.marks.final = at;
-	pos = V3(0, id === "sea" ? 70 : ALT, -(at + (id === "space" ? 60 : 5)));
+	pos = V3(0, ["volcano", "sea", "glacier"].includes(id) ? 70 : ALT, -(at + (id === "space" ? 60 : 5)));
 	Game.from = Math.floor(-pos.Z);
 	buff.immortal = 3;
 };
@@ -9276,7 +9759,7 @@ function step(dt) {
 		return;
 	}
 
-	if (stage === "sea" && Game.marks.final == null) {
+	if ((stage === "sea" || stage === "glacier") && Game.marks.final == null) {
 		const F = Game.flow;
 		if (!F.cine && dist - Game.marks.sea > Game.SEA_LEN - 500) F.startApproach();
 	}
@@ -9313,7 +9796,8 @@ function step(dt) {
 
 	if (!boss && !Game.boss2.active && !cheat) {
 		const before = fuel;
-		fuel = Math.max(0, fuel - (FUEL.drain + (nitro ? FUEL.nitro : 0)) * dt * (Game.race && Game.behind ? 2 : 1));
+		const tank = Game.race ? 1 : 1 / (1 + 0.08 * ((data.power && data.power.tank) || 0));
+		fuel = Math.max(0, fuel - (FUEL.drain + (nitro ? FUEL.nitro : 0)) * tank * dt * (Game.race && Game.behind ? 2 : 1));
 		if (before > 0 && fuel <= 0) {
 			sfx("fuel_out");
 			popup("OUT OF FUEL", BAD);
@@ -9414,7 +9898,9 @@ function step(dt) {
 	if (nitroK > 0.1) shake = Math.max(shake, 0.1 * nitroK);
 	setVignette(Math.max(nitroK, devK) * 0.8);
 
-	for (const p of workspace.GetPartBoundsInBox(CFrame.fromPos(pos), PICKBOX, pickParams)) collect(p);
+	// the magnet upgrade, not in races so those stay fair
+	const reach = Game.race ? 1 : 1 + 0.2 * ((data.power && data.power.magnet) || 0);
+	for (const p of workspace.GetPartBoundsInBox(CFrame.fromPos(pos), reach > 1 ? PICKBOX.mul(reach) : PICKBOX, pickParams)) collect(p);
 
 	const phasing = nitroK > 0.2 || cheat || Game.flow.approach || Game.god;
 	if (buff.immortal > 0 || phasing) ghost = true;
@@ -9549,7 +10035,9 @@ Game.skip = () => {
 	else if (stage === "traffic") nextD = beyondStart + (CONFIG.turretsLen || 4000);
 	else if (stage === "city") nextD = beyondStart + (CONFIG.turretsLen || 4000) + (CONFIG.cityLen || 4000) - DESERT_LEN;
 	else if (stage === "desert") nextD = beyondStart + (CONFIG.turretsLen || 4000) + (CONFIG.cityLen || 4000);
-	else if (stage === "sea") {
+	else if (stage === "volcano") nextD = Game.marks.sea + VOLCANO_LEN;
+	else if (stage === "sea") nextD = Game.marks.sea + Game.SEA_LEN - GLACIER_LEN;
+	else if (stage === "glacier") {
 		flash();
 		Missiles.clear();
 		Game.cam.last = null;
@@ -11002,7 +11490,7 @@ if (DEV) window.__dev = { lift: () => { Game.lift = runTime; }, goto: (k) => { p
 // ------------------------------------------------------------------ old version warning
 // every build has its own number, the page checks now and then whether a newer one is online
 (() => {
-	const BUILD = "1791304599";
+	const BUILD = "1792437648";
 	if (BUILD.startsWith("__")) return;
 	const bar = make("TextButton", {
 		AnchorPoint: V2(0.5, 0),
@@ -11050,7 +11538,9 @@ if (DEV) window.__dev = { lift: () => { Game.lift = runTime; }, goto: (k) => { p
 		{ id: "traffic", name: "WRONG WAY", desc: "Finish Traffic", color: RGB(255, 160, 90) },
 		{ id: "city", name: "NIGHT SHIFT", desc: "Finish the City", color: RGB(150, 150, 255) },
 		{ id: "desert", name: "TUMBLEWEED", desc: "Finish the Desert", color: RGB(236, 204, 130) },
+		{ id: "volcano", name: "FLOOR IS LAVA", desc: "Get through the Volcanoes", color: RGB(255, 110, 40) },
 		{ id: "sea", name: "SEA LEGS", desc: "Get through the Sea", color: RGB(80, 170, 255) },
+		{ id: "glacier", name: "COLD FEET", desc: "Get through the Glacier", color: RGB(170, 225, 255) },
 		{ id: "space", name: "HOUSTON", desc: "Make it through Space and fall back to earth", color: RGB(170, 110, 255) },
 		// the big one
 		{ id: "fullcircle", name: "FULL CIRCLE", desc: "Blocks to Space and back to Blocks in one run. No dying, no fast travel", color: COIN },
@@ -11156,7 +11646,7 @@ if (DEV) window.__dev = { lift: () => { Game.lift = runTime; }, goto: (k) => { p
 
 	// ---------------- hooks from the run
 	Game.achStage = (old, nw) => {
-		if (["towers", "moving", "canyon", "smash", "turrets", "traffic", "city", "desert", "sea"].includes(old)) Game.ach(old);
+		if (["towers", "moving", "canyon", "smash", "turrets", "traffic", "city", "desert", "volcano", "sea", "glacier"].includes(old)) Game.ach(old);
 		if (old === "towers" && runTime < 30 && (Game.lastStart || "towers") === "towers" && Game.loop === 0) Game.ach("nodamage");
 	};
 	Game.achLoop = () => {
