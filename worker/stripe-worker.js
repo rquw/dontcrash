@@ -29,6 +29,14 @@ const CONFIG = {
 	// the first part of the sea is volcanoes, the last part ice
 	volcanoLen: 4500,
 	glacierLen: 4500,
+	// five maps between the desert and the sea
+	midMaps: [
+		{ id: "ruins", name: "RUINS", len: 3500 },
+		{ id: "windfarm", name: "WIND FARM", len: 3500 },
+		{ id: "sky", name: "SKY ISLANDS", len: 3500 },
+		{ id: "factory", name: "FACTORY", len: 3500 },
+		{ id: "neon", name: "NEON", len: 3500 },
+	],
 	cityLen: 14900,
 	mapBonus: 250,
 	bossBonus: 750,
@@ -46,17 +54,20 @@ const CONFIG = {
 		{ id: "traffic", name: "TRAFFIC", keys: 10, coins: 4000 },
 		{ id: "city", name: "CITY", keys: 10, coins: 4500 },
 		{ id: "desert", name: "DESERT", keys: 10, coins: 5000 },
+		{ id: "ruins", name: "RUINS", keys: 12, coins: 5200 },
+		{ id: "windfarm", name: "WIND FARM", keys: 12, coins: 5400 },
+		{ id: "sky", name: "SKY ISLANDS", keys: 12, coins: 5600 },
+		{ id: "factory", name: "FACTORY", keys: 12, coins: 5800 },
+		{ id: "neon", name: "NEON", keys: 12, coins: 6000 },
 		{ id: "boss2", name: "BOSS 2", keys: 10, coins: 5500 },
 		{ id: "volcano", name: "VOLCANO", keys: 16, coins: 6500 },
-		{ id: "sea", name: "SEA", keys: 16, coins: 7000 },
-		{ id: "glacier", name: "GLACIER", keys: 16, coins: 7800 },
+		{ id: "glacier", name: "GLACIER", keys: 16, coins: 7000 },
+		{ id: "sea", name: "SEA", keys: 16, coins: 7800 },
 		{ id: "space", name: "SPACE", keys: 16, coins: 8500 },
 	],
 	bossHp: 8,
 	powers: [
 		{ id: "coins", name: "Coin multiplier", desc: "+25% coins per level", max: 10, base: 300, step: 0.25, show: "x" },
-		{ id: "tank", name: "Bigger tank", desc: "fuel lasts 8% longer per level", max: 5, base: 2000, step: 0.08, show: "+" },
-		{ id: "magnet", name: "Magnet", desc: "+20% pickup reach per level", max: 5, base: 1500, step: 0.2, show: "+" },
 		{ id: "xp", name: "Fast learner", desc: "+10% xp per level", max: 5, base: 2500, step: 0.1, show: "+" },
 	],
 	skins: [
@@ -167,12 +178,22 @@ for (const s of CONFIG.stages) {
 }
 const BOSS_START = acc;
 const BEYOND = BOSS_START + CONFIG.beyondGap;
-const SEA_AT = BEYOND + CONFIG.turretsLen + CONFIG.cityLen + (CONFIG.boss2 ? 1500 : 100);
+const MID_AT = BEYOND + CONFIG.turretsLen + CONFIG.cityLen;
+const MID_LEN = CONFIG.midMaps.reduce((a, m) => a + m.len, 0);
+const SEA_AT = MID_AT + MID_LEN + (CONFIG.boss2 ? 1500 : 100);
 CONFIG.beyondAt = BEYOND;
 CONFIG.seaAt = SEA_AT;
-const AT = { boss: BOSS_START, turrets: BEYOND, traffic: BEYOND + CONFIG.turretsLen - CONFIG.trafficLen, desert: BEYOND + CONFIG.turretsLen + CONFIG.cityLen - CONFIG.desertLen, city: BEYOND + CONFIG.turretsLen, boss2: BEYOND + CONFIG.turretsLen + CONFIG.cityLen, volcano: SEA_AT, sea: SEA_AT + CONFIG.volcanoLen, glacier: SEA_AT + CONFIG.seaLen - CONFIG.glacierLen, space: SEA_AT + CONFIG.seaLen + 1500 };
+const AT = { boss: BOSS_START, turrets: BEYOND, traffic: BEYOND + CONFIG.turretsLen - CONFIG.trafficLen, desert: BEYOND + CONFIG.turretsLen + CONFIG.cityLen - CONFIG.desertLen, city: BEYOND + CONFIG.turretsLen, boss2: MID_AT + MID_LEN, volcano: SEA_AT, glacier: SEA_AT + CONFIG.volcanoLen, sea: SEA_AT + CONFIG.volcanoLen + CONFIG.glacierLen, space: SEA_AT + CONFIG.seaLen + 1500 };
 // where each map is done
-const STAGE_END = { towers: 3000, moving: 10200, canyon: 18800, smash: 29200, turrets: BEYOND + CONFIG.turretsLen - CONFIG.trafficLen, traffic: BEYOND + CONFIG.turretsLen, city: BEYOND + CONFIG.turretsLen + CONFIG.cityLen - CONFIG.desertLen, desert: BEYOND + CONFIG.turretsLen + CONFIG.cityLen, volcano: SEA_AT + CONFIG.volcanoLen, sea: SEA_AT + CONFIG.seaLen - CONFIG.glacierLen, glacier: SEA_AT + CONFIG.seaLen };
+const STAGE_END = { towers: 3000, moving: 10200, canyon: 18800, smash: 29200, turrets: BEYOND + CONFIG.turretsLen - CONFIG.trafficLen, traffic: BEYOND + CONFIG.turretsLen, city: BEYOND + CONFIG.turretsLen + CONFIG.cityLen - CONFIG.desertLen, desert: BEYOND + CONFIG.turretsLen + CONFIG.cityLen, volcano: SEA_AT + CONFIG.volcanoLen, glacier: SEA_AT + CONFIG.volcanoLen + CONFIG.glacierLen, sea: SEA_AT + CONFIG.seaLen };
+{
+	let at = MID_AT;
+	for (const m of CONFIG.midMaps) {
+		AT[m.id] = at;
+		at += m.len;
+		STAGE_END[m.id] = at;
+	}
+}
 for (const st of CONFIG.stages) AT[st.id] = st.start;
 const startById = {};
 if (!CONFIG.boss2) CONFIG.starts = CONFIG.starts.filter((st) => st.id !== "boss2");
@@ -235,6 +256,17 @@ function resetStyle(d) {
 	d.styleV = 2;
 }
 
+// tank and magnet are gone, it has to stay fair. whoever bought levels gets every coin back
+const GONE_POWERS = { tank: 2000, magnet: 1500 };
+function refundPowers(d) {
+	if (!d.power) return;
+	for (const id in GONE_POWERS) {
+		const lvl = Math.max(0, Math.min(5, Math.floor(Number(d.power[id]) || 0)));
+		for (let i = 1; i <= lvl; i++) d.coins = (d.coins || 0) + GONE_POWERS[id] * i * i;
+		delete d.power[id];
+	}
+}
+
 function copy(t) {
 	return JSON.parse(JSON.stringify(t));
 }
@@ -257,6 +289,7 @@ function load() {
 	if (typeof d !== "object" || !d) d = {};
 	fill(d, DEFAULT);
 	resetStyle(d);
+	refundPowers(d);
 	// sounds start off for everyone, even saves from before, you turn them on in settings
 	if (!d.sfxOptIn) {
 		d.settings.sfx = false;
@@ -303,6 +336,7 @@ function setState(data, sess, name) {
 	const d = data && typeof data === "object" ? copy(data) : {};
 	fill(d, DEFAULT);
 	resetStyle(d);
+	refundPowers(d);
 	if (!d.created) d.created = Date.now();
 	if (name) d.name = name;
 	// saves from before the daily and monthly boards only knew the week, carry that over
@@ -837,7 +871,7 @@ const ACH_REWARDS = {
 	space: { gems: 100, keys: 2 }, fullcircle: { gems: 300, keys: 5 },
 	run5k: { gems: 10 }, run25k: { gems: 60 }, glass50: { gems: 25 }, close10: { gems: 15 }, kills50: { gems: 25 }, saved: { gems: 15 }, nodamage: { gems: 30 },
 	heart: { gems: 10 }, revive: { gems: 10 }, pickups100: { gems: 40 }, rich: { gems: 30 }, skins3: { gems: 30 }, codes5: { gems: 20 },
-	dist100k: { gems: 50 }, runs100: { gems: 50 }, level10: { gems: 50, keys: 2 }, vswin: { gems: 40 }, vs10: { gems: 50 }, hyper: { gems: 15 }, overdrive: { gems: 40 }, traffic: { gems: 25 }, desert: { gems: 30 }, volcano: { gems: 40 }, glacier: { gems: 50 },
+	dist100k: { gems: 50 }, runs100: { gems: 50 }, level10: { gems: 50, keys: 2 }, vswin: { gems: 40 }, vs10: { gems: 50 }, hyper: { gems: 15 }, overdrive: { gems: 40 }, traffic: { gems: 25 }, desert: { gems: 30 }, volcano: { gems: 40 }, glacier: { gems: 50 }, ruins: { gems: 30 }, windfarm: { gems: 30 }, sky: { gems: 35 }, factory: { gems: 35 }, neon: { gems: 40 },
 };
 CONFIG.achRewards = ACH_REWARDS;
 // can the save back the achievement up? the worker only hands one out when it can
@@ -901,7 +935,7 @@ function checkAch() {
 	const d = s.data;
 	d.ach = d.ach || {};
 	d.achPaid = d.achPaid || {};
-	for (const id of ["towers", "moving", "canyon", "smash", "turrets", "traffic", "city", "desert", "volcano", "sea", "glacier", "boss", "space", "run5k", "run25k", "glass50", "close10", "kills50", "heart", "revive", "pickups100", "rich", "skins3", "codes5", "dist100k", "runs100", "level10", "vs10"]) {
+	for (const id of ["towers", "moving", "canyon", "smash", "turrets", "traffic", "city", "desert", "ruins", "windfarm", "sky", "factory", "neon", "volcano", "glacier", "sea", "boss", "space", "run5k", "run25k", "glass50", "close10", "kills50", "heart", "revive", "pickups100", "rich", "skins3", "codes5", "dist100k", "runs100", "level10", "vs10"]) {
 		if (d.ach[id] || !earned(d, id)) continue;
 		d.ach[id] = Date.now();
 		if (ACH_REWARDS[id] && !d.achPaid[id]) {

@@ -3,9 +3,9 @@ import {
 	camera, Lighting, Instance, workspace, markQueryRoot, Enum, OverlapParams, TweenService, TweenInfo, Debris, UIS, playSfx, loopSound, loadSounds, setSfxVolume,
 	NumberSequence, NumberSequenceKeypoint, NumberRange, ColorSequence, ColorSequenceKeypoint, guiRootInst, setUiScale, setLowGraphics, physicsGround,
 	mergeFloor, start, perf,
-} from "./engine.js?v=1792437648";
-import * as Server from "./server.js?v=1792437648";
-import * as Online from "./online.js?v=1792437648";
+} from "./engine.js?v=1792439911";
+import * as Server from "./server.js?v=1792439911";
+import * as Online from "./online.js?v=1792439911";
 
 const V3 = (x, y, z) => new Vector3(x, y, z);
 const RGB = Color3.fromRGB;
@@ -249,7 +249,7 @@ let BOSS_START;
 	}
 	BOSS_START = acc;
 })();
-const MAP_STAGES = { towers: true, moving: true, canyon: true, smash: true, turrets: true, traffic: true, city: true, desert: true, volcano: true, sea: true, glacier: true };
+const MAP_STAGES = { towers: true, moving: true, canyon: true, smash: true, turrets: true, traffic: true, city: true, desert: true, ruins: true, windfarm: true, sky: true, factory: true, neon: true, volcano: true, sea: true, glacier: true };
 
 const PAD = {
 	fuel: [RGB(255, 45, 35), "FUEL"],
@@ -487,18 +487,23 @@ function stageFor(d) {
 		const ce = tl + cl - DESERT_LEN;
 		if (k < ce) return ["city", (k - tl) / (ce - tl)];
 		if (k < tl + cl) return ["desert", (k - ce) / DESERT_LEN];
+		let mk = tl + cl;
+		for (const mm of CONFIG.midMaps || []) {
+			if (k < mk + mm.len) return [mm.id, (k - mk) / mm.len];
+			mk += mm.len;
+		}
 		const m = Game.marks;
 		// boss 2 switched off: a short beach after the city, then the sea
 		if (m.sea == null && CONFIG.boss2 === false) {
-			m.sea = beyondStart + tl + cl + 100;
+			m.sea = beyondStart + mk + 100;
 			Game.boss2.done = true;
 		}
 		if (m.sea == null || d < m.sea) return ["boss2", 0];
 		if (m.final == null || d < m.final) {
 			const k = d - m.sea, S = Game.SEA_LEN;
 			if (k < VOLCANO_LEN) return ["volcano", k / VOLCANO_LEN];
-			if (k < S - GLACIER_LEN) return ["sea", (k - VOLCANO_LEN) / (S - VOLCANO_LEN - GLACIER_LEN)];
-			return ["glacier", Math.min((k - (S - GLACIER_LEN)) / GLACIER_LEN, 1)];
+			if (k < VOLCANO_LEN + GLACIER_LEN) return ["glacier", (k - VOLCANO_LEN) / GLACIER_LEN];
+			return ["sea", Math.min((k - VOLCANO_LEN - GLACIER_LEN) / (S - VOLCANO_LEN - GLACIER_LEN), 1)];
 		}
 		return ["beyond", (d - m.final) / 1000];
 	}
@@ -506,6 +511,8 @@ function stageFor(d) {
 }
 
 function stageName(id) {
+	const mm = (CONFIG.midMaps || []).find((x) => x.id === id);
+	if (mm) return mm.name;
 	const n = STAGE_BY_ID[id] ? STAGE_BY_ID[id].name : { boss: "BOSS", turrets: "TURRETS", traffic: "TRAFFIC", desert: "DESERT", volcano: "VOLCANO", glacier: "GLACIER", city: "CITY", boss2: CONFIG.boss2 === false ? "SEA" : "BOSS", sea: "SEA", beyond: "SPACE", intro: "" }[id];
 	return (n === undefined ? String(id) : n).replace(/^\d+\s*/, "");
 }
@@ -545,6 +552,28 @@ let trackChunks, updateMovers, regenerate, canyonPath, canyonHalfGap, updatePads
 			if (n > 1.15) return RGB(255, 110 + h * 20, 25);
 			if (n > 0.9) return RGB(160, 50, 20);
 			return RGB(40 + h * 6, 30 + h * 4, 30 + h * 3);
+		}
+		if (stage === "ruins") {
+			const k = (Math.floor(x / 40) + Math.floor(d / 40)) % 3;
+			return RGB(s * (1.22 - k * 0.04), s * (1.02 - k * 0.04), s * 0.7);
+		}
+		if (stage === "windfarm") {
+			const n = Math.sin(x * 12.9898 + d * 78.233) * 43758.5453;
+			const r = n - Math.floor(n);
+			if (r > 0.992) return RGB(240, 214, 90);
+			if (r > 0.985) return RGB(236, 236, 228);
+			return RGB(74 + h * 5, 128 + h * 6, 62 + h * 2);
+		}
+		if (stage === "sky") return RGB(226 + h * 4, 234 + h * 3, 248);
+		if (stage === "factory") {
+			const lane = mod(x + 10, 160) < 20;
+			if (lane) return Math.floor(d / 20) % 2 ? RGB(250, 196, 30) : RGB(36, 36, 40);
+			return RGB(106 + h * 6, 108 + h * 6, 114 + h * 6);
+		}
+		if (stage === "neon") {
+			if (mod(x + 10, 80) < 20) return RGB(255, 50, 200);
+			if (mod(d + 10, 80) < 20) return RGB(40, 220, 255);
+			return RGB(20, 12, 36);
 		}
 		if (stage === "glacier") {
 			const n = Math.sin(x / 45 + d / 61) + Math.cos(d / 37 - x / 83);
@@ -1029,7 +1058,7 @@ let trackChunks, updateMovers, regenerate, canyonPath, canyonHalfGap, updatePads
 		}
 	}
 
-	// ---------------- glacier: icebergs, gates of ice to fly through, floes sliding across, northern lights up top
+	// ---------------- glacier: icebergs, gates of ice to fly through, floes sliding across
 	function glacier(folder, movers, rng, x0, z0, t, far) {
 		const ice = RGB(206, 232, 250), blue = RGB(130, 190, 236), deep = RGB(70, 140, 205);
 		const n = amount(rng, 0.45 + t * 0.7);
@@ -1072,13 +1101,261 @@ let trackChunks, updateMovers, regenerate, canyonPath, canyonHalfGap, updatePads
 			floe.SetAttribute("Break", true);
 			movers.push({ part: floe, base: floe.Position, a: Vector3.xAxis.mul(rng.NextNumber(60, 110)), f: rng.NextNumber(0.3, 0.5), ph: rng.NextNumber(0, 6.28) });
 		}
-		// northern lights, way up
-		if (rng.NextNumber() < 0.1) {
-			const x = x0 + rng.NextNumber(0, CHUNK), z = z0 - rng.NextNumber(0, CHUNK);
+	}
+
+	// ---------------- ruins: a temple in the sand, half fallen down. stone blocks slide back and forth in the gates
+	function ruins(folder, movers, rng, x0, z0, t, far) {
+		const stone = RGB(216, 186, 132), stoneD = RGB(178, 146, 98), gold = RGB(240, 190, 70), lapis = RGB(40, 80, 170);
+		if (rng.NextNumber() < 0.45 + t * 0.2) {
+			const z = z0 - rng.NextNumber(20, CHUNK - 20), cx = x0 + rng.NextNumber(40, CHUNK - 40);
+			const n = rng.NextInteger(3, 5), gap = rng.NextNumber(30, 42);
+			let whole = true;
+			for (let i = 0; i < n; i++) {
+				const x = cx + (i - (n - 1) / 2) * gap;
+				const broken = rng.NextNumber() < 0.3;
+				if (broken) whole = false;
+				const h = broken ? rng.NextNumber(14, 34) : 52;
+				block(V3(9, 3, 9), V3(x, 1.5, z), stoneD, folder).SetAttribute("Break", true);
+				block(V3(6.5, h, 6.5), V3(x, 3 + h / 2, z), dark(stone, rng.NextNumber(0, 0.15)), folder).SetAttribute("Break", true);
+				if (!far) for (const dx of [-2, 0, 2]) deco(V3(0.6, h, 0.4), V3(x + dx, 3 + h / 2, z - 3.3), stoneD, folder);
+				if (!broken) block(V3(10, 4, 10), V3(x, 57, z), stoneD, folder).SetAttribute("Break", true);
+				else if (!far) deco(V3(7, 5, 6), V3(x + rng.NextNumber(-8, 8), 2.5, z - rng.NextNumber(6, 14)), stone, folder);
+			}
+			if (whole) {
+				block(V3(gap * (n - 1) + 10, 6, 10), V3(cx, 62, z), stone, folder).SetAttribute("Break", true);
+				if (!far) deco(V3(gap * (n - 1) + 10.2, 1.2, 10.2), V3(cx, 60, z), lapis, folder);
+			}
+		}
+		// a big gate, a stone slab sliding across it
+		if (!far && rng.NextNumber() < 0.25 + t * 0.2) {
+			const z = z0 - rng.NextNumber(30, CHUNK - 30), cx = x0 + rng.NextNumber(50, CHUNK - 50), gap = 64;
+			for (const s of [-1, 1]) {
+				block(V3(14, 72, 14), V3(cx + s * (gap / 2 + 7), 36, z), stone, folder).SetAttribute("Break", true);
+				deco(V3(14.4, 3, 14.4), V3(cx + s * (gap / 2 + 7), 50, z), lapis, folder);
+			}
+			block(V3(gap + 28, 12, 16), V3(cx, 78, z), stoneD, folder).SetAttribute("Break", true);
+			deco(V3(9, 9, 1), V3(cx, 78, z - 8.6), gold, folder, true);
+			const slab = block(V3(22, 34, 10), V3(cx, 21, z), stoneD, folder);
+			slab.SetAttribute("Break", true);
+			const glyph = deco(V3(8, 8, 0.6), V3(cx, 24, z - 5.3), gold, folder, true);
+			const mv = { a: Vector3.xAxis.mul(gap / 2 - 11), f: rng.NextNumber(0.5, 0.8), ph: rng.NextNumber(0, 6.28) };
+			movers.push(Object.assign({ part: slab, base: slab.Position }, mv), Object.assign({ part: glyph, base: glyph.Position }, mv));
+		}
+		// obelisks with a gold tip
+		if (rng.NextNumber() < 0.3) {
+			const x = x0 + rng.NextNumber(10, CHUNK - 10), z = z0 - rng.NextNumber(10, CHUNK - 10), h = rng.NextNumber(60, 95);
+			block(V3(12, 4, 12), V3(x, 2, z), stoneD, folder).SetAttribute("Break", true);
+			block(V3(8, h, 8), V3(x, 4 + h / 2, z), stone, folder).SetAttribute("Break", true);
+			const tip = block(V3(5, 7, 5), V3(x, h + 7.5, z), gold, folder);
+			tip.Material = "Metal";
+			tip.SetAttribute("Break", true);
+		}
+		// a giant head, half in the sand
+		if (!far && rng.NextNumber() < 0.14) {
+			const x = x0 + rng.NextNumber(30, CHUNK - 30), z = z0 - rng.NextNumber(30, CHUNK - 30);
+			block(V3(30, 34, 26), V3(x, 15, z), stone, folder).SetAttribute("Break", true);
+			block(V3(6, 10, 6), V3(x, 16, z - 14), stoneD, folder).SetAttribute("Break", true);
+			for (const s of [-1, 1]) deco(V3(6, 2.5, 1), V3(x + s * 7, 22, z - 13.3), RGB(60, 40, 30), folder);
+			for (let i = 0; i < 4; i++) deco(V3(31, 2.5, 27), V3(x, 26 + i * 5, z), i % 2 ? gold : lapis, folder);
+		}
+		if (!far) for (let i = 0; i < 4; i++) deco(V3(rng.NextNumber(3, 8), rng.NextNumber(2, 5), rng.NextNumber(3, 8)), V3(x0 + rng.NextNumber(0, CHUNK), 3, z0 - rng.NextNumber(0, CHUNK)), dark(stone, rng.NextNumber(0, 0.25)), folder);
+	}
+
+	// ---------------- wind farm: green hills, turbines whose blades swing down through where you fly
+	function windfarm(folder, movers, rng, x0, z0, t, far) {
+		const white = RGB(238, 240, 244), grey = RGB(190, 194, 200);
+		const n = amount(rng, 0.4 + t * 0.35);
+		for (let i = 0; i < n; i++) {
+			const x = x0 + rng.NextNumber(20, CHUNK - 20), z = z0 - rng.NextNumber(20, CHUNK - 20);
+			block(V3(5, 62, 5), V3(x, 31, z), white, folder).SetAttribute("Break", true);
+			block(V3(7, 7, 13), V3(x, 65, z + 2), white, folder).SetAttribute("Break", true);
+			const hub = V3(x, 65, z - 5);
+			const cap = block(V3(4.5, 4.5, 3), hub, grey, folder);
+			cap.SetAttribute("Break", true);
+			const w = (rng.NextNumber() < 0.5 ? -1 : 1) * (0.5 + t * 0.25), ph = rng.NextNumber(0, 6.28);
+			for (let b = 0; b < 3; b++) {
+				const blade = block(V3(3.2, 46, 1), hub, white, folder);
+				blade.SetAttribute("Break", true);
+				movers.push({ part: blade, hub, off: CFn(0, 25, 0), w, ph: ph + b * 2.094 });
+				if (!far) {
+					const tip = deco(V3(3.3, 5, 1.1), hub, RGB(230, 60, 50), folder);
+					movers.push({ part: tip, hub, off: CFn(0, 46, 0), w, ph: ph + b * 2.094 });
+				}
+			}
+		}
+		// a farm: red barn, round bales, a fence, a couple of cows
+		if (rng.NextNumber() < 0.22) {
+			const x = x0 + rng.NextNumber(30, CHUNK - 30), z = z0 - rng.NextNumber(30, CHUNK - 30);
+			block(V3(26, 18, 20), V3(x, 9, z), RGB(190, 56, 46), folder).SetAttribute("Break", true);
+			block(V3(28, 3, 22), V3(x, 19.5, z), RGB(70, 60, 60), folder).SetAttribute("Break", true);
+			block(V3(18, 5, 22), V3(x, 23, z), RGB(70, 60, 60), folder).SetAttribute("Break", true);
+			deco(V3(8, 10, 0.5), V3(x, 6, z - 10.2), RGB(240, 230, 210), folder);
+		}
+		if (!far) {
 			for (let i = 0; i < 3; i++) {
-				const r = deco(V3(rng.NextNumber(200, 320), 22 - i * 5, 1.5), V3(x + i * 30, 380 + i * 16, z - i * 40), i % 2 ? RGB(150, 90, 255) : RGB(70, 255, 170), folder, true);
-				r.Transparency = 0.78;
-				movers.push({ part: r, base: r.Position, a: Vector3.yAxis.mul(10), f: 0.3 + i * 0.1, ph: i, spin: 0.05 });
+				if (rng.NextNumber() > 0.5) continue;
+				const bale = deco(V3(6, 6, 6), V3(x0 + rng.NextNumber(0, CHUNK), 6, z0 - rng.NextNumber(0, CHUNK)), RGB(222, 190, 92), folder);
+				bale.Shape = "Cylinder";
+			}
+			if (rng.NextNumber() < 0.3) {
+				const x = x0 + rng.NextNumber(20, CHUNK - 20), z = z0 - rng.NextNumber(20, CHUNK - 20);
+				deco(V3(8, 4.5, 4), V3(x, 7, z), RGB(245, 245, 245), folder);
+				deco(V3(3, 3, 3), V3(x - 5, 8, z), RGB(245, 245, 245), folder);
+				deco(V3(3.2, 3.2, 2), V3(x + 1, 7.5, z - 0.1), RGB(30, 30, 30), folder);
+				deco(V3(1.2, 1, 2), V3(x - 6.6, 7.2, z), RGB(240, 170, 170), folder);
+				for (const [dx, dz] of [[-2.5, -1.2], [2.5, -1.2], [-2.5, 1.2], [2.5, 1.2]]) deco(V3(0.8, 3, 0.8), V3(x + dx, 3.8, z + dz), RGB(240, 240, 240), folder);
+			}
+			if (rng.NextNumber() < 0.3) {
+				const z = z0 - rng.NextNumber(0, CHUNK);
+				for (let k = 0; k < 8; k++) deco(V3(0.8, 4, 0.8), V3(x0 + k * 25, 5, z), RGB(140, 100, 60), folder);
+				deco(V3(CHUNK, 0.6, 0.4), V3(x0 + CHUNK / 2, 6, z), RGB(140, 100, 60), folder);
+			}
+		}
+	}
+
+	// ---------------- sky islands: above a sea of clouds, chunks of land float and bob, waterfalls pour off them
+	function skyislands(folder, movers, rng, x0, z0, t, far) {
+		const n = amount(rng, 0.55 + t * 0.7);
+		for (let i = 0; i < n; i++) {
+			const x = x0 + rng.NextNumber(20, CHUNK - 20), z = z0 - rng.NextNumber(20, CHUNK - 20);
+			const w = rng.NextNumber(28, 58), y = rng.NextNumber(12, 52);
+			const bob = { a: Vector3.yAxis.mul(rng.NextNumber(2, 5)), f: rng.NextNumber(0.3, 0.6), ph: rng.NextNumber(0, 6.28) };
+			const add = (p) => {
+				movers.push(Object.assign({ part: p, base: p.Position }, bob));
+				return p;
+			};
+			add(block(V3(w, 4, w * 0.8), V3(x, y, z), RGB(90, 180, 70), folder)).SetAttribute("Break", true);
+			for (let k = 0; k < 4; k++) {
+				const s = 0.86 - k * 0.19;
+				add(block(V3(w * s, 7, w * 0.8 * s), V3(x, y - 5.5 - k * 7, z), RGB(130, 96, 64).Lerp(RGB(100, 100, 110), k / 4), folder)).SetAttribute("Break", true);
+			}
+			if (!far) {
+				const trees = rng.NextInteger(0, 2);
+				for (let k = 0; k < trees; k++) {
+					const tx = x + rng.NextNumber(-w / 3, w / 3), tz = z + rng.NextNumber(-w / 4, w / 4);
+					add(block(V3(2.5, 9, 2.5), V3(tx, y + 6.5, tz), RGB(110, 72, 40), folder)).SetAttribute("Break", true);
+					add(block(V3(10, 8, 10), V3(tx, y + 14, tz), RGB(60, 150, 60), folder)).SetAttribute("Break", true);
+				}
+				if (rng.NextNumber() < 0.45) {
+					const fall = add(deco(V3(6, 70, 2), V3(x + w / 2 - 6, y - 36, z - w * 0.4 - 1), RGB(170, 215, 255), folder));
+					fall.Transparency = 0.35;
+					add(deco(V3(8, 2, 3), V3(x + w / 2 - 6, y + 1, z - w * 0.4 - 1), RGB(220, 240, 255), folder));
+				}
+			}
+		}
+		// small rocks drifting at your height, and the odd balloon
+		if (!far && rng.NextNumber() < 0.35) {
+			const p = block(V3(7, 6, 7), V3(x0 + rng.NextNumber(0, CHUNK), rng.NextNumber(18, 32), z0 - rng.NextNumber(0, CHUNK)), RGB(120, 110, 105), folder);
+			p.SetAttribute("Break", true);
+			movers.push({ part: p, base: p.Position, a: V3(18, 4, 0), f: rng.NextNumber(0.3, 0.5), ph: rng.NextNumber(0, 6.28), spin: 0.6 });
+		}
+		if (!far && rng.NextNumber() < 0.18) {
+			const origin = V3(x0 + rng.NextNumber(0, CHUNK), rng.NextNumber(24, 40), z0 - rng.NextNumber(0, CHUNK));
+			const [radd, list] = rig(folder, origin);
+			const env = radd(V3(16, 16, 16), V3(0, 12, 0), [RGB(230, 70, 60), RGB(60, 140, 230), RGB(250, 200, 60)][rng.NextInteger(0, 2)], true);
+			env.Shape = "Ball";
+			radd(V3(4, 3, 4), V3(0, 0, 0), RGB(150, 100, 55), true);
+			movers.push({ rig: list, base: origin, vel: V3(rng.NextNumber(-10, 10), 0, 0), t0: runTime, dMin: -1e9, dMax: 1e9, bob: { amp: 2, f: 0.8, ph: rng.NextNumber(0, 6) } });
+		}
+	}
+
+	// ---------------- factory: warehouses, smokestacks, crushers stamping down and cranes swinging containers across
+	function factory(folder, movers, rng, x0, z0, t, far) {
+		const steel = RGB(96, 110, 128), yel = RGB(250, 196, 30), blk = RGB(30, 30, 34);
+		const n = amount(rng, 0.4 + t * 0.5);
+		for (let i = 0; i < n; i++) {
+			const w = rng.NextNumber(40, 70), h = rng.NextNumber(30, 55), d = rng.NextNumber(30, 50);
+			const x = x0 + rng.NextNumber(w / 2, CHUNK - w / 2), z = z0 - rng.NextNumber(d / 2, CHUNK - d / 2);
+			const b = block(V3(w, h, d), V3(x, h / 2, z), dark(steel, rng.NextNumber(0, 0.3)), folder);
+			b.SetAttribute("Break", true);
+			b.SetAttribute("HP", 8);
+			if (!far) for (let k = 0; k < 3; k++) deco(V3(w + 0.2, 1.4, 1), V3(x, h * (0.3 + k * 0.22), z - d / 2 - 0.3), RGB(70, 80, 95), folder);
+			if (!far) deco(V3(w * 0.3, 4, d * 0.9), V3(x, h + 2, z), RGB(130, 140, 150), folder);
+		}
+		if (rng.NextNumber() < 0.35) {
+			const x = x0 + rng.NextNumber(10, CHUNK - 10), z = z0 - rng.NextNumber(10, CHUNK - 10);
+			for (let k = 0; k < 4; k++) block(V3(12, 24, 12), V3(x, 12 + k * 24, z), k % 2 ? RGB(240, 240, 240) : RGB(200, 50, 40), folder).SetAttribute("Break", true);
+			if (!far) for (let k = 0; k < 3; k++) {
+				const puff = deco(V3(14 + k * 6, 10, 14 + k * 6), V3(x, 104 + k * 12, z), RGB(160, 160, 165), folder);
+				puff.Transparency = 0.35 + k * 0.15;
+				movers.push({ part: puff, base: puff.Position, a: V3(5 + k * 3, 0, 0), f: 0.4, ph: k, spin: 0.5 });
+			}
+		}
+		// the crusher: a frame and a heavy piston that comes down through your height
+		if (!far && rng.NextNumber() < 0.3 + t * 0.2) {
+			const cx = x0 + rng.NextNumber(40, CHUNK - 40), z = z0 - rng.NextNumber(20, CHUNK - 20);
+			for (const s of [-1, 1]) {
+				block(V3(10, 82, 10), V3(cx + s * 25, 41, z), yel, folder).SetAttribute("Break", true);
+				for (let k = 0; k < 5; k++) deco(V3(10.3, 4, 10.3), V3(cx + s * 25, 8 + k * 16, z), blk, folder);
+			}
+			block(V3(62, 10, 12), V3(cx, 82, z), yel, folder).SetAttribute("Break", true);
+			const mv = { a: Vector3.yAxis.mul(24), f: rng.NextNumber(0.7, 1), ph: rng.NextNumber(0, 6.28) };
+			const piston = block(V3(36, 34, 14), V3(cx, 46, z), RGB(60, 64, 72), folder);
+			piston.SetAttribute("Break", true);
+			const stripe = deco(V3(36.4, 3, 14.4), V3(cx, 30.5, z), yel, folder);
+			const rodp = deco(V3(6, 30, 6), V3(cx, 76, z), RGB(170, 175, 185), folder);
+			for (const p of [piston, stripe, rodp]) movers.push(Object.assign({ part: p, base: p.Position }, mv));
+		}
+		// a gantry crane swinging a container across
+		if (!far && rng.NextNumber() < 0.22) {
+			const x = x0 + rng.NextNumber(30, CHUNK - 30), z = z0 - rng.NextNumber(20, CHUNK - 20);
+			block(V3(6, 92, 6), V3(x - 60, 46, z), yel, folder).SetAttribute("Break", true);
+			deco(V3(130, 5, 5), V3(x, 94, z), yel, folder);
+			const mv = { a: Vector3.xAxis.mul(42), f: rng.NextNumber(0.35, 0.55), ph: rng.NextNumber(0, 6.28) };
+			const box = block(V3(26, 12, 10), V3(x, 28, z), [RGB(200, 60, 40), RGB(40, 110, 200), RGB(60, 160, 80)][rng.NextInteger(0, 2)], folder);
+			box.SetAttribute("Break", true);
+			const cable = deco(V3(0.6, 58, 0.6), V3(x, 63, z), blk, folder);
+			for (const p of [box, cable]) movers.push(Object.assign({ part: p, base: p.Position }, mv));
+		}
+		// pipes high up, held by legs you have to miss
+		if (rng.NextNumber() < 0.35) {
+			const z = z0 - rng.NextNumber(10, CHUNK - 10);
+			const pipe = deco(V3(CHUNK, 5, 5), V3(x0 + CHUNK / 2, 55, z), RGB(150, 160, 170), folder);
+			pipe.Shape = "Cylinder";
+			for (let k = 0; k < 3; k++) block(V3(3, 55, 3), V3(x0 + 30 + k * 70, 27.5, z), RGB(80, 85, 95), folder).SetAttribute("Break", true);
+		}
+	}
+
+	// ---------------- neon: a synthwave night. grid floor, glowing pyramids, laser gates that sweep up and down
+	function neonmap(folder, movers, rng, x0, z0, t, far) {
+		const pink = RGB(255, 50, 200), cyan = RGB(40, 240, 255), purple = RGB(150, 60, 255), dk = RGB(20, 14, 36);
+		if (rng.NextNumber() < 0.35 + t * 0.15) {
+			const x = x0 + rng.NextNumber(30, CHUNK - 30), z = z0 - rng.NextNumber(30, CHUNK - 30), w = rng.NextNumber(40, 70);
+			for (let k = 0; k < 5; k++) {
+				const s = w * (1 - k * 0.19);
+				block(V3(s, 11, s), V3(x, 5.5 + k * 11, z), dk, folder).SetAttribute("Break", true);
+				if (!far) deco(V3(s + 0.4, 0.8, s + 0.4), V3(x, 11 + k * 11, z), k % 2 ? cyan : pink, folder, true);
+			}
+		}
+		// laser gate: two pylons, a red beam sliding up and down between them
+		if (!far && rng.NextNumber() < 0.3 + t * 0.2) {
+			const cx = x0 + rng.NextNumber(40, CHUNK - 40), z = z0 - rng.NextNumber(20, CHUNK - 20), gap = rng.NextNumber(60, 90);
+			for (const s of [-1, 1]) {
+				block(V3(6, 60, 6), V3(cx + s * (gap / 2 + 3), 30, z), dk, folder).SetAttribute("Break", true);
+				deco(V3(6.3, 60, 1), V3(cx + s * (gap / 2 + 3), 30, z - 3), s < 0 ? pink : cyan, folder, true);
+			}
+			const beam = block(V3(gap, 1.6, 1.6), V3(cx, 25, z), RGB(255, 40, 60), folder);
+			beam.Material = "Neon";
+			movers.push({ part: beam, base: beam.Position, a: Vector3.yAxis.mul(18), f: rng.NextNumber(0.8, 1.1), ph: rng.NextNumber(0, 6.28) });
+			deco(V3(gap, 0.8, 0.8), V3(cx, 58, z), purple, folder, true);
+		}
+		// cubes turning in the air
+		if (rng.NextNumber() < 0.4) {
+			const p = V3(x0 + rng.NextNumber(0, CHUNK), rng.NextNumber(18, 34), z0 - rng.NextNumber(0, CHUNK));
+			const cube = block(V3(13, 13, 13), p, dk, folder);
+			cube.SetAttribute("Break", true);
+			const glow = deco(V3(13.6, 2, 13.6), p, rng.NextNumber() < 0.5 ? pink : cyan, folder, true);
+			const mv = { a: Vector3.yAxis.mul(4), f: 0.7, ph: rng.NextNumber(0, 6.28), spin: rng.NextNumber(-1, 1), tilt: 0.4 };
+			movers.push(Object.assign({ part: cube, base: p }, mv), Object.assign({ part: glow, base: p }, mv));
+		}
+		// neon palms on the side
+		if (!far && rng.NextNumber() < 0.3) {
+			const x = x0 + rng.NextNumber(0, CHUNK), z = z0 - rng.NextNumber(0, CHUNK);
+			deco(V3(1.4, 30, 1.4), V3(x, 15, z), pink, folder, true);
+			for (let k = 0; k < 5; k++) {
+				const a = (k / 5) * Math.PI * 2;
+				const leaf = deco(V3(12, 0.6, 1.6), V3(x + Math.cos(a) * 6, 29, z + Math.sin(a) * 6), cyan, folder, true);
+				leaf.CFrame = CFrame.fromPos(leaf.Position).mul(Ang(0, -a, -0.35));
 			}
 		}
 	}
@@ -1418,6 +1695,10 @@ let trackChunks, updateMovers, regenerate, canyonPath, canyonHalfGap, updatePads
 					if (stage === "chill") h = Math.max(1, 3 + 2.5 * Math.sin(tx / 35 + d / 50) + 2.5 * Math.cos(d / 80 - tx / 60));
 					else if (stage === "boss" || stage === "boss2") h = rng.NextInteger(1, 2);
 					else if (stage === "sea") h = 1.5 + Math.sin(tx / 40 + d / 55) * 0.6 + Math.cos(d / 70 - tx / 90) * 0.5;
+					else if (stage === "windfarm") h = 2 + (Math.sin(tx / 70 + d / 90) + 1) * 3 + Math.cos(d / 60 - tx / 110) * 1.5;
+					else if (stage === "sky") h = 2.5 + Math.sin(tx / 23 + d / 31) * 1.2 + Math.cos(d / 19) * 0.8;
+					else if (stage === "ruins") h = rng.NextInteger(1, 3);
+					else if (stage === "factory" || stage === "neon") h = 1;
 					else if (stage === "volcano") h = 1.2 + Math.abs(Math.sin(tx / 29 + d / 47)) * 1.6;
 					else if (stage === "glacier") h = 2 + Math.sin(tx / 33 + d / 41) * 1.2 + rng.NextNumber(0, 0.6);
 					else h = rng.NextInteger(1, 10);
@@ -1487,6 +1768,16 @@ let trackChunks, updateMovers, regenerate, canyonPath, canyonHalfGap, updatePads
 			} else if (stage === "city") {
 				const far = Math.abs(x0 + CHUNK / 2 - pos.X) > 900;
 				cityBlocks(folder, rng, x0, z0, far ? Math.min(1, amount(rng, 0.7)) : amount(rng, (0.6 + t * 0.8) * mult), far);
+			} else if (stage === "ruins") {
+				ruins(folder, movers, rng, x0, z0, t, Math.abs(x0 + CHUNK / 2 - pos.X) > 420);
+			} else if (stage === "windfarm") {
+				windfarm(folder, movers, rng, x0, z0, t, Math.abs(x0 + CHUNK / 2 - pos.X) > 420);
+			} else if (stage === "sky") {
+				skyislands(folder, movers, rng, x0, z0, t, Math.abs(x0 + CHUNK / 2 - pos.X) > 420);
+			} else if (stage === "factory") {
+				factory(folder, movers, rng, x0, z0, t, Math.abs(x0 + CHUNK / 2 - pos.X) > 420);
+			} else if (stage === "neon") {
+				neonmap(folder, movers, rng, x0, z0, t, Math.abs(x0 + CHUNK / 2 - pos.X) > 420);
 			} else if (stage === "volcano") {
 				volcano(folder, movers, rng, x0, z0, t, Math.abs(x0 + CHUNK / 2 - pos.X) > 420);
 			} else if (stage === "glacier") {
@@ -1593,6 +1884,9 @@ let trackChunks, updateMovers, regenerate, canyonPath, canyonHalfGap, updatePads
 						m.gone = true;
 						for (const [part] of m.rig) part.Parent = null;
 					} else for (const [part, off] of m.rig) if (part.Parent) part.Position = p.add(off);
+				} else if (m.hub) {
+					// a blade going round its hub, facing you
+					if (m.part.Parent) m.part.CFrame = CFrame.fromPos(m.hub).mul(Ang(0, 0, runTime * m.w + m.ph)).mul(m.off);
 				} else if (m.part.Parent) {
 					let off = m.a.mul(Math.sin(runTime * m.f + m.ph));
 					if (m.a2) off = off.add(m.a2.mul(Math.sin(runTime * m.f2 + m.ph)));
@@ -2289,175 +2583,518 @@ let buildPlane;
 		}
 	};
 
-	// ---------------- the hangar: ten planes you save coins up for
+	// ---------------- the hangar: ten planes you save coins up for. built properly, they cost enough
 	const HALF = Math.PI / 2;
+	const BALL = { Shape: "Ball", _ellipsoid: true };
+	const X = (...o) => Object.assign({}, ...o);
+	// a round rod from a to b
+	const rod = (add, a, b, d, col, extra) => add("Part", V3(b.sub(a).Magnitude, d, d), col, CFrame.lookAt(a.add(b).div(2), b).mul(Ang(0, HALF, 0)), X({ Shape: "Cylinder" }, extra));
+	// a square bar from a to b
+	const bar = (add, a, b, w, h, col, extra) => add("Part", V3(w, h, b.sub(a).Magnitude), col, CFrame.lookAt(a.add(b).div(2), b), extra);
+	const ell = (add, p, s, col, extra) => add("Part", s, col, CFrame.fromPos(p), X(BALL, extra));
+	// any flat triangle out of two wedges
+	const tri = (add, a, b, c, col, extra, thick) => {
+		let ab = b.sub(a), ac = c.sub(a), bc = c.sub(b);
+		const abd = ab.Dot(ab), acd = ac.Dot(ac), bcd = bc.Dot(bc);
+		if (abd > acd && abd > bcd) [c, a] = [a, c];
+		else if (acd > bcd && acd > abd) [a, b] = [b, a];
+		ab = b.sub(a);
+		ac = c.sub(a);
+		bc = c.sub(b);
+		const right = ac.Cross(ab).Unit, up = bc.Cross(right).Unit, back = bc.Unit;
+		const h = Math.abs(ab.Dot(up)), t = thick || 0.12;
+		add("WedgePart", V3(t, h, Math.abs(ab.Dot(back))), col, CFrame.fromMatrix(a.add(b).div(2), right, up, back), extra);
+		add("WedgePart", V3(t, h, Math.abs(ac.Dot(back))), col, CFrame.fromMatrix(a.add(c).div(2), right.mul(-1), up, back.mul(-1)), extra);
+	};
+	const mirror = (v) => V3(-v.X, v.Y, v.Z);
+
 	SKIN_BUILD.Hornet = (add) => {
-		const yel = RGB(255, 196, 20), blk = RGB(26, 22, 20), wing = RGB(205, 232, 255);
-		add("Part", V3(1.8, 1.7, 1.9), blk, CFn(0, 0.1, -3.7), { Shape: "Ball" });
+		const Y = RGB(255, 188, 22), Yd = RGB(214, 132, 12), K = RGB(24, 20, 18), eye = RGB(96, 18, 16);
+		const memb = RGB(214, 228, 245), vein = RGB(80, 66, 50);
+		// head
+		ell(add, V3(0, 0.45, -4.3), V3(2.2, 2, 1.8), K);
+		ell(add, V3(0, 0.15, -5), V3(1.7, 1.55, 0.95), Y);
+		ell(add, V3(0, -0.35, -5.35), V3(0.95, 0.6, 0.5), Yd);
 		for (const s of [-1, 1]) {
-			add("Part", V3(0.8, 1.05, 1), RGB(150, 26, 18), CFn(s * 0.72, 0.25, -4), { Shape: "Ball" });
-			add("Part", V3(0.14, 0.14, 2.2), blk, CFn(s * 0.45, 1.25, -4.7).mul(Ang(0.7, s * 0.35, 0)));
-			add("Part", V3(0.22, 0.22, 0.22), yel, CFn(s * 0.82, 1.95, -5.4), NEON);
-			// two pairs of see-through wings
-			add("Part", V3(5.6, 0.08, 2.1), wing, CFn(s * 3.2, 1.35, -1.9).mul(Ang(0, s * 0.22, 0)), tagged(s < 0 ? "wingL" : "wingR", { Transparency: 0.45 }));
-			add("Part", V3(4, 0.08, 1.6), wing, CFn(s * 2.6, 1.3, -0.4).mul(Ang(0, s * 0.5, 0)), tagged(s < 0 ? "wingL" : "wingR", { Transparency: 0.5 }));
-			add("Part", V3(5.6, 0.1, 0.12), RGB(140, 170, 200), CFn(s * 3.2, 1.36, -2.95).mul(Ang(0, s * 0.22, 0)), tagged(s < 0 ? "wingL" : "wingR"));
+			ell(add, V3(s * 0.88, 0.45, -4.55), V3(0.85, 1.65, 1.3), eye, { Material: "Glass" });
+			ell(add, V3(s * 1.12, 0.95, -4.9), V3(0.22, 0.3, 0.22), RGB(255, 235, 230), { Material: "Neon" });
+			ell(add, V3(s * 0.36, -0.75, -5.4), V3(0.36, 0.32, 0.95), K, { _tag: s < 0 ? "mandL" : "mandR" });
+			ell(add, V3(s * 0.4, -0.78, -5.85), V3(0.22, 0.2, 0.35), Yd, { _tag: s < 0 ? "mandL" : "mandR" });
+			const tag = { _tag: s < 0 ? "antL" : "antR" };
+			const a0 = V3(s * 0.35, 1.05, -5), a1 = V3(s * 0.75, 2.15, -5.35), a2 = V3(s * 1.35, 2.55, -6.6);
+			rod(add, a0, a1, 0.16, K, tag);
+			rod(add, a1, a2, 0.13, Yd, tag);
+			ell(add, a2, V3(0.22, 0.22, 0.22), Y, tag);
 		}
-		add("Part", V3(2.3, 2.1, 2.7), yel, CFn(0, 0.2, -1.7), { Shape: "Ball" });
-		add("Part", V3(1.2, 0.5, 1.6), blk, CFn(0, 1.1, -1.7));
-		// the sting end, black and yellow rings getting smaller
-		for (let i = 0; i < 5; i++) add("Part", V3(2.5 - i * 0.32, 2.3 - i * 0.3, 1.15), i % 2 ? blk : yel, CFn(0, 0.05 - i * 0.06, 0.4 + i * 1.05), tagged("abd", { Shape: "Ball" }));
-		add("Part", V3(0.3, 0.3, 1.5), blk, CFn(0, -0.2, 5.8), tagged("abd"));
-	};
-	SKIN_BUILD.Crane = (add) => {
-		const paper = RGB(232, 58, 60), fold = RGB(190, 38, 44), white = RGB(250, 247, 238);
-		add("Part", V3(2.2, 2.2, 2.2), paper, CFn(0, 0, 0).mul(Ang(0.62, 0.785, 0)));
-		add("WedgePart", V3(1.8, 1.4, 4.2), fold, CFn(0, -0.9, 0.4).mul(Ang(Math.PI, 0, 0)));
-		// neck and tail point up and away like the real fold
-		add("Part", V3(0.45, 0.45, 5.2), paper, CFn(0, 2, -3.1).mul(Ang(-0.72, 0, 0)), tagged("neck"));
-		add("Part", V3(0.42, 0.42, 1.7), fold, CFn(0, 3.75, -5.35).mul(Ang(0.65, 0, 0)), tagged("neck"));
-		add("Part", V3(0.45, 0.45, 5.2), paper, CFn(0, 2, 3.1).mul(Ang(0.72, 0, 0)));
-		for (const s of [-1, 1]) {
-			const w = s < 0 ? "wingL" : "wingR";
-			add("WedgePart", V3(0.14, 7.4, 4.6), white, CFn(s * 4.1, 0.35, 0.5).mul(Ang(0, 0, -s * HALF)), tagged(w));
-			add("WedgePart", V3(0.16, 5.4, 3.4), paper, CFn(s * 3.2, 0.45, 0.6).mul(Ang(0, 0, -s * HALF)), tagged(w));
-			add("Part", V3(7.4, 0.18, 0.12), fold, CFn(s * 4.1, 0.46, -1.75), tagged(w));
+		for (const [x, y, z] of [[0, 1.4, -4.45], [-0.3, 1.32, -4.2], [0.3, 1.32, -4.2]]) ell(add, V3(x, y, z), V3(0.2, 0.2, 0.2), RGB(255, 220, 90), { Material: "Neon" });
+		// thorax with its yellow marks
+		ell(add, V3(0, 0.35, -2.2), V3(2.4, 2.2, 2.9), K);
+		ell(add, V3(0, 0.55, -3.4), V3(2, 1.35, 0.6), Y);
+		ell(add, V3(0, 1.3, -2.3), V3(1.4, 0.45, 1.7), Y);
+		for (const s of [-1, 1]) ell(add, V3(s * 1.12, 0.2, -2.1), V3(0.42, 1.2, 1.6), Y);
+		rod(add, V3(0, 0.15, -0.8), V3(0, 0.05, 0.15), 0.6, K);
+		// the abdomen: yellow body, black bands that follow its shape, a black notch on each band
+		const abd = { _tag: "abd" };
+		ell(add, V3(0, -0.1, 2.4), V3(2.6, 2.3, 5.6), Y, abd);
+		for (let i = 0; i < 4; i++) {
+			const z = 0.95 + i * 1.12, r = Math.sqrt(Math.max(0.05, 1 - ((z - 2.4) / 2.8) ** 2));
+			ell(add, V3(0, -0.1, z), V3(2.6 * r + 0.1, 2.3 * r + 0.1, 0.42), K, abd);
+			ell(add, V3(0, -0.1 + (2.3 * r) / 2 - 0.02, z - 0.38), V3(0.55, 0.22, 0.6), K, abd);
 		}
-	};
-	SKIN_BUILD.Balloon = (add) => {
-		const red = RGB(228, 56, 48), yel = RGB(255, 206, 60), white = RGB(248, 244, 236), wicker = RGB(150, 100, 52);
-		add("Part", V3(9, 10, 9), red, CFn(0, 4.2, 0), tagged("bal", { Shape: "Ball" }));
-		// stripes are slices of a slightly bigger ball
-		for (let i = 0; i < 3; i++) add("Part", V3(1.3, 10.1, 9.1), i === 1 ? white : yel, CFn(0, 4.2, 0).mul(Ang(0, (i * Math.PI) / 3, 0)), tagged("bal", { Shape: "Ball" }));
-		add("Part", V3(1.4, 3.4, 3.4), red, CFn(0, -0.7, 0).mul(Ang(0, 0, HALF)), tagged("bal", { Shape: "Cylinder" }));
-		for (const sx of [-1, 1]) for (const sz of [-1, 1]) add("Part", V3(0.12, 2.6, 0.12), RGB(90, 70, 50), CFn(sx * 1.1, -2.6, sz * 1.1), tagged("bal"));
-		add("Part", V3(2.6, 1.8, 2.6), wicker, CFn(0, -4.6, 0), tagged("bal"));
-		add("Part", V3(2.9, 0.35, 2.9), RGB(110, 70, 35), CFn(0, -3.7, 0), tagged("bal"));
-		add("Part", V3(0.7, 0.7, 0.7), RGB(255, 170, 50), CFn(0, -2.5, 0), tagged("bal", { Material: "Neon", _flame: true }));
-		// a little flag on the basket
-		add("Part", V3(0.1, 1.6, 0.1), RGB(90, 70, 50), CFn(1.2, -2.9, 1.2), tagged("bal"));
-		add("Part", V3(0.06, 0.6, 1), RGB(80, 170, 255), CFn(1.2, -2.4, 1.7), tagged("flag"));
-	};
-	SKIN_BUILD.Submarine = (add) => {
-		const yel = RGB(255, 204, 30), dk = RGB(60, 62, 72), glass = RGB(120, 230, 255);
-		add("Part", V3(10, 3.2, 3.2), yel, CFn().mul(Ang(0, HALF, 0)), { Shape: "Cylinder" });
-		add("Part", V3(3.2, 3.2, 3.6), yel, CFn(0, 0, -5), { Shape: "Ball" });
-		add("Part", V3(2.4, 2.4, 3.4), yel, CFn(0, 0, 5), { Shape: "Ball" });
-		add("Part", V3(1.6, 1.9, 3), yel, CFn(0, 2.2, -0.8));
-		add("Part", V3(1.8, 0.3, 3.2), dk, CFn(0, 3.2, -0.8));
-		add("Part", V3(0.25, 1.6, 0.25), dk, CFn(0, 4, -1.4), tagged("scope"));
-		add("Part", V3(0.3, 0.3, 0.9), dk, CFn(0, 4.75, -1.7), tagged("scope"));
-		add("Part", V3(0.2, 0.2, 0.1), glass, CFn(0, 4.75, -2.17), tagged("scope", NEON));
-		for (const z of [-3, -1.2, 0.6, 2.4]) for (const s of [-1, 1]) add("Part", V3(0.7, 0.7, 0.7), glass, CFn(s * 1.5, 0.35, z), { Material: "Neon", Shape: "Ball" });
-		add("Part", V3(4.2, 0.2, 1.2), dk, CFn(0, 0, 4.6));
-		add("Part", V3(0.2, 2.8, 1.2), dk, CFn(0, 0, 4.6));
-		add("Part", V3(5.2, 0.2, 1), dk, CFn(0, 0.5, -2.6));
-		add("Part", V3(0.8, 0.8, 0.8), dk, CFn(0, 0, 6.6), tagged("prop", { Shape: "Ball" }));
-		for (let i = 0; i < 3; i++) add("Part", V3(0.3, 2.4, 0.45), RGB(200, 150, 40), CFn(0, 0, 6.7).mul(Ang(0, 0, (i * 2 * Math.PI) / 3)).mul(CFn(0, 1.1, 0)), tagged("prop", { Material: "Metal" }));
-	};
-	SKIN_BUILD.Manta = (add) => {
-		const top = RGB(28, 38, 60), belly = RGB(220, 230, 240), spot = RGB(80, 240, 255);
-		add("Part", V3(3, 1, 5.2), top, CFn());
-		add("Part", V3(2.6, 0.3, 4.8), belly, CFn(0, -0.55, 0));
+		ell(add, V3(0, -0.15, 5.05), V3(1.05, 0.95, 1.4), K, abd);
+		rod(add, V3(0, -0.2, 5.6), V3(0, -0.35, 6.9), 0.2, K, abd);
+		ell(add, V3(0, -0.36, 6.95), V3(0.16, 0.16, 0.16), RGB(255, 230, 90), X({ Material: "Neon" }, abd));
+		// legs tucked under, like in flight
 		for (const s of [-1, 1]) {
-			add("Part", V3(0.6, 0.5, 1.7), top, CFn(s * 1.15, -0.05, -3.2).mul(Ang(0, -s * 0.15, 0)));
-			// three pieces per wing, so it can ripple like a real ray
-			for (let i = 0; i < 3; i++) {
-				const tag = (s < 0 ? "L" : "R") + i;
-				const cf = CFn(s * (2.7 + i * 2.3), 0, 0.3 + i * 0.6).mul(Ang(0, s * 0.28, 0));
-				add("Part", V3(2.4, 0.5 - i * 0.1, 4.4 - i * 1.15), top, cf, tagged(tag));
-				add("Part", V3(2.3, 0.18, 4.2 - i * 1.15), belly, cf.mul(CFn(0, -0.3, 0)), tagged(tag));
-				add("Part", V3(0.55, 0.12, 0.55), spot, cf.mul(CFn(0, 0.3 - i * 0.05, -0.3)), tagged(tag, NEON));
+			for (let k = 0; k < 3; k++) {
+				const hip = V3(s * 0.8, -0.55, -2.9 + k * 0.7), knee = V3(s * 1.65, -1.25, -2.5 + k * 0.95), foot = V3(s * 1.25, -1.9, -1.3 + k * 1.15);
+				rod(add, hip, knee, 0.24, K);
+				rod(add, knee, foot, 0.17, Yd);
+				ell(add, foot, V3(0.22, 0.22, 0.3), K);
 			}
 		}
-		add("Part", V3(0.25, 0.25, 6.4), top, CFn(0, 0, 5.6), tagged("tail"));
-		add("Part", V3(0.35, 0.35, 0.35), spot, CFn(0, 0, 8.8), tagged("tail", { Material: "Neon", Shape: "Ball" }));
-		for (const s of [-1, 1]) add("Part", V3(0.35, 0.35, 0.35), spot, CFn(s * 0.7, 0.45, -2.2), { Material: "Neon", Shape: "Ball" });
+		// four wings: thin membranes with veins
+		for (const s of [-1, 1]) {
+			const w = { _tag: s < 0 ? "wingL" : "wingR" };
+			const fw = { Transparency: 0.55, CastShadow: false };
+			add("Part", V3(6.2, 0.05, 1.9), memb, CFrame.fromPos(V3(s * 3.9, 1.45, -2)).mul(Ang(0, -s * 0.18, 0)), X(BALL, fw, w));
+			add("Part", V3(4.4, 0.05, 1.45), memb, CFrame.fromPos(V3(s * 2.95, 1.38, -0.55)).mul(Ang(0, -s * 0.38, 0)), X(BALL, fw, w));
+			rod(add, V3(s * 0.85, 1.48, -2.65), V3(s * 6.6, 1.48, -1.75), 0.11, vein, w);
+			rod(add, V3(s * 1, 1.48, -2.25), V3(s * 5.2, 1.48, -1.2), 0.06, vein, w);
+			rod(add, V3(s * 1.2, 1.48, -1.95), V3(s * 3.8, 1.48, -0.95), 0.05, vein, w);
+			rod(add, V3(s * 3.3, 1.48, -2.3), V3(s * 3.6, 1.48, -1.15), 0.05, vein, w);
+			ell(add, V3(s * 5.6, 1.49, -2.15), V3(0.7, 0.07, 0.28), Yd, w);
+			rod(add, V3(s * 0.9, 1.41, -1.15), V3(s * 4.9, 1.41, 0.25), 0.07, vein, w);
+			rod(add, V3(s * 1.1, 1.41, -0.85), V3(s * 3.7, 1.41, 0.35), 0.045, vein, w);
+		}
 	};
-	SKIN_BUILD.Satellite = (add) => {
-		const foil = RGB(222, 168, 48), cell = RGB(28, 58, 140), line = RGB(170, 200, 255), white = RGB(235, 235, 240);
+
+	SKIN_BUILD.Crane = (add) => {
+		const red = RGB(226, 58, 66), lite = RGB(246, 98, 104), shade = RGB(178, 36, 50), white = RGB(250, 245, 234), cream = RGB(232, 222, 200);
+		// body: a folded diamond, light on top, shade below
+		const N = V3(0, 0.2, -2.6), Bk = V3(0, 0.2, 2.6), T = V3(0, 1.4, 0), Lw = V3(-1.3, 0.3, 0), Rw = V3(1.3, 0.3, 0), D = V3(0, -1.6, 0.2);
+		tri(add, N, T, Lw, lite);
+		tri(add, N, T, Rw, red);
+		tri(add, Bk, T, Lw, red);
+		tri(add, Bk, T, Rw, lite);
+		tri(add, N, D, Lw, shade);
+		tri(add, N, D, Rw, shade);
+		tri(add, Bk, D, Lw, shade);
+		tri(add, Bk, D, Rw, shade);
+		// neck and tail: thin folded points going up, the head bent forward
+		const nk = { _tag: "neck" };
+		const n0 = V3(0, 0.3, -2.4), n1 = V3(0, 3.6, -5.4), hd = V3(0, 3.3, -6.6);
+		tri(add, n0.add(V3(-0.35, 0, 0.3)), n0.add(V3(0.35, 0, 0.3)), n1, red, nk);
+		tri(add, n0.add(V3(0, -0.4, 0.2)), n0.add(V3(0.35, 0, 0.3)), n1, shade, nk);
+		tri(add, n0.add(V3(0, -0.4, 0.2)), n0.add(V3(-0.35, 0, 0.3)), n1, lite, nk);
+		tri(add, n1, n1.add(V3(-0.18, -0.15, 0.1)), hd, red, nk);
+		tri(add, n1, n1.add(V3(0.18, -0.15, 0.1)), hd, shade, nk);
+		const t0 = V3(0, 0.3, 2.4), t1 = V3(0, 3.8, 6);
+		tri(add, t0.add(V3(-0.35, 0, -0.3)), t0.add(V3(0.35, 0, -0.3)), t1, lite);
+		tri(add, t0.add(V3(0, -0.4, -0.2)), t0.add(V3(0.35, 0, -0.3)), t1, shade);
+		tri(add, t0.add(V3(0, -0.4, -0.2)), t0.add(V3(-0.35, 0, -0.3)), t1, red);
+		// wings: each one folded once down the middle, with the white inside of the paper showing at the edge
+		for (const s of [-1, 1]) {
+			const w = { _tag: s < 0 ? "wingL" : "wingR" };
+			const r0 = V3(s * 0.9, 0.55, -1.7), r1 = V3(s * 0.9, 0.55, 1.5), tip = V3(s * 8.4, 1.7, 2.6), crease = V3(s * 4.6, 1.35, 0.3);
+			tri(add, r0, crease, tip, s < 0 ? lite : red, w);
+			tri(add, r0, crease, r1, s < 0 ? red : lite, w);
+			tri(add, r1, crease, tip, shade, w);
+			rod(add, r0.add(V3(0, 0.08, 0)), tip.add(V3(0, 0.08, 0)), 0.07, white, w);
+			rod(add, r0.add(V3(0, 0.1, 0)), crease.add(V3(0, 0.1, 0)), 0.05, cream, w);
+			// a little pattern printed on the paper
+			for (let i = 0; i < 3; i++) {
+				const p = r0.Lerp(tip, 0.3 + i * 0.18).Lerp(crease, 0.35);
+				add("Part", V3(0.5, 0.05, 0.5), white, CFrame.fromPos(p.add(V3(0, 0.12, 0))), X(BALL, w));
+			}
+		}
+	};
+
+	SKIN_BUILD.Balloon = (add) => {
+		const red = RGB(222, 50, 46), yel = RGB(255, 202, 54), white = RGB(248, 244, 234), navy = RGB(34, 52, 112);
+		const wick = RGB(168, 112, 56), wickD = RGB(120, 76, 36), leather = RGB(84, 50, 30), brass = RGB(214, 170, 80);
+		const b = { _tag: "bal" };
+		// envelope: a teardrop, twelve gores, two bands
+		ell(add, V3(0, 5.2, 0), V3(9, 9, 9), red, b);
+		ell(add, V3(0, 1.7, 0), V3(6.2, 5.6, 6.2), red, b);
+		for (let i = 0; i < 6; i++) {
+			const cf = Ang(0, (i * Math.PI) / 6, 0);
+			const c = i % 2 ? yel : white;
+			add("Part", V3(1.9, 9.06, 9.06), c, CFrame.fromPos(V3(0, 5.2, 0)).mul(cf), X(BALL, b));
+			add("Part", V3(1.3, 5.62, 6.22), c, CFrame.fromPos(V3(0, 1.7, 0)).mul(cf), X(BALL, b));
+		}
+		add("Part", V3(0.7, 9.15, 9.15), navy, CFrame.fromPos(V3(0, 5.2, 0)).mul(Ang(0, 0, HALF)), X({ Shape: "Cylinder" }, b));
+		add("Part", V3(0.35, 7.6, 7.6), navy, CFrame.fromPos(V3(0, 7.9, 0)).mul(Ang(0, 0, HALF)), X({ Shape: "Cylinder" }, b));
+		ell(add, V3(0, 9.55, 0), V3(2.4, 0.9, 2.4), RGB(150, 30, 30), b);
+		add("Part", V3(0.25, 1.4, 1.4), brass, CFrame.fromPos(V3(0, 9.95, 0)).mul(Ang(0, 0, HALF)), X({ Shape: "Cylinder", Material: "Metal" }, b));
+		// skirt and the burner hanging under it
+		add("Part", V3(1.3, 3.2, 3.2), red, CFrame.fromPos(V3(0, -1.2, 0)).mul(Ang(0, 0, HALF)), X({ Shape: "Cylinder" }, b));
+		add("Part", V3(0.3, 3.5, 3.5), navy, CFrame.fromPos(V3(0, -1.85, 0)).mul(Ang(0, 0, HALF)), X({ Shape: "Cylinder" }, b));
+		for (const [x, z] of [[-1, -1], [1, -1], [-1, 1], [1, 1]]) {
+			rod(add, V3(x * 1.2, -1.9, z * 1.2), V3(x * 0.55, -2.9, z * 0.55), 0.1, RGB(60, 60, 64), X(b, { Material: "Metal" }));
+			rod(add, V3(x * 0.55, -3.1, z * 0.55), V3(x * 1.3, -4.35, z * 1.3), 0.08, RGB(110, 90, 70), b);
+		}
+		add("Part", V3(1.4, 0.2, 1.4), RGB(70, 70, 76), CFrame.fromPos(V3(0, -3, 0)), X({ Material: "Metal" }, b));
+		for (const x of [-0.32, 0.32]) {
+			add("Part", V3(0.7, 0.5, 0.5), brass, CFrame.fromPos(V3(x, -2.75, 0)).mul(Ang(0, 0, HALF)), X({ Shape: "Cylinder", Material: "Metal" }, b));
+			ell(add, V3(x, -2.35, 0), V3(0.35, 0.35, 0.35), RGB(255, 160, 50), X(b, { Material: "Neon", _flame: true }));
+		}
+		// the basket: wicker weave, padded rim, corner posts, sandbags
+		add("Part", V3(3, 2, 3), wick, CFrame.fromPos(V3(0, -5.45, 0)), X({ Material: "Wood" }, b));
+		for (let i = 0; i < 3; i++) {
+			const y = -6.05 + i * 0.6;
+			add("Part", V3(3.05, 0.12, 3.05), wickD, CFrame.fromPos(V3(0, y, 0)), X({ Material: "Wood" }, b));
+		}
+		for (const [x, z] of [[-1, -1], [1, -1], [-1, 1], [1, 1]]) add("Part", V3(0.22, 2.1, 0.22), wickD, CFrame.fromPos(V3(x * 1.45, -5.45, z * 1.45)), X({ Material: "Wood" }, b));
+		for (const [x, z, w, d] of [[0, -1.5, 3.3, 0.35], [0, 1.5, 3.3, 0.35], [-1.5, 0, 0.35, 3.3], [1.5, 0, 0.35, 3.3]]) add("Part", V3(w, 0.35, d), leather, CFrame.fromPos(V3(x, -4.35, z)), b);
+		for (const [x, z] of [[-1.62, -0.6], [1.62, 0.6], [0.5, -1.62], [-0.5, 1.62]]) {
+			ell(add, V3(x, -5.1, z), V3(0.55, 0.75, 0.55), RGB(196, 172, 128), b);
+			rod(add, V3(x * 0.95, -4.45, z * 0.95), V3(x, -4.8, z), 0.05, RGB(110, 90, 70), b);
+		}
+		// the pilot, goggles on
+		ell(add, V3(0.4, -3.75, 0.2), V3(0.75, 0.8, 0.75), RGB(240, 196, 160), b);
+		ell(add, V3(0.4, -3.45, 0.2), V3(0.82, 0.5, 0.82), RGB(110, 70, 40), b);
+		for (const s of [-1, 1]) ell(add, V3(0.4 + s * 0.17, -3.72, -0.15), V3(0.24, 0.24, 0.12), RGB(150, 230, 255), X(b, { Material: "Glass" }));
+		ell(add, V3(0.4, -4.3, 0.2), V3(1, 0.6, 0.8), RGB(60, 90, 160), b);
+		// two little fans on outriggers, so it actually goes somewhere
+		for (const s of [-1, 1]) {
+			const hub = V3(s * 3, -5.2, 0.6);
+			rod(add, V3(s * 1.5, -5.2, 0.6), hub, 0.18, brass, X(b, { Material: "Metal" }));
+			add("Part", V3(0.5, 1.2, 1.2), RGB(70, 70, 76), CFrame.fromPos(hub.add(V3(0, 0, 0.2))).mul(Ang(0, HALF, 0)), X({ Shape: "Cylinder", Material: "Metal" }, b));
+			const f = { _tag: s < 0 ? "fanL" : "fanR" };
+			for (let k = 0; k < 4; k++) add("Part", V3(0.12, 1.2, 0.35), brass, CFrame.fromPos(hub.add(V3(0, 0, 0.55))).mul(Ang(0, 0, (k * Math.PI) / 2)).mul(CFn(0, 0.6, 0)).mul(Ang(0, 0.4, 0)), X({ Material: "Metal" }, f));
+			ell(add, hub.add(V3(0, 0, 0.6)), V3(0.3, 0.3, 0.3), brass, X({ Material: "Metal" }, f));
+		}
+		add("Part", V3(0.08, 1.8, 0.08), RGB(90, 70, 50), CFrame.fromPos(V3(-1.3, -3.6, 1.3)), b);
+		add("Part", V3(0.05, 0.7, 1.1), RGB(70, 160, 255), CFrame.fromPos(V3(-1.3, -2.95, 1.86)), { _tag: "flag" });
+	};
+
+	SKIN_BUILD.Submarine = (add) => {
+		const Y = RGB(255, 200, 34), Yd = RGB(210, 150, 20), brass = RGB(196, 150, 70), dk = RGB(48, 50, 58), glass = RGB(110, 225, 255);
 		const M = { Material: "Metal" };
-		add("Part", V3(2.6, 2.6, 3.6), foil, CFn(), M);
-		add("Part", V3(2.7, 0.35, 3.7), RGB(245, 205, 95), CFn(0, 0.8, 0), M);
-		add("Part", V3(2.7, 0.35, 3.7), RGB(190, 140, 40), CFn(0, -0.8, 0), M);
-		for (const s of [-1, 1]) {
-			add("Part", V3(2.2, 0.25, 0.25), white, CFn(s * 2.4, 0, 0), tagged("pan", M));
-			add("Part", V3(6.2, 0.15, 3), cell, CFn(s * 6.5, 0, 0), tagged("pan"));
-			for (let k = 0; k < 5; k++) add("Part", V3(0.08, 0.18, 3), line, CFn(s * (3.6 + k * 1.45), 0, 0), tagged("pan"));
-			add("Part", V3(6.2, 0.18, 0.08), line, CFn(s * 6.5, 0, 0), tagged("pan"));
+		add("Part", V3(9, 3.4, 3.4), Y, CFn(0, 0, -0.2).mul(Ang(0, HALF, 0)), { Shape: "Cylinder" });
+		ell(add, V3(0, 0, -4.7), V3(3.4, 3.4, 4.2), Y);
+		ell(add, V3(0, 0, 4.2), V3(3.2, 3.2, 3.6), Y);
+		ell(add, V3(0, 0, 5.6), V3(2, 2, 3), Yd);
+		// welded rings with rivets along the top
+		for (const z of [-3.2, -1.2, 0.8, 2.8]) {
+			add("Part", V3(0.26, 3.52, 3.52), Yd, CFn(0, 0, z).mul(Ang(0, HALF, 0)), { Shape: "Cylinder" });
+			for (let k = -2; k <= 2; k++) {
+				const a = k * 0.42;
+				ell(add, V3(Math.sin(a) * 1.78, Math.cos(a) * 1.78, z), V3(0.16, 0.16, 0.16), brass, M);
+			}
 		}
-		add("Part", V3(0.3, 3.6, 3.6), white, CFn(0, 0, -2.4).mul(Ang(0, HALF, 0)), tagged("dish", { Shape: "Cylinder" }));
-		add("Part", V3(0.15, 0.15, 1.8), white, CFn(0, 0, -3.4), tagged("dish"));
-		add("Part", V3(0.4, 0.4, 0.4), RGB(255, 60, 60), CFn(0, 0, -4.3), tagged("blink", { Material: "Neon", Shape: "Ball" }));
-		add("Part", V3(0.1, 2.6, 0.1), white, CFn(0.8, 2.4, 1));
-		add("Part", V3(0.3, 0.3, 0.3), RGB(80, 255, 140), CFn(0.8, 3.75, 1), { Material: "Neon", Shape: "Ball" });
-		add("Part", V3(1.1, 1.1, 0.6), RGB(60, 62, 72), CFn(0, 0, 2.1), M);
+		// deck and railing
+		add("Part", V3(1.4, 0.25, 7.6), dk, CFn(0, 1.72, -0.4));
+		for (let i = 0; i < 6; i++) {
+			const z = -3.8 + i * 1.4;
+			for (const s of [-1, 1]) rod(add, V3(s * 0.65, 1.8, z), V3(s * 0.65, 2.45, z), 0.06, RGB(200, 200, 205), M);
+		}
+		for (const s of [-1, 1]) rod(add, V3(s * 0.65, 2.45, -3.8), V3(s * 0.65, 2.45, 3.2), 0.06, RGB(200, 200, 205), M);
+		// the tower: rounded front, windows, a hatch with a wheel, periscope and a mast that blinks
+		add("Part", V3(1.9, 2.1, 2.6), Y, CFn(0, 2.75, -0.6));
+		ell(add, V3(0, 2.75, -1.9), V3(1.9, 2.1, 1.4), Y);
+		add("Part", V3(2.05, 0.3, 2.8), dk, CFn(0, 3.9, -0.7));
+		for (const s of [-1, 1]) for (const z of [-1.5, -0.6, 0.3]) add("Part", V3(0.1, 0.5, 0.55), glass, CFn(s * 0.96, 3.1, z), { Material: "Neon" });
+		add("Part", V3(0.2, 0.9, 0.9), dk, CFn(0, 4.1, 0).mul(Ang(0, 0, HALF)), X({ Shape: "Cylinder" }, M));
+		add("Part", V3(0.1, 0.75, 0.75), brass, CFn(0, 4.3, 0).mul(Ang(0, 0, HALF)), X({ Shape: "Cylinder" }, M));
+		const sc = { _tag: "scope" };
+		rod(add, V3(0, 3.9, -1.3), V3(0, 5.6, -1.3), 0.22, dk, X(M, sc));
+		add("Part", V3(0.3, 0.3, 0.9), dk, CFn(0, 5.65, -1.6), X(M, sc));
+		add("Part", V3(0.22, 0.22, 0.06), glass, CFn(0, 5.65, -2.07), X({ Material: "Neon" }, sc));
+		rod(add, V3(0.5, 3.9, 0.4), V3(0.5, 6, 0.4), 0.06, RGB(200, 200, 205), M);
+		ell(add, V3(0.5, 6.05, 0.4), V3(0.22, 0.22, 0.22), RGB(255, 60, 60), { Material: "Neon", _tag: "blink" });
+		// portholes: brass ring, glass inside
+		for (const z of [-3.6, -2.2, 0, 1.8]) {
+			for (const s of [-1, 1]) {
+				add("Part", V3(0.16, 0.95, 0.95), brass, CFn(s * 1.66, 0.2, z), X({ Shape: "Cylinder" }, M));
+				add("Part", V3(0.18, 0.65, 0.65), glass, CFn(s * 1.68, 0.2, z), { Shape: "Cylinder", Material: "Neon" });
+			}
+		}
+		// headlamp and torpedo tubes
+		add("Part", V3(0.6, 1, 1), brass, CFn(0, 0.55, -6.55).mul(Ang(0, HALF, 0)), X({ Shape: "Cylinder" }, M));
+		add("Part", V3(0.2, 0.75, 0.75), RGB(255, 245, 190), CFn(0, 0.55, -6.88).mul(Ang(0, HALF, 0)), { Shape: "Cylinder", Material: "Neon" });
+		for (const s of [-1, 1]) add("Part", V3(0.3, 0.55, 0.55), dk, CFn(s * 0.75, -0.6, -6.4).mul(Ang(0, HALF, 0)), { Shape: "Cylinder" });
+		// dive planes front and back, the rudder
+		for (const s of [-1, 1]) {
+			tri(add, V3(s * 1.5, 0.4, -3.6), V3(s * 1.5, 0.4, -2.2), V3(s * 3.3, 0.4, -2), dk);
+			tri(add, V3(s * 1.2, 0, 4), V3(s * 1.1, 0, 5.8), V3(s * 3.3, 0, 6), dk);
+			rod(add, V3(s * 1.5, 0.45, -3.6), V3(s * 3.3, 0.45, -2), 0.08, Yd);
+		}
+		tri(add, V3(0, 1.1, 4.2), V3(0, 1, 5.9), V3(0, 3, 6.2), dk);
+		tri(add, V3(0, -1.1, 4.2), V3(0, -1, 5.9), V3(0, -2.6, 6.2), dk);
+		// the propeller inside its ring
+		for (let i = 0; i < 10; i++) {
+			const a = (i / 10) * Math.PI * 2;
+			add("Part", V3(0.25, 0.95, 0.5), dk, CFn(Math.cos(a) * 1.55, Math.sin(a) * 1.55, 7).mul(Ang(0, 0, a + HALF)), M);
+		}
+		for (const s of [-1, 1]) rod(add, V3(0, 0, 6.6), V3(s * 1.5, 0, 7), 0.12, dk, M);
+		const pr = { _tag: "prop" };
+		ell(add, V3(0, 0, 7.1), V3(0.7, 0.7, 1), brass, X(M, pr));
+		for (let i = 0; i < 4; i++) add("Part", V3(0.12, 1.35, 0.5), brass, CFn(0, 0, 7.1).mul(Ang(0, 0, (i * Math.PI) / 2)).mul(CFn(0, 0.7, 0)).mul(Ang(0, 0.5, 0)), X(M, pr));
 	};
+
+	SKIN_BUILD.Manta = (add) => {
+		const top = RGB(26, 32, 54), topL = RGB(44, 54, 84), belly = RGB(226, 232, 240), patch = RGB(190, 200, 214), glow = RGB(70, 240, 255);
+		ell(add, V3(0, 0.1, -0.3), V3(3.6, 1.5, 6.4), top);
+		ell(add, V3(0, -0.25, -0.3), V3(3.4, 1.15, 6), belly);
+		ell(add, V3(0, 0.55, 0.6), V3(1.4, 0.8, 4), topL);
+		// cephalic fins, the mouth, eyes, gills underneath
+		for (const s of [-1, 1]) {
+			add("Part", V3(0.45, 1.1, 2.2), top, CFrame.fromPos(V3(s * 1.35, -0.15, -3.75)).mul(Ang(0.25, s * 0.15, s * 0.45)), BALL);
+			add("Part", V3(0.3, 0.7, 1.6), belly, CFrame.fromPos(V3(s * 1.15, -0.3, -3.9)).mul(Ang(0.25, s * 0.15, s * 0.45)), BALL);
+			ell(add, V3(s * 1.75, 0.05, -2.6), V3(0.32, 0.32, 0.32), RGB(10, 10, 14));
+			ell(add, V3(s * 1.82, 0.12, -2.7), V3(0.1, 0.1, 0.1), RGB(220, 240, 255), { Material: "Neon" });
+			for (let g = 0; g < 5; g++) add("Part", V3(0.9, 0.06, 0.08), RGB(110, 120, 140), CFrame.fromPos(V3(s * 1, -0.82, -1.9 + g * 0.42)).mul(Ang(0, s * 0.2, 0)));
+			// shoulder patches
+			add("Part", V3(1.4, 0.2, 1.1), patch, CFrame.fromPos(V3(s * 1.1, 0.72, -1.6)).mul(Ang(0, s * 0.5, 0)), BALL);
+		}
+		ell(add, V3(0, -0.3, -3.45), V3(2.2, 0.4, 0.6), RGB(14, 14, 20));
+		// the wings: four pieces each side, curved back at the tips, glowing dots along them
+		const seg = [[2.7, 0.1, 3.4, 5.4, 0.5], [4.9, 0.5, 3.2, 4.2, 0.36], [6.8, 1.1, 2.8, 2.9, 0.26], [8.4, 1.9, 2.2, 1.6, 0.18]];
+		for (const s of [-1, 1]) {
+			seg.forEach(([x, z, w, c, h], i) => {
+				const t = { _tag: (s < 0 ? "L" : "R") + i };
+				const cf = CFrame.fromPos(V3(s * x, 0, z)).mul(Ang(0, -s * (0.25 + i * 0.12), 0));
+				add("Part", V3(w + 0.6, h, c), top, cf, X(BALL, t));
+				add("Part", V3(w + 0.5, h * 0.6, c * 0.95), belly, cf.mul(CFn(0, -h * 0.25, 0)), X(BALL, t));
+				add("Part", V3(w + 0.4, 0.12, 0.22), glow, cf.mul(CFn(0, 0, c / 2 - 0.15)), X({ Material: "Neon", Transparency: 0.25 }, t));
+				for (let k = 0; k < 2; k++) add("Part", V3(0.24, 0.12, 0.24), glow, cf.mul(CFn((k - 0.5) * w * 0.5, h / 2 - 0.02, -c * 0.12)), X(BALL, { Material: "Neon" }, t));
+			});
+		}
+		// tail in three pieces, with a little dorsal fin at the root
+		tri(add, V3(0, 0.6, 2.2), V3(0, 0.6, 3.3), V3(0, 1.6, 3.2), top);
+		const tl = [[3.4, 5.2, 0.32], [5.2, 7.2, 0.24], [7.2, 9.6, 0.15]];
+		tl.forEach(([a, b2, d], i) => rod(add, V3(0, 0.1, a), V3(0, 0.1, b2), d, top, { _tag: "tail" + i }));
+		ell(add, V3(0, 0.1, 9.7), V3(0.3, 0.3, 0.3), glow, { Material: "Neon", _tag: "tail2" });
+	};
+
+	SKIN_BUILD.Satellite = (add) => {
+		const gold = RGB(222, 168, 48), goldL = RGB(246, 206, 98), goldD = RGB(178, 126, 30), cell = RGB(26, 52, 132), frame = RGB(190, 196, 206), white = RGB(236, 236, 240), dk = RGB(42, 44, 52);
+		const M = { Material: "Metal" };
+		// the bus, wrapped in crinkled foil
+		add("Part", V3(3, 3, 4), gold, CFn(), M);
+		for (const [p, s, c] of [[V3(1.52, 0.4, -0.6), V3(0.05, 1.8, 2.2), goldL], [V3(-1.52, -0.5, 0.7), V3(0.05, 1.6, 2), goldD], [V3(0.4, 1.52, 0.5), V3(1.8, 0.05, 2.4), goldL], [V3(-0.5, -1.52, -0.8), V3(1.6, 0.05, 2), goldD], [V3(0.6, -0.4, 2.02), V3(1.5, 1.6, 0.05), goldL]]) add("Part", s, c, CFrame.fromPos(p).mul(Ang(0.04, 0.03, 0.05)), M);
+		for (const y of [-1.5, 1.5]) for (const x of [-1.5, 1.5]) bar(add, V3(x, y, -2), V3(x, y, 2), 0.14, 0.14, dk, M);
+		for (const z of [-2, 2]) {
+			bar(add, V3(-1.5, 1.5, z), V3(1.5, 1.5, z), 0.14, 0.14, dk, M);
+			bar(add, V3(-1.5, -1.5, z), V3(1.5, -1.5, z), 0.14, 0.14, dk, M);
+		}
+		// the solar wings: a yoke, then three panels that fold out
+		for (const s of [-1, 1]) {
+			const pt = { _tag: "pan" };
+			rod(add, V3(s * 1.5, 0, 0), V3(s * 2.6, 0, 0), 0.3, frame, X(M, pt));
+			rod(add, V3(s * 2.6, 0, 0), V3(s * 3.1, 0, -1.4), 0.1, frame, X(M, pt));
+			rod(add, V3(s * 2.6, 0, 0), V3(s * 3.1, 0, 1.4), 0.1, frame, X(M, pt));
+			for (let k = 0; k < 3; k++) {
+				const cx = s * (4.7 + k * 3.25);
+				add("Part", V3(3.15, 0.1, 3.2), frame, CFn(cx, 0, 0), X(M, pt));
+				add("Part", V3(2.95, 0.14, 3), cell, CFn(cx, 0, 0), X({ Material: "Glass" }, pt));
+				for (const dz of [-0.75, 0, 0.75]) add("Part", V3(2.95, 0.16, 0.05), RGB(120, 150, 220), CFn(cx, 0, dz), pt);
+				for (const dx of [-0.75, 0.75]) add("Part", V3(0.05, 0.16, 3), RGB(120, 150, 220), CFn(cx + dx, 0, 0), pt);
+			}
+		}
+		// the dish on its arm: three rings stepped back so it looks curved, the feed on three struts
+		const d = { _tag: "dish" };
+		rod(add, V3(0, 0.8, -2), V3(0, 1.3, -3), 0.22, frame, X(M, d));
+		for (const [z, r] of [[-3.05, 3.8], [-2.95, 3], [-2.85, 2]]) add("Part", V3(0.12, r, r), z === -3.05 ? white : RGB(214, 216, 222), CFn(0, 1.3, z).mul(Ang(0, HALF, 0)), X({ Shape: "Cylinder" }, d));
+		for (let i = 0; i < 3; i++) {
+			const a = (i / 3) * Math.PI * 2;
+			rod(add, V3(Math.cos(a) * 1.8, 1.3 + Math.sin(a) * 1.8, -3.1), V3(0, 1.3, -4.6), 0.06, frame, X(M, d));
+		}
+		add("Part", V3(0.45, 0.45, 0.6), gold, CFn(0, 1.3, -4.7), X(M, d));
+		ell(add, V3(0, 1.3, -5.05), V3(0.3, 0.3, 0.3), RGB(255, 70, 70), { Material: "Neon", _tag: "blink" });
+		// camera, star trackers, antennas, the boom
+		add("Part", V3(0.6, 1.1, 1.1), dk, CFn(0.6, -1.8, -0.8).mul(Ang(0, 0, HALF)), X({ Shape: "Cylinder" }, M));
+		add("Part", V3(0.08, 0.8, 0.8), RGB(80, 150, 255), CFn(0.6, -2.12, -0.8).mul(Ang(0, 0, HALF)), { Shape: "Cylinder", Material: "Glass" });
+		for (const x of [-0.9, -0.2]) {
+			add("Part", V3(0.5, 0.5, 0.7), white, CFn(x, 1.75, 1.2), M);
+			add("Part", V3(0.08, 0.36, 0.36), dk, CFn(x, 1.75, 1.56).mul(Ang(0, HALF, 0)), { Shape: "Cylinder" });
+		}
+		rod(add, V3(1, 1.5, 1.4), V3(1.6, 3.6, 1.8), 0.06, white, M);
+		rod(add, V3(-1.1, 1.5, 1.6), V3(-1.4, 3, 2.2), 0.06, white, M);
+		ell(add, V3(-1.4, 3.05, 2.2), V3(0.3, 0.3, 0.3), white, M);
+		rod(add, V3(-1.5, -1.2, 1.8), V3(-2.5, -3, 3.6), 0.07, frame, M);
+		add("Part", V3(0.4, 0.4, 0.4), goldL, CFn(-2.5, -3.05, 3.65), M);
+		// engine bell and four little thrusters on the corners
+		for (const [z, r] of [[2.2, 1.1], [2.55, 1.35], [2.9, 1.6]]) add("Part", V3(0.35, r, r), dk, CFn(0, 0, z).mul(Ang(0, HALF, 0)), X({ Shape: "Cylinder" }, M));
+		add("Part", V3(0.1, 1.2, 1.2), RGB(90, 160, 255), CFn(0, 0, 3.02).mul(Ang(0, HALF, 0)), { Shape: "Cylinder", Material: "Neon" });
+		for (const x of [-1.3, 1.3]) for (const y of [-1.3, 1.3]) add("Part", V3(0.45, 0.3, 0.3), dk, CFn(x, y, 2.15).mul(Ang(0, HALF, 0)), X({ Shape: "Cylinder" }, M));
+	};
+
 	SKIN_BUILD.Koi = (add) => {
-		const white = RGB(250, 248, 244), orange = RGB(255, 112, 30), red = RGB(222, 40, 30), gold = RGB(255, 205, 90);
-		const body = [[2.1, 1.9, 2.3, -3.6], [2.6, 2.3, 2.5, -1.7], [2.5, 2.2, 2.4, 0.2], [1.9, 1.7, 2.1, 2], [1.2, 1.1, 1.9, 3.6]];
-		body.forEach(([w, h, d, z], i) => {
-			add("Part", V3(w, h, d), white, CFn(0, 0, z), tagged("k" + i, { Shape: "Ball" }));
-			// the patches that make it a koi
-			if (i !== 3) add("Part", V3(w * 0.82, h * 0.55, d * 0.9), i % 2 ? red : orange, CFn(i === 2 ? 0.3 : -0.2, h * 0.24, z), tagged("k" + i, { Shape: "Ball" }));
+		const white = RGB(250, 248, 244), red = RGB(226, 46, 34), orange = RGB(255, 120, 40), gold = RGB(255, 206, 110), fin = RGB(255, 236, 214);
+		// eight slices make the body, each one its own tag so the swim runs down it
+		const body = [[-4.6, 1.5, 1.4, 1.6], [-3.5, 2.1, 1.9, 1.8], [-2.2, 2.5, 2.25, 1.9], [-0.8, 2.6, 2.35, 1.9], [0.6, 2.4, 2.15, 1.9], [1.9, 1.95, 1.75, 1.8], [3.1, 1.4, 1.25, 1.7], [4.2, 0.9, 0.85, 1.6]];
+		body.forEach(([z, w, h, d], i) => {
+			const t = { _tag: "k" + i };
+			ell(add, V3(0, 0, z), V3(w, h, d * 1.55), white, X({ Material: "SmoothPlastic" }, t));
 		});
-		for (const s of [-1, 1]) {
-			add("Part", V3(0.45, 0.45, 0.45), RGB(15, 15, 15), CFn(s * 0.85, 0.35, -4.2), tagged("k0", { Shape: "Ball" }));
-			add("Part", V3(0.08, 0.08, 1.6), gold, CFn(s * 0.6, -0.4, -5.1).mul(Ang(0.3, s * 0.6, 0)), tagged("k0"));
-			add("Part", V3(2.4, 0.1, 1.4), white, CFn(s * 1.8, -0.5, -1.7).mul(Ang(0, s * 0.45, s * 0.3)), tagged("k1", { Transparency: 0.3 }));
+		// the red pattern, sitting just on top of the skin
+		for (const [i, dx, w, d] of [[0, 0, 0.9, 1.1], [2, -0.25, 1.9, 1.7], [3, 0.3, 1.6, 1.6], [5, -0.1, 1.3, 1.4], [6, 0.15, 0.7, 0.9]]) {
+			const [z, bw, bh] = body[i];
+			add("Part", V3(w, bh * 0.52, d * 1.3), red, CFrame.fromPos(V3(dx, bh * 0.25, z)), X(BALL, { _tag: "k" + i }));
 		}
-		add("Part", V3(0.12, 1.1, 2.6), orange, CFn(0, 1.5, 0), tagged("k2", { Transparency: 0.15 }));
-		for (const s of [-1, 1]) add("Part", V3(0.12, 2.6, 2.4), orange, CFn(0, s * 0.8, 5.2).mul(Ang(s * -0.55, 0, 0)), tagged("k5", { Transparency: 0.15 }));
+		// head: lips, barbels, gold eyes
+		const h = { _tag: "k0" };
+		ell(add, V3(0, -0.25, -5.35), V3(0.75, 0.5, 0.45), RGB(240, 180, 170), h);
+		for (const s of [-1, 1]) {
+			ell(add, V3(s * 0.7, 0.25, -4.75), V3(0.46, 0.46, 0.46), gold, X({ Material: "Metal" }, h));
+			ell(add, V3(s * 0.84, 0.27, -4.82), V3(0.26, 0.3, 0.26), RGB(10, 10, 10), h);
+			rod(add, V3(s * 0.3, -0.4, -5.45), V3(s * 0.9, -0.95, -6.1), 0.06, gold, h);
+			rod(add, V3(s * 0.2, -0.25, -5.5), V3(s * 0.45, -0.4, -6), 0.05, gold, h);
+			// gill line
+			add("Part", V3(0.1, 1.2, 0.15), RGB(220, 210, 200), CFrame.fromPos(V3(s * 0.95, -0.05, -4.05)).mul(Ang(0, 0, s * 0.2)), h);
+		}
+		// fins: see-through with rays
+		const ff = { Transparency: 0.25 };
+		for (const s of [-1, 1]) {
+			const pt = { _tag: "pec" + (s < 0 ? "L" : "R") };
+			add("Part", V3(2.4, 0.08, 1.5), fin, CFrame.fromPos(V3(s * 1.9, -0.75, -2.7)).mul(Ang(0, s * 0.55, s * 0.35)), X(BALL, ff, pt));
+			for (let r = 0; r < 3; r++) rod(add, V3(s * 1, -0.6, -2.95), V3(s * (2.6 + r * 0.15), -0.98 - r * 0.05, -2.1 + r * 0.45), 0.04, orange, pt);
+			add("Part", V3(1.2, 0.07, 0.9), fin, CFrame.fromPos(V3(s * 1, -1.1, 0.6)).mul(Ang(0, s * 0.5, s * 0.5)), X(BALL, ff, { _tag: "k4" }));
+		}
+		for (const [i, z, hh] of [[2, -1.8, 0.8], [3, -0.6, 1.1], [4, 0.6, 1.2], [5, 1.8, 0.9]]) {
+			add("Part", V3(0.08, hh, 1.35), fin, CFrame.fromPos(V3(0, 1.1 + hh / 2, z)).mul(Ang(0.25, 0, 0)), X(BALL, ff, { _tag: "k" + i }));
+			rod(add, V3(0, 1.15, z - 0.35), V3(0, 1.1 + hh, z + 0.1), 0.04, orange, { _tag: "k" + i });
+		}
+		// the big butterfly tail, two lobes with rays, edged in gold
+		for (const s of [-1, 1]) {
+			const t = { _tag: "k8" };
+			add("Part", V3(0.08, 2.6, 2.6), fin, CFrame.fromPos(V3(0, s * 1.05, 5.9)).mul(Ang(s * -0.55, 0, 0)), X(BALL, ff, t));
+			add("Part", V3(0.07, 1.6, 1.7), orange, CFrame.fromPos(V3(0, s * 0.85, 5.6)).mul(Ang(s * -0.5, 0, 0)), X(BALL, { Transparency: 0.2 }, t));
+			for (let r = 0; r < 4; r++) rod(add, V3(0, s * 0.15, 4.7), V3(0, s * (1 + r * 0.45), 6.4 + r * 0.25 - (r === 3 ? 0.6 : 0)), 0.04, gold, t);
+		}
 	};
+
 	SKIN_BUILD.Storm = (add) => {
-		const puffs = [[0, 0, 0, 5], [-2.6, 0.6, 1, 4], [2.6, 0.4, 0.8, 4.2], [-4.8, -0.2, 1.6, 3], [4.8, -0.1, 1.4, 3.2], [0, 1.8, -0.6, 3.6], [-1.5, -0.6, -2.7, 3], [1.6, -0.5, -2.5, 3], [0, -0.3, 3.1, 3.4], [-1.3, 1.5, 1.7, 3], [1.5, 1.6, 1.9, 2.8], [-3.4, 1, -1, 2.6], [3.4, 1.1, -0.8, 2.6]];
+		// two shades: dark and heavy underneath, lit up on top
+		const puffs = [[0, 0, 0, 5], [-2.6, 0.6, 1, 4], [2.6, 0.4, 0.8, 4.2], [-4.8, -0.2, 1.6, 3], [4.8, -0.1, 1.4, 3.2], [0, 1.8, -0.6, 3.6], [-1.5, -0.6, -2.7, 3], [1.6, -0.5, -2.5, 3], [0, -0.3, 3.1, 3.4], [-1.3, 1.5, 1.7, 3], [1.5, 1.6, 1.9, 2.8], [-3.4, 1, -1, 2.6], [3.4, 1.1, -0.8, 2.6], [-6.3, -0.4, 2.2, 2], [6.3, -0.3, 2, 2.1], [0, 0.4, 4.9, 2.4], [-2.2, -0.2, 3.9, 2.4], [2.3, -0.1, 3.8, 2.3], [0, 0.6, -4.1, 2.4]];
 		puffs.forEach(([x, y, z, r], i) => {
-			const g = 70 + ((i * 37) % 4) * 18;
-			add("Part", V3(r, r * 0.85, r), RGB(g, g + 4, g + 18), CFn(x, y, z), tagged("cloud", { Shape: "Ball" }));
+			const g = 62 + ((i * 37) % 4) * 14;
+			add("Part", V3(r, r * 0.8, r), RGB(g, g + 4, g + 18), CFrame.fromPos(V3(x, y, z)), X(BALL, { _tag: "cloud" }));
+			if (y > 0.3) add("Part", V3(r * 0.7, r * 0.45, r * 0.7), RGB(180, 186, 202), CFrame.fromPos(V3(x * 0.95, y + r * 0.28, z)), X(BALL, { _tag: "cloud" }));
 		});
-		add("Part", V3(3.4, 2.4, 3.4), RGB(150, 190, 255), CFn(0, -0.2, 0), tagged("core", { Material: "Neon", Shape: "Ball", Transparency: 0.55 }));
-		// two bolts hanging under it, they flash on their own
-		[[-2.2, "b1"], [2, "b2"]].forEach(([x, tag], j) => {
-			let p = V3(x, -2.2, 0.5 - j);
-			for (let i = 0; i < 4; i++) {
-				const dx = i % 2 ? 0.7 : -0.7;
-				const to = p.add(V3(dx, -1.4, 0));
-				add("Part", V3(0.25, 1.7, 0.25), RGB(205, 232, 255), CFrame.lookAt(p.add(to).div(2), to).mul(Ang(HALF, 0, 0)), tagged(tag, NEON));
+		for (const [x, z] of [[-2, 0.5], [2, 0], [0, 2.5], [0, -2]]) add("Part", V3(3, 1.2, 3), RGB(48, 50, 62), CFrame.fromPos(V3(x, -1.5, z)), X(BALL, { _tag: "cloud" }));
+		add("Part", V3(4.2, 3, 4.2), RGB(150, 190, 255), CFrame.fromPos(V3(0, -0.2, 0.2)), X(BALL, { Material: "Neon", Transparency: 0.55, _tag: "core" }));
+		// a swirl on top that keeps turning
+		for (let i = 0; i < 8; i++) {
+			const a = (i / 8) * Math.PI * 2;
+			add("Part", V3(1.3, 0.6, 1.3), RGB(150, 156, 176), CFrame.fromPos(V3(Math.cos(a) * 2.1, 2.9, -0.2 + Math.sin(a) * 2.1)), X(BALL, { _tag: "swirl" }));
+		}
+		// four bolts, each with a fork, flashing on their own
+		const bolts = [[-2.4, 0.4, "b1"], [2.2, -0.6, "b2"], [0.2, 2.4, "b3"], [-0.6, -2, "b4"]];
+		for (const [x, z, tag] of bolts) {
+			let p = V3(x, -2, z);
+			for (let i = 0; i < 5; i++) {
+				const to = p.add(V3(i % 2 ? 0.75 : -0.7, -1.2, i === 2 ? 0.4 : 0));
+				bar(add, p, to, 0.22, 0.22, RGB(210, 236, 255), { Material: "Neon", _tag: tag });
+				if (i === 2) bar(add, p, p.add(V3(1, -0.9, -0.3)), 0.14, 0.14, RGB(170, 210, 255), { Material: "Neon", _tag: tag });
 				p = to;
 			}
-		});
+		}
+		// rain hanging under it
+		for (let i = 0; i < 10; i++) {
+			const x = -4 + (i % 5) * 2, z = -1.5 + Math.floor(i / 5) * 3;
+			add("Part", V3(0.06, 2.4, 0.06), RGB(160, 190, 230), CFn(x + 0.3, -3.6, z), { Transparency: 0.5, _tag: "rain" });
+		}
+		// two little sparks circling the cloud
+		for (let i = 0; i < 2; i++) ell(add, V3(i ? -5.4 : 5.4, 0.3, 0), V3(0.5, 0.5, 0.5), RGB(200, 230, 255), { Material: "Neon", _tag: "orb" });
 	};
+
 	SKIN_BUILD.Comet = (add) => {
-		const ice = RGB(200, 245, 255), cyan = RGB(90, 220, 255), rock = RGB(70, 78, 96);
-		add("Part", V3(3.4, 3.4, 3.4), ice, CFn(), tagged("core", { Material: "Neon", Shape: "Ball" }));
-		add("Part", V3(4, 4, 4), RGB(140, 200, 240), CFn(), { Shape: "Ball", Transparency: 0.55 });
-		for (let i = 0; i < 7; i++) {
-			const a = (i / 7) * Math.PI * 2, r = 3.3 + (i % 3) * 0.4, s = 0.6 + ((i * 13) % 5) * 0.15;
-			add("Part", V3(s, s * 0.8, s), i % 2 ? rock : RGB(100, 110, 130), CFn(Math.cos(a) * r, Math.sin(a) * r, 0.3).mul(Ang(a, a * 2, 0)), tagged("rocks"));
+		const ice = RGB(196, 240, 255), iceD = RGB(120, 196, 236), rock = RGB(68, 76, 96), frost = RGB(230, 246, 255), cyan = RGB(80, 220, 255);
+		const G = { Material: "Glass" };
+		// the nucleus: a bright heart in a jagged lump of ice
+		ell(add, V3(), V3(2.4, 2.4, 2.4), RGB(240, 252, 255), { Material: "Neon", _tag: "core" });
+		const chunks = [[0, 0.9, -0.6, 2.2, 1.6, 2, 0.4, 0.2], [-0.9, -0.3, 0, 1.8, 2, 1.7, 0.7, -0.4], [0.9, -0.2, 0.3, 1.9, 1.7, 1.9, -0.3, 0.6], [0, -0.8, 0.7, 2, 1.4, 1.8, 0.9, 0.1], [0.2, 0.2, -1.2, 1.6, 1.5, 1.6, -0.6, 0.8], [-0.4, 0.6, 0.9, 1.5, 1.3, 1.5, 0.3, -0.9]];
+		chunks.forEach(([x, y, z, a, b2, c, r1, r2], i) => add("Part", V3(a, b2, c), i % 2 ? ice : iceD, CFrame.fromPos(V3(x, y, z)).mul(Ang(r1, r2, r1 - r2)), X(G, { _tag: "core" })));
+		// spikes of ice sticking out all round
+		for (let i = 0; i < 10; i++) {
+			const a = (i / 10) * Math.PI * 2, e = ((i * 7) % 5) * 0.2 - 0.4;
+			const dir = V3(Math.cos(a), Math.sin(a), e).Unit;
+			bar(add, dir.mul(1.2), dir.mul(2.6 + (i % 3) * 0.5), 0.35, 0.35, frost, X(G, { _tag: "core" }));
 		}
+		// coma: shells of glow around it
+		ell(add, V3(), V3(4.4, 4.4, 4.4), RGB(150, 220, 255), { Transparency: 0.72, Material: "Neon" });
+		ell(add, V3(0, 0, 0.6), V3(6, 6, 6.6), RGB(110, 190, 255), { Transparency: 0.88, Material: "Neon" });
+		// rocks riding along in a ring, frosted on top
+		for (let i = 0; i < 9; i++) {
+			const a = (i / 9) * Math.PI * 2, r = 4 + (i % 3) * 0.45, s = 0.55 + ((i * 13) % 5) * 0.14;
+			const p = V3(Math.cos(a) * r, Math.sin(a) * r, 0.4);
+			add("Part", V3(s, s * 0.8, s), rock, CFrame.fromPos(p).mul(Ang(a, a * 2, a)), { _tag: "rocks" });
+			add("Part", V3(s * 0.8, s * 0.35, s * 0.8), frost, CFrame.fromPos(p.add(V3(0, s * 0.35, 0))).mul(Ang(a, a * 2, a)), { _tag: "rocks" });
+		}
+		// wings of ice shards
 		for (const s of [-1, 1]) {
-			add("Part", V3(5.2, 0.3, 0.7), cyan, CFn(s * 3.2, 0, 1).mul(Ang(0, -s * 0.5, 0)), NEON);
-			add("Part", V3(3, 0.25, 0.5), RGB(220, 250, 255), CFn(s * 2.4, -0.6, 1.6).mul(Ang(0, -s * 0.8, s * 0.3)), NEON);
+			tri(add, V3(s * 1.4, 0, -0.6), V3(s * 1.4, 0, 1.4), V3(s * 7, -0.3, 2.8), ice, G);
+			tri(add, V3(s * 1.4, 0.05, -0.6), V3(s * 4.6, 0.05, 0.8), V3(s * 7, -0.25, 2.8), iceD, G);
+			rod(add, V3(s * 1.4, 0.1, -0.6), V3(s * 7, -0.2, 2.8), 0.1, cyan, { Material: "Neon" });
+			tri(add, V3(s * 1.1, 0.4, 0.2), V3(s * 1.1, 0.4, 1.6), V3(s * 4.2, 1.7, 3.2), frost, G);
+			rod(add, V3(s * 1.1, 0.45, 0.2), V3(s * 4.2, 1.75, 3.2), 0.08, cyan, { Material: "Neon" });
 		}
-		add("Part", V3(2.6, 2.6, 8), cyan, CFn(0, 0, 5.5), tagged("tail", { Material: "Neon", Shape: "Ball", Transparency: 0.6 }));
-		add("Part", V3(1.6, 1.6, 12), RGB(180, 240, 255), CFn(0, 0, 9), tagged("tail", { Material: "Neon", Shape: "Ball", Transparency: 0.75 }));
+		// two tails: the blue one straight back, the dusty one wider and bending
+		[[2.6, 7, 4.8, 0.55], [2, 9, 9.8, 0.68], [1.4, 11, 15, 0.8]].forEach(([d, l, z, t], i) => ell(add, V3(0, 0, z), V3(d, d, l), cyan, { Material: "Neon", Transparency: t, _tag: "tail" + i }));
+		[[3.4, 6, 4.2, 0.75], [3.8, 8, 9, 0.84]].forEach(([d, l, z, t], i) => ell(add, V3(0, 0.6 + i * 0.6, z), V3(d, d * 0.7, l), RGB(255, 236, 200), { Material: "Neon", Transparency: t, _tag: "tail" + (i + 1) }));
 	};
+
 	SKIN_BUILD.Eclipse = (add) => {
-		const black = RGB(6, 6, 10), gold = RGB(255, 196, 70), purple = RGB(160, 70, 255);
-		add("Part", V3(3.6, 3.6, 3.6), black, CFn(), { Shape: "Ball", Material: "Metal" });
-		add("Part", V3(4.3, 4.3, 4.3), RGB(255, 160, 40), CFn(), tagged("glow", { Material: "Neon", Shape: "Ball", Transparency: 0.55 }));
-		// the corona: shards all the way round, facing you from behind
-		for (let i = 0; i < 16; i++) {
-			const a = (i / 16) * Math.PI * 2, l = i % 2 ? 1.2 : 2;
-			add("Part", V3(0.32, l, 0.3), gold, CFn().mul(Ang(0, 0, a)).mul(CFn(0, 2.6 + l / 2, 0)), tagged("cor", NEON));
+		const black = RGB(10, 9, 14), obs = RGB(24, 18, 38), vio = RGB(48, 30, 80), gold = RGB(255, 196, 70), goldD = RGB(190, 130, 40), purple = RGB(160, 70, 255);
+		const M = { Material: "Metal" }, NE = { Material: "Neon" };
+		// the hull: faceted obsidian, every face its own triangle
+		const N = V3(0, 0.05, -7.6), T = V3(0, 1.15, -1.2), B = V3(0, -0.85, -1.2), L = V3(-1.7, 0, -1.2), R = V3(1.7, 0, -1.2);
+		const T2 = V3(0, 0.95, 3.6), B2 = V3(0, -0.6, 3.6), L2 = V3(-1.15, 0, 3.6), R2 = V3(1.15, 0, 3.6);
+		tri(add, N, T, L, obs, M);
+		tri(add, N, T, R, vio, M);
+		tri(add, N, B, L, black, M);
+		tri(add, N, B, R, black, M);
+		tri(add, T, L, T2, vio, M);
+		tri(add, L, T2, L2, obs, M);
+		tri(add, T, R, T2, obs, M);
+		tri(add, R, T2, R2, vio, M);
+		tri(add, B, L, B2, black, M);
+		tri(add, L, B2, L2, black, M);
+		tri(add, B, R, B2, black, M);
+		tri(add, R, B2, R2, black, M);
+		tri(add, T2, L2, B2, obs, M);
+		tri(add, T2, R2, B2, obs, M);
+		// gold seams along the ridges
+		for (const [a, b2] of [[N, T], [T, T2], [N, L], [N, R], [L, L2], [R, R2]]) rod(add, a, b2, 0.09, gold, NE);
+		// canopy
+		add("Part", V3(1.3, 0.8, 3), RGB(140, 90, 255), CFrame.fromPos(V3(0, 1.05, -2.8)).mul(Ang(-0.12, 0, 0)), X(BALL, { Material: "Glass", Transparency: 0.15 }));
+		add("Part", V3(0.9, 0.4, 2), RGB(220, 190, 255), CFrame.fromPos(V3(0, 1.3, -3)).mul(Ang(-0.12, 0, 0)), X(BALL, NE, { Transparency: 0.5 }));
+		// big swept wings, a gold edge, a spike on each tip; canards up front
+		for (const s of [-1, 1]) {
+			const r0 = V3(s * 1.4, 0, -2.2), r1 = V3(s * 1.1, 0, 3), tip = V3(s * 7.8, -0.3, 4);
+			tri(add, r0, r1, tip, obs, M, 0.18);
+			tri(add, r0.add(V3(0, 0.12, 0)), V3(s * 4, 0.1, 0.6), tip.add(V3(0, 0.12, 0)), vio, M, 0.1);
+			rod(add, r0.add(V3(0, 0.1, 0)), tip.add(V3(0, 0.08, 0)), 0.12, gold, NE);
+			rod(add, r1.add(V3(0, 0.05, 0)), tip, 0.07, goldD, M);
+			rod(add, tip.add(V3(0, 0, -1.4)), tip.add(V3(0, 0, 1.6)), 0.28, black, M);
+			ell(add, tip.add(V3(0, 0, -1.55)), V3(0.3, 0.3, 0.3), gold, NE);
+			for (let k = 0; k < 3; k++) add("Part", V3(1.2, 0.05, 0.08), purple, CFrame.fromPos(r0.Lerp(tip, 0.3 + k * 0.17).add(V3(0, 0.15, 0.55 + k * 0.15))).mul(Ang(0, -s * 0.45, 0)), NE);
+			tri(add, V3(s * 0.8, 0.1, -5.2), V3(s * 0.7, 0.1, -4), V3(s * 2.6, 0.05, -3.8), obs, M);
+			rod(add, V3(s * 0.8, 0.16, -5.2), V3(s * 2.6, 0.12, -3.8), 0.06, gold, NE);
+			// engines
+			add("Part", V3(1.6, 0.85, 0.85), black, CFn(s * 0.6, -0.1, 3.8).mul(Ang(0, HALF, 0)), X({ Shape: "Cylinder" }, M));
+			add("Part", V3(0.1, 0.62, 0.62), purple, CFn(s * 0.6, -0.1, 4.62).mul(Ang(0, HALF, 0)), X({ Shape: "Cylinder" }, NE));
 		}
+		// the eclipse itself, floating behind on two struts: a black disc, a burning edge, a fine corona that turns
+		const H = V3(0, 1.3, 6.2);
+		for (const s of [-1, 1]) rod(add, V3(s * 0.6, 0.8, 3.4), H.add(V3(s * 1.5, -1.3, 0)), 0.12, gold, M);
+		add("Part", V3(0.3, 4.4, 4.4), black, CFrame.fromPos(H).mul(Ang(0, HALF, 0)), X({ Shape: "Cylinder" }, M));
 		for (let i = 0; i < 24; i++) {
 			const a = (i / 24) * Math.PI * 2;
-			add("Part", V3(0.25, 0.9, 0.2), purple, CFn().mul(Ang(0, 0, a)).mul(CFn(0, 5.6, 0)), tagged("ring", NEON));
+			add("Part", V3(0.14, 0.62, 0.16), RGB(255, 244, 200), CFrame.fromPos(H.add(V3(0, 0, -0.1))).mul(Ang(0, 0, a)).mul(CFn(0, 2.3, 0)), X(NE, { _tag: "rim" }));
 		}
-		for (const s of [-1, 1]) {
-			add("WedgePart", V3(0.2, 6, 4), RGB(16, 12, 26), CFn(s * 3.6, 0, 1.2).mul(Ang(0, 0, -s * HALF)), { Material: "Metal" });
-			add("Part", V3(7.2, 0.22, 0.22), gold, CFn(s * 3.6, 0.12, 1.2).mul(Ang(0, -s * 0.588, 0)), NEON);
+		for (let i = 0; i < 36; i++) {
+			const a = (i / 36) * Math.PI * 2, l = [1.4, 0.6, 0.9, 0.5][i % 4];
+			const c = [gold, RGB(255, 140, 40), RGB(255, 226, 140), RGB(255, 110, 30)][i % 4];
+			add("Part", V3(0.12, l, 0.12), c, CFrame.fromPos(H.add(V3(0, 0, 0.05))).mul(Ang(0, 0, a)).mul(CFn(0, 2.55 + l / 2, 0)), X(NE, { _tag: "cor" }));
+		}
+		for (let i = 0; i < 32; i++) {
+			const a = (i / 32) * Math.PI * 2;
+			add("Part", V3(0.1, 0.42, 0.1), purple, CFrame.fromPos(H).mul(Ang(0, 0, a)).mul(CFn(0, 4.3, 0)), X(NE, { _tag: "ring" }));
 		}
 	};
 
@@ -2465,85 +3102,111 @@ let buildPlane;
 	// m.s is how hard you're steering right now, -1 left to 1 right, so things can lean into the turn
 	const SKIN_ANIM = {
 		Hornet: (t, m) => {
+			// fast and small, so it reads as a buzz and not as flapping
 			for (const s of [-1, 1]) {
-				const root = CFn(s * 0.6, 1.3, -1.6);
-				m.all(s < 0 ? "wingL" : "wingR", root.mul(Ang(0, 0, -s * Math.sin(t * 46 + (s < 0 ? 0 : 0.4)) * 0.55)).mul(root.Inverse()));
+				const root = CFn(s * 0.9, 1.45, -2.2);
+				m.all(s < 0 ? "wingL" : "wingR", root.mul(Ang(0, Math.sin(t * 9) * 0.06, -s * (Math.sin(t * 38 + (s < 0 ? 0 : 0.5)) * 0.28 + 0.08) - m.s * 0.1)).mul(root.Inverse()));
+				const mp = CFn(s * 0.36, -0.75, -5.1);
+				m.all(s < 0 ? "mandL" : "mandR", mp.mul(Ang(0, s * (Math.sin(t * 7) * 0.22 + 0.1), 0)).mul(mp.Inverse()));
+				const ap = CFn(s * 0.35, 1.05, -5);
+				m.all(s < 0 ? "antL" : "antR", ap.mul(Ang(Math.sin(t * 2.3 + s) * 0.12, -m.s * 0.25, s * Math.sin(t * 1.7) * 0.1)).mul(ap.Inverse()));
 			}
 			const p = CFn(0, 0.1, -0.4);
-			m.all("abd", p.mul(Ang(Math.sin(t * 3) * 0.08 - 0.05, -m.s * 0.3, 0)).mul(p.Inverse()));
+			m.all("abd", p.mul(Ang(Math.sin(t * 3) * 0.06 - 0.04, -m.s * 0.3, 0)).mul(p.Inverse()));
 		},
 		Crane: (t, m) => {
-			const flap = Math.sin(t * 3.2) * 0.42 * (1 - Math.abs(m.s) * 0.5);
+			const flap = Math.sin(t * 2.6) * 0.32 * (1 - Math.abs(m.s) * 0.5);
 			for (const s of [-1, 1]) {
-				const root = CFn(s * 0.4, 0.4, 0);
+				const root = CFn(s * 0.9, 0.55, 0);
 				m.all(s < 0 ? "wingL" : "wingR", root.mul(Ang(0, 0, -s * flap - m.s * 0.15)).mul(root.Inverse()));
 			}
-			const n = CFn(0, 0.8, -1.2);
-			m.all("neck", n.mul(Ang(Math.sin(t * 3.2 + 1) * 0.06, -m.s * 0.3, 0)).mul(n.Inverse()));
+			const n = CFn(0, 0.3, -2.4);
+			m.all("neck", n.mul(Ang(Math.sin(t * 2.6 + 1) * 0.05, -m.s * 0.3, 0)).mul(n.Inverse()));
 		},
 		Balloon: (t, m) => {
-			const p = CFn(0, -4.5, 0);
-			const sway = p.mul(Ang(Math.sin(t * 1.1) * 0.06, 0, -m.s * 0.22 + Math.sin(t * 0.8) * 0.05)).mul(p.Inverse());
+			const p = CFn(0, -5, 0);
+			const sway = p.mul(Ang(Math.sin(t * 1.1) * 0.05, 0, -m.s * 0.2 + Math.sin(t * 0.8) * 0.04)).mul(p.Inverse());
 			m.all("bal", sway);
-			const f = CFn(1.2, -2.4, 1.2);
+			for (const s of [-1, 1]) {
+				const hub = CFn(s * 3, -5.2, 1.15);
+				m.all(s < 0 ? "fanL" : "fanR", sway.mul(hub).mul(Ang(0, 0, t * 16 * s)).mul(hub.Inverse()));
+			}
+			const f = CFn(-1.3, -2.95, 1.3);
 			m.all("flag", sway.mul(f).mul(Ang(0, Math.sin(t * 7) * 0.4 + m.s * 0.5, 0)).mul(f.Inverse()));
 			m.glow(1.2 + Math.sin(t * 11) * 0.3 + Math.sin(t * 29) * 0.2);
 		},
 		Submarine: (t, m) => {
-			const hub = CFn(0, 0, 6.7);
-			m.all("prop", hub.mul(Ang(0, 0, t * 14 + m.spin)).mul(hub.Inverse()));
-			const sc = CFn(0, 4, -1.4);
-			m.all("scope", sc.mul(Ang(0, Math.sin(t * 0.7) * 1.2 - m.s * 0.5, 0)).mul(sc.Inverse()));
+			const hub = CFn(0, 0, 7.1);
+			m.all("prop", hub.mul(Ang(0, 0, t * 12 + m.spin)).mul(hub.Inverse()));
+			const sc = CFn(0, 4, -1.3);
+			m.all("scope", sc.mul(Ang(0, Math.sin(t * 0.6) * 1.2 - m.s * 0.5, 0)).mul(sc.Inverse()));
+			m.alpha("blink", Math.floor(t * 1.4) % 2 ? 0 : 0.9);
 		},
 		Manta: (t, m) => {
+			const hinges = [1.6, 4, 6.1, 7.9];
 			for (const s of [-1, 1]) {
 				let cf = CFn();
-				for (let i = 0; i < 3; i++) {
-					const hinge = CFn(s * (1.5 + i * 2.3), 0, 0.2 + i * 0.6);
-					const a = Math.sin(t * 3.4 - i * 0.8) * (0.16 + i * 0.06) + s * m.s * 0.1;
+				for (let i = 0; i < 4; i++) {
+					const hinge = CFn(s * hinges[i], 0, 0.2 + i * 0.5);
+					const a = Math.sin(t * 3 - i * 0.75) * (0.12 + i * 0.05) + s * m.s * 0.08;
 					cf = cf.mul(hinge).mul(Ang(0, 0, -s * a)).mul(hinge.Inverse());
 					m.all((s < 0 ? "L" : "R") + i, cf);
 				}
 			}
-			const tp = CFn(0, 0, 2.4);
-			m.all("tail", tp.mul(Ang(Math.sin(t * 2.6) * 0.1, Math.sin(t * 2) * 0.18 - m.s * 0.35, 0)).mul(tp.Inverse()));
+			let tc = CFn();
+			for (let i = 0; i < 3; i++) {
+				const tp = CFn(0, 0.1, [3.3, 5.2, 7.2][i]);
+				tc = tc.mul(tp).mul(Ang(Math.sin(t * 2.6 - i) * 0.07, Math.sin(t * 2 - i * 0.8) * 0.14 - m.s * 0.15, 0)).mul(tp.Inverse());
+				m.all("tail" + i, tc);
+			}
 			m.glow(1.3 + Math.sin(t * 2) * 0.4);
 		},
 		Satellite: (t, m) => {
-			m.all("pan", Ang(t * 0.6, 0, 0));
-			const d = CFn(0, 0, -2.4);
-			m.all("dish", d.mul(Ang(Math.sin(t * 0.9) * 0.35, Math.cos(t * 0.7) * 0.35 - m.s * 0.3, 0)).mul(d.Inverse()));
+			m.all("pan", Ang(t * 0.5, 0, 0));
+			const d = CFn(0, 0.8, -2);
+			m.all("dish", d.mul(Ang(Math.sin(t * 0.9) * 0.3, Math.cos(t * 0.7) * 0.4 - m.s * 0.3, 0)).mul(d.Inverse()));
 			m.alpha("blink", Math.floor(t * 1.5) % 2 ? 0 : 0.9);
 		},
 		Koi: (t, m) => {
-			for (let i = 0; i <= 5; i++) {
-				const z = [-3.6, -1.7, 0.2, 2, 3.6, 5.2][i];
-				const ph = t * 6 - i * 0.9;
-				const amp = 0.04 + i * 0.07;
-				const p = CFn(0, 0, z);
-				m.all("k" + i, CFn(Math.sin(ph) * amp * 2 - m.s * i * 0.12, 0, 0).mul(p).mul(Ang(0, Math.cos(ph) * amp - m.s * i * 0.06, 0)).mul(p.Inverse()));
+			const zs = [-4.6, -3.5, -2.2, -0.8, 0.6, 1.9, 3.1, 4.2, 5.2];
+			for (let i = 0; i <= 8; i++) {
+				const ph = t * 5 - i * 0.8, amp = 0.02 + i * 0.045;
+				const p = CFn(0, 0, zs[i]);
+				m.all("k" + i, CFn(Math.sin(ph) * amp * 2 - m.s * i * 0.1, 0, 0).mul(p).mul(Ang(0, Math.cos(ph) * amp - m.s * i * 0.05, 0)).mul(p.Inverse()));
+			}
+			for (const s of [-1, 1]) {
+				const pp = CFn(s * 1, -0.6, -2.9);
+				m.all(s < 0 ? "pecL" : "pecR", pp.mul(Ang(0, s * Math.sin(t * 4 + s) * 0.25, s * Math.sin(t * 4) * 0.2)).mul(pp.Inverse()));
 			}
 		},
 		Storm: (t, m) => {
-			m.all("cloud", Ang(Math.sin(t * 0.9) * 0.04, Math.sin(t * 0.7) * 0.08, -m.s * 0.15));
+			m.all("cloud", Ang(Math.sin(t * 0.9) * 0.04, Math.sin(t * 0.7) * 0.06, -m.s * 0.15));
 			m.all("core", Ang(0, 0, -m.s * 0.15));
-			const f1 = Math.sin(t * 13) + Math.sin(t * 7.3) > 1.25, f2 = Math.sin(t * 11 + 2) + Math.sin(t * 5.1) > 1.3;
-			m.alpha("b1", f1 ? 0 : 1);
-			m.alpha("b2", f2 ? 0 : 1);
-			m.glow(f1 || f2 ? 4 : 0.5);
+			m.all("swirl", Ang(0, 0, -m.s * 0.15).mul(CFn(0, 0, -0.2)).mul(Ang(0, t * 1.2, 0)).mul(CFn(0, 0, 0.2)));
+			m.all("orb", Ang(0, 0, -m.s * 0.15).mul(Ang(0, t * 1.8, 0)).mul(Ang(0, 0, Math.sin(t * 1.3) * 0.3)));
+			m.all("rain", CFn(0, -((t * 6) % 1) * 0.8, 0));
+			const f = [Math.sin(t * 13) + Math.sin(t * 7.3) > 1.25, Math.sin(t * 11 + 2) + Math.sin(t * 5.1) > 1.3, Math.sin(t * 9 + 4) + Math.sin(t * 6.7) > 1.35, Math.sin(t * 12 + 1) + Math.sin(t * 4.3) > 1.4];
+			f.forEach((on, i) => m.alpha("b" + (i + 1), on ? 0 : 1));
+			m.alpha("core", f.some(Boolean) ? 0.2 : 0.6);
+			m.glow(f.some(Boolean) ? 4 : 0.5);
 		},
 		Comet: (t, m) => {
-			m.all("core", Ang(t * 0.9, t * 0.6, 0));
-			m.all("rocks", Ang(0, 0, t * 1.6));
-			const tp = CFn(0, 0, 1.6);
-			m.all("tail", tp.mul(Ang(Math.sin(t * 2.4) * 0.03, -m.s * 0.35 + Math.sin(t * 3) * 0.04, 0)).mul(tp.Inverse()));
+			m.all("core", Ang(t * 0.5, t * 0.35, t * 0.2));
+			m.all("rocks", Ang(0, 0, t * 0.9));
+			for (let i = 0; i < 3; i++) {
+				const tp = CFn(0, 0, 1.4);
+				m.all("tail" + i, tp.mul(Ang(Math.sin(t * 2.4 - i) * 0.02, -m.s * (0.2 + i * 0.12) + Math.sin(t * 3 - i) * 0.03, 0)).mul(tp.Inverse()));
+			}
 			m.glow(1.6 + Math.sin(t * 5) * 0.4);
 		},
 		Eclipse: (t, m) => {
-			const tip = Ang(0, -m.s * 0.25, 0);
-			m.all("cor", tip.mul(Ang(0, 0, t * 0.7)));
-			m.all("ring", tip.mul(Ang(0.25 + m.s * 0.2, 0, 0)).mul(Ang(0, 0, -t * 1.3)));
-			m.alpha("glow", 0.5 + Math.sin(t * 3) * 0.15);
+			const H = CFn(0, 1.3, 6.2);
+			const lean = H.mul(Ang(0, -m.s * 0.25, m.s * 0.15));
+			m.all("cor", lean.mul(Ang(0, 0, t * 0.6)).mul(H.Inverse()));
+			m.all("rim", lean.mul(Ang(0, 0, -t * 0.3)).mul(H.Inverse()));
+			m.all("ring", lean.mul(Ang(0.2, 0, 0)).mul(Ang(0, 0, -t * 1.1)).mul(H.Inverse()));
+			m.all("glow", lean.mul(H.Inverse()));
+			m.alpha("glow", 0.25 + Math.sin(t * 3) * 0.15);
 			m.glow(1.8 + Math.sin(t * 3) * 0.5);
 		},
 		Trident: (t, m) => {
@@ -2664,11 +3327,11 @@ let buildPlane;
 	// every skin leaves something behind it
 	const FX = {
 		Hornet: (fx) => {
-			fx.trail(V3(0, -0.2, 6.4), { Lifetime: 0.5, Width: 0.5, Color: new ColorSequence(RGB(255, 210, 40), RGB(40, 30, 20)), Transparency: new NumberSequence(0.2, 1), LightEmission: 0.6 });
-			fx.emit(V3(0, 1.3, -1.6), { Texture: "sparkles", Color: new ColorSequence(RGB(255, 230, 90)), LightEmission: 0.8, Size: new NumberSequence(0.5, 0), Lifetime: new NumberRange(0.3, 0.6), Rate: 20, Speed: new NumberRange(3, 7), SpreadAngle: V2(90, 90), EmissionDirection: "Back" });
+			fx.trail(V3(0, -0.35, 6.9), { Lifetime: 0.5, Width: 0.5, Color: new ColorSequence(RGB(255, 210, 40), RGB(40, 30, 20)), Transparency: new NumberSequence(0.2, 1), LightEmission: 0.6 });
+			fx.emit(V3(0, 1.45, -1.8), { Texture: "sparkles", Color: new ColorSequence(RGB(255, 230, 90)), LightEmission: 0.8, Size: new NumberSequence(0.5, 0), Lifetime: new NumberRange(0.3, 0.6), Rate: 20, Speed: new NumberRange(3, 7), SpreadAngle: V2(90, 90), EmissionDirection: "Back" });
 		},
 		Crane: (fx) => {
-			for (const x of [-7.8, 7.8]) fx.trail(V3(x, 0.4, 2.8), { Lifetime: 0.9, Width: 0.25, Color: new ColorSequence(RGB(255, 250, 240)), Transparency: new NumberSequence(0.3, 1) });
+			for (const x of [-8.4, 8.4]) fx.trail(V3(x, 1.7, 2.6), { Lifetime: 0.9, Width: 0.25, Color: new ColorSequence(RGB(255, 250, 240)), Transparency: new NumberSequence(0.3, 1) });
 			for (const c of [RGB(232, 58, 60), RGB(250, 247, 238)]) {
 				fx.emit(V3(0, 0, 2), { Texture: "sparkles", Color: new ColorSequence(c), LightEmission: 0.3, Size: new NumberSequence(0.7, 0.2), Lifetime: new NumberRange(0.8, 1.4), Rate: 6, Speed: new NumberRange(2, 5), SpreadAngle: V2(120, 120), Acceleration: V3(0, -8, 0), RotSpeed: new NumberRange(-200, 200) });
 			}
@@ -2676,29 +3339,29 @@ let buildPlane;
 		Balloon: (fx) => {
 			const burner = fx.tagged("bal").find((p) => p._flame);
 			if (burner) fx.emitOn(burner, V3(0, 0.4, 0), { Texture: "fire", Color: new ColorSequence(RGB(255, 230, 120), RGB(255, 80, 20)), LightEmission: 1, Size: new NumberSequence(1.1, 0), Lifetime: new NumberRange(0.15, 0.3), Rate: 50, Speed: new NumberRange(6, 10), EmissionDirection: "Top", SpreadAngle: V2(10, 10) });
-			fx.emit(V3(0, 9, 0), { Texture: "smoke", Color: new ColorSequence(RGB(240, 240, 240), RGB(180, 180, 180)), Size: new NumberSequence(1.2, 3.5), Transparency: new NumberSequence(0.6, 1), Lifetime: new NumberRange(0.8, 1.4), Rate: 6, Speed: new NumberRange(2, 4), EmissionDirection: "Back", SpreadAngle: V2(20, 20) });
+			fx.emit(V3(0, 10, 0), { Texture: "smoke", Color: new ColorSequence(RGB(240, 240, 240), RGB(180, 180, 180)), Size: new NumberSequence(1.2, 3.5), Transparency: new NumberSequence(0.6, 1), Lifetime: new NumberRange(0.8, 1.4), Rate: 6, Speed: new NumberRange(2, 4), EmissionDirection: "Back", SpreadAngle: V2(20, 20) });
 		},
 		Submarine: (fx) => {
 			const hub = fx.tagged("prop")[0];
-			fx.emit(V3(0, 0, 7), { Texture: "sparkles", Color: new ColorSequence(RGB(200, 245, 255), RGB(120, 200, 255)), LightEmission: 0.5, Size: new NumberSequence(0.6, 0.9), Transparency: new NumberSequence(0.2, 1), Lifetime: new NumberRange(0.6, 1.1), Rate: 35, Speed: new NumberRange(4, 9), EmissionDirection: "Back", SpreadAngle: V2(30, 30), Acceleration: V3(0, 6, 0) });
+			fx.emit(V3(0, 0, 7.4), { Texture: "sparkles", Color: new ColorSequence(RGB(200, 245, 255), RGB(120, 200, 255)), LightEmission: 0.5, Size: new NumberSequence(0.6, 0.9), Transparency: new NumberSequence(0.2, 1), Lifetime: new NumberRange(0.6, 1.1), Rate: 35, Speed: new NumberRange(4, 9), EmissionDirection: "Back", SpreadAngle: V2(30, 30), Acceleration: V3(0, 6, 0) });
 			if (hub) fx.trailOn(hub, V3(), { Lifetime: 0.6, Width: 1.4, Color: new ColorSequence(RGB(220, 250, 255), RGB(90, 170, 230)), Transparency: new NumberSequence(0.4, 1) });
 		},
 		Manta: (fx) => {
-			for (const tag of ["L2", "R2"]) {
+			for (const tag of ["L3", "R3"]) {
 				const p = fx.tagged(tag)[0];
 				if (p) fx.trailOn(p, V3(0, 0, 0.8), { Lifetime: 0.8, Width: 0.45, Color: new ColorSequence(RGB(80, 240, 255), RGB(40, 90, 255)), Transparency: new NumberSequence(0.1, 1), LightEmission: 1 });
 			}
-			const tail = fx.tagged("tail")[1];
+			const tail = fx.tagged("tail2")[0];
 			if (tail) fx.trailOn(tail, V3(), { Lifetime: 1, Width: 0.35, Color: new ColorSequence(RGB(80, 240, 255)), Transparency: new NumberSequence(0, 1), LightEmission: 1 });
 			fx.emit(V3(0, 0, 2), { Texture: "sparkles", Color: new ColorSequence(RGB(120, 250, 255)), LightEmission: 1, Size: new NumberSequence(0.5, 0), Lifetime: new NumberRange(0.6, 1.2), Rate: 18, Speed: new NumberRange(1, 4), SpreadAngle: V2(180, 180) });
 		},
 		Satellite: (fx) => {
-			fx.flame(V3(0, 0, 2.5), RGB(220, 240, 255), RGB(60, 140, 255), 0.9, 60);
+			fx.flame(V3(0, 0, 3.1), RGB(220, 240, 255), RGB(60, 140, 255), 0.9, 60);
 			fx.emit(V3(0, 0, 0), { Texture: "sparkles", Color: new ColorSequence(RGB(170, 210, 255)), LightEmission: 1, Size: new NumberSequence(0.35, 0), Lifetime: new NumberRange(0.4, 0.8), Rate: 12, Speed: new NumberRange(2, 5), SpreadAngle: V2(180, 180) });
-			for (const x of [-9.6, 9.6]) fx.trail(V3(x, 0, 0), { Lifetime: 0.6, Width: 0.3, Color: new ColorSequence(RGB(120, 170, 255)), Transparency: new NumberSequence(0.3, 1), LightEmission: 1 });
+			for (const x of [-11.3, 11.3]) fx.trail(V3(x, 0, 0), { Lifetime: 0.6, Width: 0.3, Color: new ColorSequence(RGB(120, 170, 255)), Transparency: new NumberSequence(0.3, 1), LightEmission: 1 });
 		},
 		Koi: (fx) => {
-			const tail = fx.tagged("k5")[0];
+			const tail = fx.tagged("k8")[0];
 			if (tail) fx.trailOn(tail, V3(), { Lifetime: 0.7, Width: 1.4, Color: new ColorSequence(RGB(255, 140, 50), RGB(255, 255, 255)), Transparency: new NumberSequence(0.3, 1), LightEmission: 0.4 });
 			fx.emit(V3(0, 0, 3), { Texture: "sparkles", Color: new ColorSequence(RGB(190, 235, 255), RGB(110, 190, 255)), LightEmission: 0.5, Size: new NumberSequence(0.7, 0.2), Lifetime: new NumberRange(0.6, 1), Rate: 22, Speed: new NumberRange(3, 7), SpreadAngle: V2(50, 50), EmissionDirection: "Back", Acceleration: V3(0, -14, 0) });
 		},
@@ -2717,9 +3380,9 @@ let buildPlane;
 			fx.emit(V3(0, 0, 2), { Texture: "smoke", Color: new ColorSequence(RGB(210, 240, 255), RGB(120, 170, 220)), Size: new NumberSequence(1.5, 4), Transparency: new NumberSequence(0.55, 1), Lifetime: new NumberRange(0.8, 1.2), Rate: 20, Speed: new NumberRange(3, 6), EmissionDirection: "Back", SpreadAngle: V2(15, 15) });
 		},
 		Eclipse: (fx) => {
-			fx.trail(V3(0, 0, 1.5), { Lifetime: 1.4, Width: 3.6, Color: new ColorSequence([ColorSequenceKeypoint.new(0, RGB(255, 230, 140)), ColorSequenceKeypoint.new(0.5, RGB(255, 140, 40)), ColorSequenceKeypoint.new(1, RGB(140, 40, 255))]), Transparency: new NumberSequence(0.1, 1), LightEmission: 1 });
-			fx.trail(V3(0, 0, 1.5), { Lifetime: 2.2, Width: 9, Color: new ColorSequence(RGB(30, 10, 60), RGB(120, 40, 220)), Transparency: new NumberSequence(0.7, 1), LightEmission: 0.6 });
-			for (const x of [-6.6, 6.6]) fx.trail(V3(x, 0, 3.2), { Lifetime: 0.9, Width: 0.35, Color: new ColorSequence(RGB(255, 210, 90)), Transparency: new NumberSequence(0, 1), LightEmission: 1 });
+			fx.trail(V3(0, -0.1, 4.6), { Lifetime: 1.4, Width: 3.6, Color: new ColorSequence([ColorSequenceKeypoint.new(0, RGB(255, 230, 140)), ColorSequenceKeypoint.new(0.5, RGB(255, 140, 40)), ColorSequenceKeypoint.new(1, RGB(140, 40, 255))]), Transparency: new NumberSequence(0.1, 1), LightEmission: 1 });
+			fx.trail(V3(0, 1.3, 6.4), { Lifetime: 2.2, Width: 6, Color: new ColorSequence(RGB(30, 10, 60), RGB(120, 40, 220)), Transparency: new NumberSequence(0.7, 1), LightEmission: 0.6 });
+			for (const x of [-7.8, 7.8]) fx.trail(V3(x, -0.3, 5.6), { Lifetime: 0.9, Width: 0.35, Color: new ColorSequence(RGB(255, 210, 90)), Transparency: new NumberSequence(0, 1), LightEmission: 1 });
 			fx.tagged("cor").filter((_, i) => i % 4 === 0).forEach((p) => fx.emitOn(p, V3(0, 0.8, 0), { Texture: "sparkles", Color: new ColorSequence(RGB(255, 230, 140), RGB(255, 120, 30)), LightEmission: 1, Size: new NumberSequence(0.5, 0), Lifetime: new NumberRange(0.3, 0.6), Rate: 18, Speed: new NumberRange(2, 6), SpreadAngle: V2(60, 60) }));
 		},
 		Default: (fx) => {
@@ -5958,11 +6621,11 @@ let showResults;
 // ------------------------------------------------------------------ revive (only with revives you collected)
 
 (() => {
-	const ORDER = ["towers", "moving", "canyon", "smash", "boss", "turrets", "traffic", "city", "desert", "boss2", "volcano", "sea", "glacier", "beyond"];
+	const ORDER = ["towers", "moving", "canyon", "smash", "boss", "turrets", "traffic", "city", "desert", "ruins", "windfarm", "sky", "factory", "neon", "boss2", "volcano", "glacier", "sea", "beyond"];
 	Game.STAGE_ORDER = ORDER;
 	const WAIT = 6;
 	// gems for a revive in each stage, dying again in the same stage makes it pricier
-	const PRICE = [100, 120, 150, 180, 220, 260, 280, 300, 310, 320, 330, 350, 370, 400];
+	const PRICE = [100, 120, 150, 180, 220, 260, 280, 300, 310, 315, 320, 325, 330, 335, 340, 340, 350, 370, 400];
 	const box = make("CanvasGroup", {
 		AnchorPoint: V2(0.5, 0.5),
 		Position: US(0.5, 0.5),
@@ -9298,7 +9961,12 @@ function onStage(nw, old) {
 		if (nw === "sea") Game.mood(Game.sky.clock, RGB(170, 200, 230), 3);
 		if (nw === "volcano") Game.mood(17.4, RGB(130, 60, 40), 4, RGB(210, 140, 115));
 		if (nw === "glacier") Game.mood(12, RGB(176, 204, 232), 4, RGB(190, 205, 230));
-		for (const [id, msg, col] of [["volcano", "WATCH OUT FOR THE LAVA!", RGB(255, 120, 40)], ["glacier", "FLY THROUGH THE ICE GATES!", RGB(150, 220, 255)]]) {
+		if (nw === "ruins") Game.mood(15.2, RGB(232, 204, 156), 4);
+		if (nw === "windfarm") Game.mood(13, RGB(190, 220, 240), 4, RGB(170, 180, 190));
+		if (nw === "sky") Game.mood(11, RGB(184, 212, 248), 4, RGB(190, 200, 215));
+		if (nw === "factory") Game.mood(16, RGB(150, 152, 160), 4, RGB(150, 150, 160));
+		if (nw === "neon") Game.mood(0.4, RGB(60, 20, 90), 4, RGB(160, 120, 220), 0.3);
+		for (const [id, msg, col] of [["volcano", "WATCH OUT FOR THE LAVA!", RGB(255, 120, 40)], ["glacier", "FLY THROUGH THE ICE GATES!", RGB(150, 220, 255)], ["ruins", "MIND THE SLIDING STONES!", RGB(240, 200, 120)], ["windfarm", "TIME THE BLADES!", RGB(200, 255, 170)], ["sky", "ISLANDS IN THE SKY!", RGB(170, 220, 255)], ["factory", "WATCH THE CRUSHERS!", RGB(250, 196, 30)], ["neon", "DODGE THE LASERS!", RGB(255, 60, 200)]]) {
 			if (nw === id) task.delay(2.2, () => curStage === id && !dead && banner(msg, col, 3));
 		}
 	}
@@ -9406,7 +10074,7 @@ Game.startAt = (id) => {
 	if (!st) return;
 	const at = st.at;
 	Game.safeRow = Math.floor(at / CHUNK);
-	if (["turrets", "traffic", "city", "desert", "boss2", "volcano", "sea", "glacier", "space"].includes(id)) {
+	if (["turrets", "traffic", "city", "desert", "ruins", "windfarm", "sky", "factory", "neon", "boss2", "volcano", "sea", "glacier", "space"].includes(id)) {
 		bossDone = true;
 		beyondStart = CONFIG.beyondAt;
 		Game.flow.tier = id === "space" ? 3 : 2;
@@ -9759,7 +10427,7 @@ function step(dt) {
 		return;
 	}
 
-	if ((stage === "sea" || stage === "glacier") && Game.marks.final == null) {
+	if (stage === "sea" && Game.marks.final == null) {
 		const F = Game.flow;
 		if (!F.cine && dist - Game.marks.sea > Game.SEA_LEN - 500) F.startApproach();
 	}
@@ -9796,8 +10464,7 @@ function step(dt) {
 
 	if (!boss && !Game.boss2.active && !cheat) {
 		const before = fuel;
-		const tank = Game.race ? 1 : 1 / (1 + 0.08 * ((data.power && data.power.tank) || 0));
-		fuel = Math.max(0, fuel - (FUEL.drain + (nitro ? FUEL.nitro : 0)) * tank * dt * (Game.race && Game.behind ? 2 : 1));
+		fuel = Math.max(0, fuel - (FUEL.drain + (nitro ? FUEL.nitro : 0)) * dt * (Game.race && Game.behind ? 2 : 1));
 		if (before > 0 && fuel <= 0) {
 			sfx("fuel_out");
 			popup("OUT OF FUEL", BAD);
@@ -9898,9 +10565,7 @@ function step(dt) {
 	if (nitroK > 0.1) shake = Math.max(shake, 0.1 * nitroK);
 	setVignette(Math.max(nitroK, devK) * 0.8);
 
-	// the magnet upgrade, not in races so those stay fair
-	const reach = Game.race ? 1 : 1 + 0.2 * ((data.power && data.power.magnet) || 0);
-	for (const p of workspace.GetPartBoundsInBox(CFrame.fromPos(pos), reach > 1 ? PICKBOX.mul(reach) : PICKBOX, pickParams)) collect(p);
+	for (const p of workspace.GetPartBoundsInBox(CFrame.fromPos(pos), PICKBOX, pickParams)) collect(p);
 
 	const phasing = nitroK > 0.2 || cheat || Game.flow.approach || Game.god;
 	if (buff.immortal > 0 || phasing) ghost = true;
@@ -10035,9 +10700,16 @@ Game.skip = () => {
 	else if (stage === "traffic") nextD = beyondStart + (CONFIG.turretsLen || 4000);
 	else if (stage === "city") nextD = beyondStart + (CONFIG.turretsLen || 4000) + (CONFIG.cityLen || 4000) - DESERT_LEN;
 	else if (stage === "desert") nextD = beyondStart + (CONFIG.turretsLen || 4000) + (CONFIG.cityLen || 4000);
-	else if (stage === "volcano") nextD = Game.marks.sea + VOLCANO_LEN;
-	else if (stage === "sea") nextD = Game.marks.sea + Game.SEA_LEN - GLACIER_LEN;
-	else if (stage === "glacier") {
+	else if ((CONFIG.midMaps || []).some((x) => x.id === stage)) {
+		let at = beyondStart + (CONFIG.turretsLen || 4000) + (CONFIG.cityLen || 4000);
+		for (const mm of CONFIG.midMaps) {
+			at += mm.len;
+			if (mm.id === stage) break;
+		}
+		nextD = at;
+	} else if (stage === "volcano") nextD = Game.marks.sea + VOLCANO_LEN;
+	else if (stage === "glacier") nextD = Game.marks.sea + VOLCANO_LEN + GLACIER_LEN;
+	else if (stage === "sea") {
 		flash();
 		Missiles.clear();
 		Game.cam.last = null;
@@ -10374,7 +11046,12 @@ applySettings();
 toMenu();
 start();
 document.getElementById("boot").remove();
-if (DEV) window.__dev = { lift: () => { Game.lift = runTime; }, goto: (k) => { pos = V3(0, ALT, -((beyondStart || 0) + k)); Game.cam.last = null; regenerate(pos.X, pos.Z); return [curStage, Math.round(-pos.Z)]; }, bt: (v) => { if (boss) { boss.t = v; boss.nextShot = v + 1; } }, bossS: () => boss && { hits: boss.hits, green: boss.green ? [Math.round(boss.green.x), Math.round(boss.green.rz)] : null, shot: !!boss.shot, t: Math.round(boss.t), fin: boss.finale, p: [Math.round(boss.p.X - pos.X), Math.round(boss.p.Y)] }, gx: () => (boss && boss.green ? boss.green.x : null), boom: () => { const c = workspace.GetPartBoundsInRadius(pos.add(V3(0, 0, -330)), 300, params).filter((t) => t.GetAttribute("Break") && t.Size.Y > 80 && t.Parent).sort((x, y) => Math.abs(x.Position.X - pos.X) - Math.abs(y.Position.X - pos.X))[0]; if (!c) return null; Game.hold = true; shatter(c, V3(c.Position.X, pos.Y, c.Position.Z + c.Size.Z / 2), 1); return Math.round(c.Position.X - pos.X); }, fin: () => STAGE_BY_ID.canyon.finish, cp: (d) => canyonPath(d), hg: (d) => canyonHalfGap(d)[0], d: () => -pos.Z, setx: (x) => { pos = V3(x, pos.Y, pos.Z); vx = 0; }, tp: (back, side) => { const d = STAGE_BY_ID.canyon.finish - back; pos = V3(canyonPath(d) + (side || 0), ALT, -d); Game.cam.last = null; return [Game.fork, Math.round(d)]; }, steer: (v) => { Game.steerFake = v; }, note: (m) => notify(m, GOOD), del: () => Online.deleteAccount(), lb: () => openPanel("leaderboard"), hello: () => Game.cloudLoad(true), crash: () => task.spawn(crash, []), data: () => data, stats: () => stats, vs: () => Game.versusToggle(), heart: () => Game.heartFx(), pad: (k) => Game.makePad(k, pos.X, pos.Z - 45, pickups), reg: async (n, p) => { await Online.register(n, p); request("set_name", n); return Online.account(); }, win: () => Game._vsWin(), vsd: () => Game._vsDebug(), dbg: () => [mode, dead, !!stats, !!planeMain, planeMain && !!planeMain.Parent, Game.raceState.mid], race: () => [Game.race, Game.raceState.inQueue, Game.queueText(), JSON.stringify(Game.raceState.final)], shot: () => Game.flow.startApproach(), uid: () => Online.myId(), achp: () => openPanel("achievements"), achgo: (id) => Game.ach(id), bp: (s) => Game.openBackpack(s), pf: () => [1, 2, 3].map(Game.planeFor), req: (a, b) => request(a, b), gift: () => openPanel("gift"), push: () => Game.pushProfile(), gems: () => { Game.openShop(); shopTab = "GEMS"; rebuildShop(); }, run: (id) => startRun(id || "towers"), skip: () => Game.skip(), ahead: () => { const r = Math.floor(-pos.Z / CHUNK); return [r, beyondStart, stageFor(-pos.Z)[0], stageFor((r + 5) * CHUNK + 1)[0], stageFor((r + 40) * CHUNK + 1)[0]]; }, state: () => [mode, curStage, Game.flow.cine && Game.flow.cine.kind, Math.round(-pos.Z)] };
+if (DEV) window.__dev = { show: (id, k) => {
+	if (Game._sv) Game._sv.Destroy();
+	const cams = [V3(-15, 8, -17), V3(15, 7, 17), V3(-25, 1.5, 0), V3(0, 26, 0.01), V3(0, 2, -25)];
+	Game._sv = planeView(gui, id, US(1, 1), UO(0, 0), { bg: RGB(52, 58, 78), bgT: 0, fov: 32, spin: 1e-6, cam: CFrame.lookAt(cams[k || 0], V3(0, 0, 0)) });
+	Game._sv.ZIndex = 80;
+}, lift: () => { Game.lift = runTime; }, goto: (k) => { pos = V3(0, ALT, -((beyondStart || 0) + k)); Game.cam.last = null; regenerate(pos.X, pos.Z); return [curStage, Math.round(-pos.Z)]; }, bt: (v) => { if (boss) { boss.t = v; boss.nextShot = v + 1; } }, bossS: () => boss && { hits: boss.hits, green: boss.green ? [Math.round(boss.green.x), Math.round(boss.green.rz)] : null, shot: !!boss.shot, t: Math.round(boss.t), fin: boss.finale, p: [Math.round(boss.p.X - pos.X), Math.round(boss.p.Y)] }, gx: () => (boss && boss.green ? boss.green.x : null), boom: () => { const c = workspace.GetPartBoundsInRadius(pos.add(V3(0, 0, -330)), 300, params).filter((t) => t.GetAttribute("Break") && t.Size.Y > 80 && t.Parent).sort((x, y) => Math.abs(x.Position.X - pos.X) - Math.abs(y.Position.X - pos.X))[0]; if (!c) return null; Game.hold = true; shatter(c, V3(c.Position.X, pos.Y, c.Position.Z + c.Size.Z / 2), 1); return Math.round(c.Position.X - pos.X); }, fin: () => STAGE_BY_ID.canyon.finish, cp: (d) => canyonPath(d), hg: (d) => canyonHalfGap(d)[0], d: () => -pos.Z, setx: (x) => { pos = V3(x, pos.Y, pos.Z); vx = 0; }, tp: (back, side) => { const d = STAGE_BY_ID.canyon.finish - back; pos = V3(canyonPath(d) + (side || 0), ALT, -d); Game.cam.last = null; return [Game.fork, Math.round(d)]; }, steer: (v) => { Game.steerFake = v; }, note: (m) => notify(m, GOOD), del: () => Online.deleteAccount(), lb: () => openPanel("leaderboard"), hello: () => Game.cloudLoad(true), crash: () => task.spawn(crash, []), data: () => data, stats: () => stats, vs: () => Game.versusToggle(), heart: () => Game.heartFx(), pad: (k) => Game.makePad(k, pos.X, pos.Z - 45, pickups), reg: async (n, p) => { await Online.register(n, p); request("set_name", n); return Online.account(); }, win: () => Game._vsWin(), vsd: () => Game._vsDebug(), dbg: () => [mode, dead, !!stats, !!planeMain, planeMain && !!planeMain.Parent, Game.raceState.mid], race: () => [Game.race, Game.raceState.inQueue, Game.queueText(), JSON.stringify(Game.raceState.final)], shot: () => Game.flow.startApproach(), uid: () => Online.myId(), achp: () => openPanel("achievements"), achgo: (id) => Game.ach(id), bp: (s) => Game.openBackpack(s), pf: () => [1, 2, 3].map(Game.planeFor), req: (a, b) => request(a, b), gift: () => openPanel("gift"), push: () => Game.pushProfile(), gems: () => { Game.openShop(); shopTab = "GEMS"; rebuildShop(); }, run: (id) => startRun(id || "towers"), skip: () => Game.skip(), ahead: () => { const r = Math.floor(-pos.Z / CHUNK); return [r, beyondStart, stageFor(-pos.Z)[0], stageFor((r + 5) * CHUNK + 1)[0], stageFor((r + 40) * CHUNK + 1)[0]]; }, state: () => [mode, curStage, Game.flow.cine && Game.flow.cine.kind, Math.round(-pos.Z)] };
 
 // ------------------------------------------------------------------ versus
 // same idea as roblox: queue up, everyone starts on the same map, farthest wins.
@@ -11490,7 +12167,7 @@ if (DEV) window.__dev = { lift: () => { Game.lift = runTime; }, goto: (k) => { p
 // ------------------------------------------------------------------ old version warning
 // every build has its own number, the page checks now and then whether a newer one is online
 (() => {
-	const BUILD = "1792437648";
+	const BUILD = "1792439911";
 	if (BUILD.startsWith("__")) return;
 	const bar = make("TextButton", {
 		AnchorPoint: V2(0.5, 0),
@@ -11538,9 +12215,14 @@ if (DEV) window.__dev = { lift: () => { Game.lift = runTime; }, goto: (k) => { p
 		{ id: "traffic", name: "WRONG WAY", desc: "Finish Traffic", color: RGB(255, 160, 90) },
 		{ id: "city", name: "NIGHT SHIFT", desc: "Finish the City", color: RGB(150, 150, 255) },
 		{ id: "desert", name: "TUMBLEWEED", desc: "Finish the Desert", color: RGB(236, 204, 130) },
+		{ id: "ruins", name: "LOST AND FOUND", desc: "Get through the Ruins", color: RGB(232, 196, 130) },
+		{ id: "windfarm", name: "BREEZY", desc: "Get through the Wind Farm", color: RGB(150, 230, 120) },
+		{ id: "sky", name: "HEAD IN THE CLOUDS", desc: "Get through the Sky Islands", color: RGB(170, 215, 255) },
+		{ id: "factory", name: "OVERTIME", desc: "Get through the Factory", color: RGB(250, 196, 30) },
+		{ id: "neon", name: "AFTER HOURS", desc: "Get through Neon", color: RGB(255, 60, 200) },
 		{ id: "volcano", name: "FLOOR IS LAVA", desc: "Get through the Volcanoes", color: RGB(255, 110, 40) },
-		{ id: "sea", name: "SEA LEGS", desc: "Get through the Sea", color: RGB(80, 170, 255) },
 		{ id: "glacier", name: "COLD FEET", desc: "Get through the Glacier", color: RGB(170, 225, 255) },
+		{ id: "sea", name: "SEA LEGS", desc: "Get through the Sea", color: RGB(80, 170, 255) },
 		{ id: "space", name: "HOUSTON", desc: "Make it through Space and fall back to earth", color: RGB(170, 110, 255) },
 		// the big one
 		{ id: "fullcircle", name: "FULL CIRCLE", desc: "Blocks to Space and back to Blocks in one run. No dying, no fast travel", color: COIN },
@@ -11646,7 +12328,7 @@ if (DEV) window.__dev = { lift: () => { Game.lift = runTime; }, goto: (k) => { p
 
 	// ---------------- hooks from the run
 	Game.achStage = (old, nw) => {
-		if (["towers", "moving", "canyon", "smash", "turrets", "traffic", "city", "desert", "volcano", "sea", "glacier"].includes(old)) Game.ach(old);
+		if (["towers", "moving", "canyon", "smash", "turrets", "traffic", "city", "desert", "ruins", "windfarm", "sky", "factory", "neon", "volcano", "glacier", "sea"].includes(old)) Game.ach(old);
 		if (old === "towers" && runTime < 30 && (Game.lastStart || "towers") === "towers" && Game.loop === 0) Game.ach("nodamage");
 	};
 	Game.achLoop = () => {
