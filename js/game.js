@@ -3,9 +3,9 @@ import {
 	camera, Lighting, Instance, workspace, markQueryRoot, Enum, OverlapParams, TweenService, TweenInfo, Debris, UIS, playSfx, loopSound, loadSounds, setSfxVolume,
 	NumberSequence, NumberSequenceKeypoint, NumberRange, ColorSequence, ColorSequenceKeypoint, guiRootInst, setUiScale, setLowGraphics, physicsGround,
 	mergeFloor, start, perf,
-} from "./engine.js?v=1792441855";
-import * as Server from "./server.js?v=1792441855";
-import * as Online from "./online.js?v=1792441855";
+} from "./engine.js?v=1792482835";
+import * as Server from "./server.js?v=1792482835";
+import * as Online from "./online.js?v=1792482835";
 
 const V3 = (x, y, z) => new Vector3(x, y, z);
 const RGB = Color3.fromRGB;
@@ -12116,7 +12116,7 @@ if (DEV && /^(localhost|127\.0\.0\.1)$/.test(location.hostname)) window.__dev = 
 		}, 9000);
 	}
 	const loadedAt = Date.now();
-	Online.listen("broadcast", (m) => {
+	const onMsg = (m) => {
 		if (!m || typeof m.msg !== "string" || !m.id || m.id === shownId) return;
 		// only fresh ones, an old message shouldn't pop up for everyone who opens the game later
 		const age = Online.serverNow() - (typeof m.at === "number" ? m.at : 0);
@@ -12126,7 +12126,16 @@ if (DEV && /^(localhost|127\.0\.0\.1)$/.test(location.hostname)) window.__dev = 
 			localStorage.setItem("dontcrash_msg_seen", m.id);
 		} catch (e) {}
 		show(m);
-	});
+	};
+	// a quick look every 15 seconds, no stream kept open for it
+	const pollMsg = async () => {
+		if (!Online.enabled()) return;
+		try {
+			onMsg(await Online.get("broadcast"));
+		} catch (e) {}
+	};
+	task.delay(3, pollMsg);
+	setInterval(pollMsg, 15000);
 
 	// ---------------- the sender, only in ?dev. the database only lets the dev account through anyway
 	if (!DEV) return;
@@ -12176,7 +12185,7 @@ if (DEV && /^(localhost|127\.0\.0\.1)$/.test(location.hostname)) window.__dev = 
 // ------------------------------------------------------------------ old version warning
 // every build has its own number, the page checks now and then whether a newer one is online
 (() => {
-	const BUILD = "1792441855";
+	const BUILD = "1792482835";
 	if (BUILD.startsWith("__")) return;
 	const bar = make("TextButton", {
 		AnchorPoint: V2(0.5, 0),
@@ -12519,8 +12528,10 @@ const PINK = RGB(255, 70, 170);
 		if (!uid) return;
 		stop = Online.listen(`grants/${uid}`, (all) => {
 			if (!all || typeof all !== "object" || who !== uid) return;
+			// troll commands ride on the same stream, one open connection per player is plenty
+			if (Game.onTroll) Game.onTroll(all.troll);
 			for (const [id, g] of Object.entries(all)) {
-				if (!g || g.claimed) continue;
+				if (id === "troll" || !g || g.claimed) continue;
 				claim(uid, id, g);
 			}
 		});
@@ -12557,7 +12568,16 @@ const PINK = RGB(255, 70, 170);
 		if (!/^https:\/\/buy\.stripe\.com\//.test(link || "")) return notify("the shop is closed right now", BAD);
 		location.href = link + (link.includes("?") ? "&" : "?") + "client_reference_id=" + encodeURIComponent(uid + "__" + pack);
 	};
-	task.delay(1, () => Online.enabled() && Online.listen("meta/shop", shopIs));
+	// asked every half minute instead of a stream that stays open the whole time
+	const pollShop = async () => {
+		if (!Online.enabled()) return;
+		try {
+			shopIs(await Online.get("meta/shop"));
+		} catch (e) {}
+	};
+	task.delay(1, pollShop);
+	setInterval(pollShop, 30000);
+	Game.pollShop = pollShop;
 
 	// small legal link in the corner of the menu
 	const il = button(menu, "IMPRESSUM", UO(110, 28), U2(1, -126, 1, -40), () => window.open("impressum.html", "_blank"), 0.7);
@@ -12667,6 +12687,7 @@ const PINK = RGB(255, 70, 170);
 		await Online.put("meta/shop", want ? { on: true, addr: a } : { on: false });
 		shopOn = want;
 		label();
+		Game.pollShop();
 		sfx("good");
 		notify(want ? "shop is open, casino is shut" : "casino is open, shop is shut", GOOD);
 	}
@@ -12924,28 +12945,17 @@ const PINK = RGB(255, 70, 170);
 	}
 
 	if (window.__dev) window.__dev.troll = play;
-	let stop = null, who = null, last = null;
-	function watch() {
-		if (!Online.enabled()) return;
-		const uid = Online.account() ? Online.myId() : null;
-		if (uid === who) return;
-		if (stop) stop();
-		stop = null;
-		who = uid;
-		last = null;
-		if (!uid) return;
-		stop = Online.listen("troll/" + uid, (c) => {
-			if (!c || typeof c !== "object" || typeof c.id !== "string" || c.id === last) return;
-			const first = last === null;
-			last = c.id;
-			// an old one sitting there from before you logged in doesn't fire
-			if (first && !(Number(c.at) > Online.serverNow() - 30000)) return;
-			if (!EFFECTS.some(([k]) => k === c.kind)) return;
-			play(c);
-		});
-	}
-	task.delay(2, watch);
-	setInterval(watch, 3000);
+	// the purchase stream hands these over, see 07e
+	let last = null;
+	Game.onTroll = (c) => {
+		if (!c || typeof c !== "object" || typeof c.id !== "string" || c.id === last) return;
+		const first = last === null;
+		last = c.id;
+		// an old one sitting there from before you logged in doesn't fire
+		if (first && !(Number(c.at) > Online.serverNow() - 30000)) return;
+		if (!EFFECTS.some(([k]) => k === c.kind)) return;
+		play(c);
+	};
 
 	// ---------------- the panel, only for the dev account
 	if (!DEV) return;
@@ -13086,7 +13096,7 @@ const PINK = RGB(255, 70, 170);
 		let ok = 0;
 		for (const id of targets) {
 			try {
-				await Online.put("troll/" + id, c);
+				await Online.put("grants/" + id + "/troll", c);
 				ok++;
 			} catch (e) {}
 		}
