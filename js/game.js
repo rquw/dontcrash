@@ -3,9 +3,9 @@ import {
 	camera, Lighting, Instance, workspace, markQueryRoot, Enum, OverlapParams, TweenService, TweenInfo, Debris, UIS, playSfx, loopSound, loadSounds, setSfxVolume,
 	NumberSequence, NumberSequenceKeypoint, NumberRange, ColorSequence, ColorSequenceKeypoint, guiRootInst, setUiScale, setLowGraphics, physicsGround,
 	mergeFloor, start, perf,
-} from "./engine.js?v=1792482835";
-import * as Server from "./server.js?v=1792482835";
-import * as Online from "./online.js?v=1792482835";
+} from "./engine.js?v=1792483564";
+import * as Server from "./server.js?v=1792483564";
+import * as Online from "./online.js?v=1792483564";
 
 const V3 = (x, y, z) => new Vector3(x, y, z);
 const RGB = Color3.fromRGB;
@@ -12185,7 +12185,7 @@ if (DEV && /^(localhost|127\.0\.0\.1)$/.test(location.hostname)) window.__dev = 
 // ------------------------------------------------------------------ old version warning
 // every build has its own number, the page checks now and then whether a newer one is online
 (() => {
-	const BUILD = "1792482835";
+	const BUILD = "1792483564";
 	if (BUILD.startsWith("__")) return;
 	const bar = make("TextButton", {
 		AnchorPoint: V2(0.5, 0),
@@ -12859,7 +12859,7 @@ const PINK = RGB(255, 70, 170);
 @keyframes trDisco { from { filter: hue-rotate(0deg) saturate(2); } to { filter: hue-rotate(360deg) saturate(2); } }
 @keyframes trPicIn { 0% { transform: scale(0.2) rotate(-12deg); opacity: 0; } 15% { transform: scale(1.08) rotate(3deg); opacity: 1; } 25% { transform: scale(1) rotate(0); } 100% { transform: scale(1.04); } }
 .tr-over { position: fixed; inset: 0; z-index: 99999; display: flex; align-items: center; justify-content: center; pointer-events: none; }
-.tr-over img { max-width: 92vw; max-height: 88vh; border-radius: 14px; box-shadow: 0 0 80px rgba(0,0,0,.8); animation: trPicIn 4s ease-out forwards; }
+.tr-over img { max-width: 92vw; max-height: 88vh; }
 .tr-text { font: 900 64px system-ui, sans-serif; color: #fff; text-align: center; text-shadow: 0 6px 30px rgba(0,0,0,.8); padding: 20px; }
 `;
 	document.head.appendChild(css);
@@ -12897,12 +12897,10 @@ const PINK = RGB(255, 70, 170);
 					src = p && typeof p.d === "string" && p.d.startsWith("data:image/") ? p.d : null;
 				} catch (e) {}
 				if (!src) return;
-				const o = overlay(4, "", "rgba(0,0,0,.35)");
+				const o = overlay(2, "");
 				const img = document.createElement("img");
 				img.src = src;
 				o.appendChild(img);
-				sfx("boss_phase");
-				bodyFx({ animation: "trShake .25s 3" }, 1);
 				break;
 			}
 			case "flip":
@@ -12941,7 +12939,6 @@ const PINK = RGB(255, 70, 170);
 				overlay(3.5, `<div class="tr-text" style="font-size:40px">CONNECTION LOST<br><span style="font-size:22px;font-weight:500;opacity:.7">your progress could not be saved</span></div>`, "rgba(10,10,14,.96)");
 				break;
 		}
-		if (c.from) notify("trolled by " + esc(c.from).toLowerCase(), RGB(255, 90, 200));
 	}
 
 	if (window.__dev) window.__dev.troll = play;
@@ -12966,7 +12963,7 @@ const PINK = RGB(255, 70, 170);
 	// who's online right now, click a name to pick them
 	const onRow = row(body, 96, 1);
 	const onBox = document.createElement("div");
-	onBox.style.cssText = "position:absolute;inset:4px;display:flex;flex-wrap:wrap;gap:6px;overflow-y:auto;align-content:flex-start";
+	onBox.style.cssText = "pointer-events:auto;position:absolute;inset:4px;display:flex;flex-wrap:wrap;gap:6px;overflow-y:auto;align-content:flex-start";
 	onRow.el.appendChild(onBox);
 	let players = {};
 	const online = () => Object.entries(players).filter(([, p]) => p && p.name && Number(p.active) > Online.serverNow() - 90000);
@@ -13005,7 +13002,7 @@ const PINK = RGB(255, 70, 170);
 	up.TextColor3 = GOOD;
 	const picRow = row(body, 200, 1);
 	const gal = document.createElement("div");
-	gal.style.cssText = "position:absolute;inset:4px;display:flex;flex-wrap:wrap;gap:8px;overflow-y:auto;align-content:flex-start";
+	gal.style.cssText = "pointer-events:auto;position:absolute;inset:4px;display:flex;flex-wrap:wrap;gap:8px;overflow-y:auto;align-content:flex-start";
 	picRow.el.appendChild(gal);
 	let picked = null;
 	function shrink(f) {
@@ -13041,11 +13038,15 @@ const PINK = RGB(255, 70, 170);
 		if (n) notify(n + (n === 1 ? " picture" : " pictures") + " uploaded", GOOD);
 		loadPics();
 	};
+	let all = {};
 	async function loadPics() {
-		let all = {};
 		try {
 			all = (await Online.get("trollpics")) || {};
 		} catch (e) {}
+		drawPics();
+	}
+	// the gui layer ignores the mouse, these have to switch it back on
+	function drawPics() {
 		gal.innerHTML = "";
 		const ids = Object.keys(all);
 		if (!ids.length) gal.innerHTML = `<span style="color:#9a9cab;font:600 15px system-ui">no pictures yet, upload some</span>`;
@@ -13072,7 +13073,7 @@ const PINK = RGB(255, 70, 170);
 			box.onclick = () => {
 				picked = id;
 				sfx("click");
-				loadPics();
+				drawPics();
 			};
 			box.append(img, x);
 			gal.appendChild(box);
