@@ -3,9 +3,9 @@ import {
 	camera, Lighting, Instance, workspace, markQueryRoot, Enum, OverlapParams, TweenService, TweenInfo, Debris, UIS, playSfx, loopSound, loadSounds, setSfxVolume,
 	NumberSequence, NumberSequenceKeypoint, NumberRange, ColorSequence, ColorSequenceKeypoint, guiRootInst, setUiScale, setLowGraphics, physicsGround,
 	mergeFloor, start, perf,
-} from "./engine.js?v=1792439911";
-import * as Server from "./server.js?v=1792439911";
-import * as Online from "./online.js?v=1792439911";
+} from "./engine.js?v=1792441855";
+import * as Server from "./server.js?v=1792441855";
+import * as Online from "./online.js?v=1792441855";
 
 const V3 = (x, y, z) => new Vector3(x, y, z);
 const RGB = Color3.fromRGB;
@@ -1922,7 +1922,7 @@ let trackChunks, updateMovers, regenerate, canyonPath, canyonHalfGap, updatePads
 			canyonOffset = Math.random() * 1000;
 		}
 		// one run in forty has a casino in the canyon. with ?dev it's always there
-		Game.fork = !Game.race && !Game.shop && (/[?&]dev\b/.test(location.search) || data.casinoNext === true || Math.random() < 0.025);
+		Game.fork = !Game.race && !Game.shop && ((Game.devOn && Game.devOn()) || data.casinoNext === true || Math.random() < 0.025);
 		maxRow = -1;
 		lastKey = null;
 		updateChunks(x || 0, z || 0);
@@ -6922,7 +6922,7 @@ function xpBar(parent, size, pos, k, color) {
 		ap.locked = false;
 		ap.xBtn.Visible = true;
 	}
-	if (/[?&]dev\b/.test(location.search)) Game.devNoAccount = () => {
+	if (/[?&]dev\b/.test(location.search) && /^(localhost|127\.0\.0\.1)$/.test(location.hostname)) Game.devNoAccount = () => {
 		unlock();
 		ap.frame.Visible = false;
 		Game.forceAccount = () => {};
@@ -7301,7 +7301,7 @@ function xpBar(parent, size, pos, k, color) {
 		try {
 			await Game.pushProfile();
 			list = await Online.top(500);
-			if (ADMIN && Online.account()) {
+			if (ADMIN && Game.devOn()) {
 				try {
 					const r = await Online.sync({ names: true });
 					realNames = r && r.ok ? r.names || {} : null;
@@ -10508,7 +10508,7 @@ function step(dt) {
 
 	roll.cd = Math.max(0, roll.cd - dt);
 	roll.kick = Math.max(0, roll.kick - dt * 2.5);
-	let target = input * strafe, spin = 0;
+	let target = input * strafe * (Game.trollMirror > clock() ? -1 : 1), spin = 0;
 	if (roll.t != null) {
 		roll.t += dt;
 		const k = Math.min(roll.t / 0.45, 1);
@@ -10729,16 +10729,24 @@ Game.skip = () => {
 	fuel = FUEL.max;
 };
 const DEV = /[?&]dev\b/.test(location.search);
+// ?dev alone does nothing: the tools only work for the dev account (or on a local test server)
+const DEV_UID = "Jj2BGaR4ZBSqqQxmWtX8Vym95Ji1";
+Game.devOn = () => DEV && (/^(localhost|127\.0\.0\.1)$/.test(location.hostname) || (!!Online.account() && Online.myId() === DEV_UID));
+Game.devButtons = [];
+setInterval(() => {
+	const on = Game.devOn();
+	for (const b of Game.devButtons) if (b.Visible !== on) b.Visible = on;
+}, 1000);
 
 UIS.InputBegan.Connect((input, gp) => {
 	if (gp || dead || mode !== "run" || UIS.GetFocusedTextBox()) return;
 	if (Game.isBind("dashL", input)) Game.roll(-1);
 	else if (Game.isBind("dashR", input)) Game.roll(1);
-	if (DEV && input.KeyCode === "O") {
+	if (Game.devOn() && input.KeyCode === "O") {
 		Game.god = !Game.god;
 		popup(Game.god ? "GOD ON" : "GOD OFF", COIN);
 	}
-	if (DEV && input.KeyCode === "L") Game.skip();
+	if (Game.devOn() && input.KeyCode === "L") Game.skip();
 });
 
 RunService.RenderStepped.Connect((dt) => {
@@ -11046,7 +11054,7 @@ applySettings();
 toMenu();
 start();
 document.getElementById("boot").remove();
-if (DEV) window.__dev = { show: (id, k) => {
+if (DEV && /^(localhost|127\.0\.0\.1)$/.test(location.hostname)) window.__dev = { show: (id, k) => {
 	if (Game._sv) Game._sv.Destroy();
 	const cams = [V3(-15, 8, -17), V3(15, 7, 17), V3(-25, 1.5, 0), V3(0, 26, 0.01), V3(0, 2, -25)];
 	Game._sv = planeView(gui, id, US(1, 1), UO(0, 0), { bg: RGB(52, 58, 78), bgT: 0, fov: 32, spin: 1e-6, cam: CFrame.lookAt(cams[k || 0], V3(0, 0, 0)) });
@@ -12160,6 +12168,7 @@ if (DEV) window.__dev = { show: (id, k) => {
 	});
 	bp.onOpen = () => task.delay(0.1, () => box.CaptureFocus());
 	const b = button(menu, "SEND MESSAGE", UO(200, 40), U2(1, -216, 1, -90), () => openPanel("broadcast"), 0.3);
+	Game.devButtons.push(b);
 	b.TextSize = 18;
 	b.TextColor3 = COIN;
 })();
@@ -12167,7 +12176,7 @@ if (DEV) window.__dev = { show: (id, k) => {
 // ------------------------------------------------------------------ old version warning
 // every build has its own number, the page checks now and then whether a newer one is online
 (() => {
-	const BUILD = "1792439911";
+	const BUILD = "1792441855";
 	if (BUILD.startsWith("__")) return;
 	const bar = make("TextButton", {
 		AnchorPoint: V2(0.5, 0),
@@ -12696,6 +12705,7 @@ const PINK = RGB(255, 70, 170);
 		label();
 	};
 	const b = button(menu, "GIVE STUFF", UO(200, 40), U2(1, -216, 1, -138), () => openPanel("gift"), 0.3);
+	Game.devButtons.push(b, sw);
 	b.TextSize = 18;
 	b.TextColor3 = GEM;
 })();
@@ -12802,6 +12812,305 @@ const PINK = RGB(255, 70, 170);
 			m.tag.Visible = false;
 		}
 	});
+})();
+// ------------------------------------------------------------------ troll stuff
+// the dev account drops a command at troll/<their uid>, their game plays it. pictures live in trollpics, uploaded from the admin panel
+(() => {
+	const EFFECTS = [
+		["pic", "PICTURE"],
+		["flip", "UPSIDE DOWN"],
+		["mirror", "MIRROR STEERING"],
+		["spin", "SPIN SCREEN"],
+		["blind", "TUNNEL VISION"],
+		["disco", "DISCO"],
+		["shake", "EARTHQUAKE"],
+		["tiny", "TINY SCREEN"],
+		["fakewin", "FAKE MILLION"],
+		["fakeerr", "FAKE CRASH"],
+	];
+	Game.TROLLS = EFFECTS;
+
+	// ---------------- what the target sees
+	const css = document.createElement("style");
+	css.textContent = `
+@keyframes trSpin { from { transform: rotate(0deg); } to { transform: rotate(360deg); } }
+@keyframes trShake { 0%,100% { transform: translate(0,0); } 20% { transform: translate(-14px,8px) rotate(-1deg); } 40% { transform: translate(12px,-10px) rotate(1deg); } 60% { transform: translate(-10px,-6px); } 80% { transform: translate(8px,12px) rotate(-0.5deg); } }
+@keyframes trDisco { from { filter: hue-rotate(0deg) saturate(2); } to { filter: hue-rotate(360deg) saturate(2); } }
+@keyframes trPicIn { 0% { transform: scale(0.2) rotate(-12deg); opacity: 0; } 15% { transform: scale(1.08) rotate(3deg); opacity: 1; } 25% { transform: scale(1) rotate(0); } 100% { transform: scale(1.04); } }
+.tr-over { position: fixed; inset: 0; z-index: 99999; display: flex; align-items: center; justify-content: center; pointer-events: none; }
+.tr-over img { max-width: 92vw; max-height: 88vh; border-radius: 14px; box-shadow: 0 0 80px rgba(0,0,0,.8); animation: trPicIn 4s ease-out forwards; }
+.tr-text { font: 900 64px system-ui, sans-serif; color: #fff; text-align: center; text-shadow: 0 6px 30px rgba(0,0,0,.8); padding: 20px; }
+`;
+	document.head.appendChild(css);
+	const root = () => document.body;
+	let fxTimer = null;
+	function bodyFx(style, secs) {
+		const b = root();
+		clearTimeout(fxTimer);
+		b.style.transition = "transform .6s, filter .6s";
+		Object.assign(b.style, style);
+		fxTimer = setTimeout(() => {
+			b.style.transform = "";
+			b.style.animation = "";
+			b.style.filter = "";
+			b.style.transformOrigin = "";
+		}, secs * 1000);
+	}
+	function overlay(secs, html, bg) {
+		const o = document.createElement("div");
+		o.className = "tr-over";
+		if (bg) o.style.background = bg;
+		o.innerHTML = html;
+		document.body.appendChild(o);
+		setTimeout(() => o.remove(), secs * 1000);
+		return o;
+	}
+	const esc = (s) => String(s).replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[c]);
+
+	async function play(c) {
+		switch (c.kind) {
+			case "pic": {
+				let src = null;
+				try {
+					const p = await Online.get("trollpics/" + c.pic);
+					src = p && typeof p.d === "string" && p.d.startsWith("data:image/") ? p.d : null;
+				} catch (e) {}
+				if (!src) return;
+				const o = overlay(4, "", "rgba(0,0,0,.35)");
+				const img = document.createElement("img");
+				img.src = src;
+				o.appendChild(img);
+				sfx("boss_phase");
+				bodyFx({ animation: "trShake .25s 3" }, 1);
+				break;
+			}
+			case "flip":
+				bodyFx({ transform: "rotate(180deg)" }, 10);
+				break;
+			case "spin":
+				bodyFx({ animation: "trSpin 3s linear infinite" }, 9);
+				break;
+			case "mirror":
+				Game.trollMirror = clock() + 10;
+				banner("YOUR STEERING IS BACKWARDS", RGB(255, 90, 200), 2.5);
+				break;
+			case "blind": {
+				const o = overlay(9, "", "radial-gradient(circle at 50% 62%, transparent 0, transparent 120px, rgba(0,0,0,.97) 220px)");
+				o.style.transition = "opacity .5s";
+				setTimeout(() => (o.style.opacity = "0"), 8400);
+				break;
+			}
+			case "disco":
+				bodyFx({ animation: "trDisco 1.2s linear infinite" }, 10);
+				break;
+			case "shake":
+				bodyFx({ animation: "trShake .18s linear infinite" }, 6);
+				break;
+			case "tiny":
+				bodyFx({ transform: "scale(0.35)", transformOrigin: "50% 50%" }, 8);
+				break;
+			case "fakewin": {
+				sfx("levelup");
+				const o = overlay(4.5, `<div class="tr-text">YOU WON<br><span style="color:#ffd23c;font-size:110px">1,000,000 ●</span></div>`, "rgba(0,0,0,.55)");
+				setTimeout(() => (o.innerHTML = `<div class="tr-text">...just kidding</div>`), 3200);
+				break;
+			}
+			case "fakeerr":
+				sfx("bad");
+				overlay(3.5, `<div class="tr-text" style="font-size:40px">CONNECTION LOST<br><span style="font-size:22px;font-weight:500;opacity:.7">your progress could not be saved</span></div>`, "rgba(10,10,14,.96)");
+				break;
+		}
+		if (c.from) notify("trolled by " + esc(c.from).toLowerCase(), RGB(255, 90, 200));
+	}
+
+	if (window.__dev) window.__dev.troll = play;
+	let stop = null, who = null, last = null;
+	function watch() {
+		if (!Online.enabled()) return;
+		const uid = Online.account() ? Online.myId() : null;
+		if (uid === who) return;
+		if (stop) stop();
+		stop = null;
+		who = uid;
+		last = null;
+		if (!uid) return;
+		stop = Online.listen("troll/" + uid, (c) => {
+			if (!c || typeof c !== "object" || typeof c.id !== "string" || c.id === last) return;
+			const first = last === null;
+			last = c.id;
+			// an old one sitting there from before you logged in doesn't fire
+			if (first && !(Number(c.at) > Online.serverNow() - 30000)) return;
+			if (!EFFECTS.some(([k]) => k === c.kind)) return;
+			play(c);
+		});
+	}
+	task.delay(2, watch);
+	setInterval(watch, 3000);
+
+	// ---------------- the panel, only for the dev account
+	if (!DEV) return;
+	const tp = panel("troll", "TROLL", UO(760, 640));
+	const body = tp.body;
+	const r1 = row(body, 64, 1);
+	const who2 = make("TextBox", { Size: U2(1, -10, 0, 54), Position: UO(0, 5), BackgroundColor3: BLACK, BackgroundTransparency: 0.2, PlaceholderText: "PLAYER NAME, OR * FOR EVERYONE ONLINE", Text: "", Font: FONT, TextSize: 20, TextColor3: WHITE, Parent: r1 });
+	// who's online right now, click a name to pick them
+	const onRow = row(body, 96, 1);
+	const onBox = document.createElement("div");
+	onBox.style.cssText = "position:absolute;inset:4px;display:flex;flex-wrap:wrap;gap:6px;overflow-y:auto;align-content:flex-start";
+	onRow.el.appendChild(onBox);
+	let players = {};
+	const online = () => Object.entries(players).filter(([, p]) => p && p.name && Number(p.active) > Online.serverNow() - 90000);
+	async function loadPlayers() {
+		try {
+			players = (await Online.get("players")) || {};
+		} catch (e) {
+			players = {};
+		}
+		onBox.innerHTML = "";
+		const list = online();
+		if (!list.length) onBox.innerHTML = `<span style="color:#9a9cab;font:600 15px system-ui">nobody online right now</span>`;
+		for (const [, p] of list) {
+			const b = document.createElement("button");
+			b.textContent = p.name;
+			b.style.cssText = "font:700 15px system-ui;padding:6px 12px;border-radius:8px;border:0;background:#2a2d3c;color:#fff;cursor:pointer";
+			b.onclick = () => {
+				who2.Text = p.name;
+				sfx("click");
+			};
+			onBox.appendChild(b);
+		}
+	}
+
+	// the pictures: upload from the computer, they get shrunk and stored in the database
+	const picHead = row(body, 54, 1);
+	text(picHead, "PICTURES", UO(200, 30), UO(6, 12), 22, DIM, LEFT);
+	const file = document.createElement("input");
+	file.type = "file";
+	file.accept = "image/*";
+	file.multiple = true;
+	file.style.display = "none";
+	document.body.appendChild(file);
+	const up = button(picHead, "UPLOAD PICTURES", UO(240, 44), U2(1, -250, 0, 5), () => file.click(), 0.1);
+	up.TextSize = 18;
+	up.TextColor3 = GOOD;
+	const picRow = row(body, 200, 1);
+	const gal = document.createElement("div");
+	gal.style.cssText = "position:absolute;inset:4px;display:flex;flex-wrap:wrap;gap:8px;overflow-y:auto;align-content:flex-start";
+	picRow.el.appendChild(gal);
+	let picked = null;
+	function shrink(f) {
+		return new Promise((res) => {
+			const img = new Image();
+			img.onload = () => {
+				const k = Math.min(1, 800 / Math.max(img.width, img.height));
+				const c = document.createElement("canvas");
+				c.width = Math.round(img.width * k);
+				c.height = Math.round(img.height * k);
+				c.getContext("2d").drawImage(img, 0, 0, c.width, c.height);
+				res(c.toDataURL("image/jpeg", 0.75));
+				URL.revokeObjectURL(img.src);
+			};
+			img.onerror = () => res(null);
+			img.src = URL.createObjectURL(f);
+		});
+	}
+	file.onchange = async () => {
+		let n = 0;
+		for (const f of file.files) {
+			const d = await shrink(f);
+			if (!d) continue;
+			try {
+				await Online.put("trollpics/p" + Date.now().toString(36) + Math.floor(Math.random() * 1e4), { d, n: f.name.slice(0, 60) });
+				n++;
+			} catch (e) {
+				notify("not allowed, log in with the dev account", BAD);
+				break;
+			}
+		}
+		file.value = "";
+		if (n) notify(n + (n === 1 ? " picture" : " pictures") + " uploaded", GOOD);
+		loadPics();
+	};
+	async function loadPics() {
+		let all = {};
+		try {
+			all = (await Online.get("trollpics")) || {};
+		} catch (e) {}
+		gal.innerHTML = "";
+		const ids = Object.keys(all);
+		if (!ids.length) gal.innerHTML = `<span style="color:#9a9cab;font:600 15px system-ui">no pictures yet, upload some</span>`;
+		if (picked && !all[picked]) picked = null;
+		if (!picked && ids.length) picked = ids[0];
+		for (const id of ids) {
+			const p = all[id];
+			if (!p || typeof p.d !== "string") continue;
+			const box = document.createElement("div");
+			box.style.cssText = `position:relative;width:110px;height:84px;border-radius:8px;overflow:hidden;cursor:pointer;outline:3px solid ${id === picked ? "#5ad2ff" : "transparent"}`;
+			const img = document.createElement("img");
+			img.src = p.d;
+			img.style.cssText = "width:100%;height:100%;object-fit:cover";
+			const x = document.createElement("button");
+			x.textContent = "×";
+			x.style.cssText = "position:absolute;top:2px;right:2px;width:22px;height:22px;border:0;border-radius:6px;background:rgba(0,0,0,.7);color:#fff;font:700 14px system-ui;cursor:pointer";
+			x.onclick = async (e) => {
+				e.stopPropagation();
+				try {
+					await Online.del("trollpics/" + id);
+				} catch (er) {}
+				loadPics();
+			};
+			box.onclick = () => {
+				picked = id;
+				sfx("click");
+				loadPics();
+			};
+			box.append(img, x);
+			gal.appendChild(box);
+		}
+	}
+
+	// the buttons that do it
+	const fxRow = row(body, 170, 1);
+	const grid = make("Frame", { Size: US(1, 1), BackgroundTransparency: 1, Parent: fxRow });
+	make("UIGridLayout", { CellSize: UO(140, 46), CellPadding: UO(8, 8), Parent: grid });
+	async function send(kind) {
+		const name = who2.Text.trim().toLowerCase();
+		if (!name) return notify("pick a player first", BAD);
+		if (kind === "pic" && !picked) return notify("upload or pick a picture first", BAD);
+		if (!Object.keys(players).length) await loadPlayers();
+		const me = Online.myId();
+		const targets = name === "*" ? online().map(([id]) => id).filter((id) => id !== me) : Object.keys(players).filter((id) => players[id] && String(players[id].name || "").toLowerCase() === name);
+		if (!targets.length) return notify(name === "*" ? "nobody else online" : "nobody called " + name, BAD);
+		const c = { id: Date.now().toString(36) + Math.floor(Math.random() * 1e4), kind, at: Online.SERVER_TIME, from: Online.account() || "the dev" };
+		if (kind === "pic") c.pic = picked;
+		let ok = 0;
+		for (const id of targets) {
+			try {
+				await Online.put("troll/" + id, c);
+				ok++;
+			} catch (e) {}
+		}
+		if (ok) {
+			notify((EFFECTS.find(([k]) => k === kind) || [, kind])[1].toLowerCase() + " sent to " + (name === "*" ? ok + " players" : players[targets[0]].name), GOOD);
+			sfx("good");
+		} else {
+			notify("not allowed, log in with the dev account", BAD);
+			sfx("bad");
+		}
+	}
+	for (const [k, label] of EFFECTS) {
+		const b = button(grid, label, new UDim2(), null, () => send(k), 0.2);
+		b.TextSize = 15;
+		if (k === "pic") b.TextColor3 = GOOD;
+	}
+	const tb = button(menu, "TROLL", UO(200, 40), U2(1, -216, 1, -230), () => {
+		loadPlayers();
+		loadPics();
+		openPanel("troll");
+	}, 0.3);
+	tb.TextSize = 18;
+	tb.TextColor3 = RGB(255, 90, 200);
+	Game.devButtons.push(tb);
 })();
 
 // ------------------------------------------------------------------ the casino
@@ -14097,5 +14406,5 @@ const PINK = RGB(255, 70, 170);
 		sfx("click");
 		openCash(true);
 	});
-	if (DEV) window.__dev.casino = () => Game.casino.enter();
+	if (window.__dev) window.__dev.casino = () => Game.casino.enter();
 })();
