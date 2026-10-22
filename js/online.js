@@ -164,13 +164,13 @@ export async function deleteAccount() {
 }
 
 // ---------------- plain database calls
-async function req(method, path, body) {
+async function req(method, path, body, query) {
 	const t = await token();
-	const r = await fetch(`${base()}/${path}.json?${NS}auth=${t}`, { method, body: body === undefined ? undefined : JSON.stringify(body) });
+	const r = await fetch(`${base()}/${path}.json?${NS}${query ? query + "&" : ""}auth=${t}`, { method, body: body === undefined ? undefined : JSON.stringify(body) });
 	if (!r.ok) throw new Error(method + " " + path + " failed " + r.status);
 	return await r.json();
 }
-export const get = (path) => req("GET", path);
+export const get = (path, query) => req("GET", path, undefined, query);
 export const put = (path, v) => req("PUT", path, v);
 export const patch = (path, v) => req("PATCH", path, v);
 export const del = (path) => req("DELETE", path);

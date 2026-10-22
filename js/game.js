@@ -3,9 +3,9 @@ import {
 	camera, Lighting, Instance, workspace, markQueryRoot, Enum, OverlapParams, TweenService, TweenInfo, Debris, UIS, playSfx, loopSound, loadSounds, setSfxVolume,
 	NumberSequence, NumberSequenceKeypoint, NumberRange, ColorSequence, ColorSequenceKeypoint, guiRootInst, setUiScale, setLowGraphics, physicsGround,
 	mergeFloor, start, perf,
-} from "./engine.js?v=1792667351";
-import * as Server from "./server.js?v=1792667351";
-import * as Online from "./online.js?v=1792667351";
+} from "./engine.js?v=1792668440";
+import * as Server from "./server.js?v=1792668440";
+import * as Online from "./online.js?v=1792668440";
 
 const V3 = (x, y, z) => new Vector3(x, y, z);
 const RGB = Color3.fromRGB;
@@ -12204,7 +12204,7 @@ if (DEV && /^(localhost|127\.0\.0\.1)$/.test(location.hostname)) window.__dev = 
 		if (e.key === "Enter") send();
 	});
 	bp.onOpen = () => task.delay(0.1, () => box.CaptureFocus());
-	const b = button(menu, "SEND MESSAGE", UO(200, 40), U2(1, -216, 1, -90), () => openPanel("broadcast"), 0.3);
+	const b = button(menu, "SEND MESSAGE", UO(200, 40), U2(1, -216, 1, -130), () => openPanel("broadcast"), 0.3);
 	Game.devButtons.push(b);
 	b.TextSize = 18;
 	b.TextColor3 = COIN;
@@ -12213,7 +12213,7 @@ if (DEV && /^(localhost|127\.0\.0\.1)$/.test(location.hostname)) window.__dev = 
 // ------------------------------------------------------------------ old version warning
 // every build has its own number, the page checks now and then whether a newer one is online
 (() => {
-	const BUILD = "1792667351";
+	const BUILD = "1792668440";
 	if (BUILD.startsWith("__")) return;
 	const bar = make("TextButton", {
 		AnchorPoint: V2(0.5, 0),
@@ -12741,7 +12741,7 @@ const PINK = RGB(255, 70, 170);
 		}
 	}, 0.05);
 	save.TextColor3 = GOOD;
-	const sw = button(menu, "", UO(200, 40), U2(1, -216, 1, -184), async () => {
+	const sw = button(menu, "", UO(200, 40), U2(1, -216, 1, -224), async () => {
 		if (busy) return;
 		busy = true;
 		try {
@@ -12763,7 +12763,7 @@ const PINK = RGB(255, 70, 170);
 		shopOn = on;
 		label();
 	};
-	const b = button(menu, "GIVE STUFF", UO(200, 40), U2(1, -216, 1, -138), () => openPanel("gift"), 0.3);
+	const b = button(menu, "GIVE STUFF", UO(200, 40), U2(1, -216, 1, -178), () => openPanel("gift"), 0.3);
 	Game.devButtons.push(b, sw);
 	b.TextSize = 18;
 	b.TextColor3 = GEM;
@@ -13152,7 +13152,7 @@ const PINK = RGB(255, 70, 170);
 		b.TextSize = 15;
 		if (k === "pic") b.TextColor3 = GOOD;
 	}
-	const tb = button(menu, "TROLL", UO(200, 40), U2(1, -216, 1, -230), () => {
+	const tb = button(menu, "TROLL", UO(200, 40), U2(1, -216, 1, -270), () => {
 		loadPlayers();
 		loadPics();
 		openPanel("troll");
@@ -13160,6 +13160,271 @@ const PINK = RGB(255, 70, 170);
 	tb.TextSize = 18;
 	tb.TextColor3 = RGB(255, 90, 200);
 	Game.devButtons.push(tb);
+})();
+// ------------------------------------------------------------------ bug reports / feedback, and insights for the dev
+(() => {
+	const esc = (s) => String(s == null ? "" : s).replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[c]);
+	// days and hours in austrian time, that's where everyone plays
+	const fmtDay = new Intl.DateTimeFormat("en-CA", { timeZone: "Europe/Vienna", year: "numeric", month: "2-digit", day: "2-digit" });
+	const fmtHour = new Intl.DateTimeFormat("en-GB", { timeZone: "Europe/Vienna", hour: "2-digit", hourCycle: "h23" });
+	const dayOf = (ms) => fmtDay.format(new Date(ms));
+	const hourOf = (ms) => Number(fmtHour.format(new Date(ms)));
+	const when = (ms) => {
+		if (!ms) return "?";
+		const d = new Date(ms);
+		return d.toLocaleDateString("de-AT", { timeZone: "Europe/Vienna", day: "2-digit", month: "2-digit", year: "numeric" }) + " " + d.toLocaleTimeString("de-AT", { timeZone: "Europe/Vienna", hour: "2-digit", minute: "2-digit" });
+	};
+	// plain html inside a panel row. the gui layer ignores the mouse, so this switches it back on
+	function htmlBox(parent, h) {
+		const r = row(parent, h, 1);
+		const box = document.createElement("div");
+		box.style.cssText = "pointer-events:auto;position:absolute;inset:4px;overflow-y:auto;font:600 15px system-ui,sans-serif;color:#e8e8ee;";
+		r.el.appendChild(box);
+		return [r, box];
+	}
+
+	// ---------------- who played when: one tiny note per player and day, with the hours they were on
+	let visitKey = "";
+	async function noteVisit() {
+		if (!Online.enabled() || !Online.myId()) return;
+		const now = Online.serverNow();
+		const key = Online.myId() + dayOf(now) + hourOf(now);
+		if (key === visitKey) return;
+		visitKey = key;
+		try {
+			await Online.patch(`visits/${dayOf(now)}/${Online.myId()}`, { ["h" + hourOf(now)]: true });
+		} catch (e) {
+			visitKey = "";
+		}
+	}
+	task.delay(6, noteVisit);
+	setInterval(noteVisit, 300000);
+
+	// ---------------- bug report / feedback, for everyone
+	const fp = panel("feedback", "BUG REPORT / FEEDBACK", UO(720, 600));
+	let kind = "bug", lastSent = 0;
+	function drawFeedback() {
+		for (const c of fp.body.GetChildren()) if (!c.IsA("UIListLayout")) c.Destroy();
+		const kr = row(fp.body, 58, 1);
+		const kinds = [["bug", "BUG"], ["idea", "IDEA"], ["other", "OTHER"]];
+		kinds.forEach(([k, label], i) => {
+			const b = button(kr, label, U2(1 / 3, -8, 0, 48), U2(i / 3, 0, 0, 5), () => {
+				kind = k;
+				sfx("click");
+				drawFeedback();
+			}, kind === k ? 0.05 : 0.5);
+			b.TextColor3 = kind === k ? (k === "bug" ? BAD : k === "idea" ? GOOD : GEM) : DIM;
+			b.TextSize = 20;
+		});
+		const [, box] = htmlBox(fp.body, 190);
+		box.style.overflow = "hidden";
+		const ta = document.createElement("textarea");
+		ta.maxLength = 1000;
+		ta.placeholder = kind === "bug" ? "What went wrong? Where were you, what did you do?" : kind === "idea" ? "What should be in the game?" : "Tell me anything";
+		ta.style.cssText = "width:100%;height:100%;box-sizing:border-box;resize:none;border:0;border-radius:10px;padding:12px;background:#0b0c12;color:#fff;font:500 17px system-ui,sans-serif;outline:none";
+		box.appendChild(ta);
+		const sr = row(fp.body, 64, 1);
+		const send = button(sr, "SEND", U2(1, -10, 0, 54), UO(0, 5), async () => {
+			const t = ta.value.trim();
+			if (t.length < 3) return notify("write a bit more", BAD);
+			if (Date.now() - lastSent < 60000) return notify("one per minute, thanks", BAD);
+			const id = Date.now().toString(36) + Math.floor(Math.random() * 1e6).toString(36);
+			const rep = { uid: Online.myId() || "", name: Online.account() || (data.name || "guest"), kind, text: t, at: Online.SERVER_TIME, where: Game.statusNow ? Game.statusNow() : "", device: navigator.userAgent.slice(0, 160) };
+			try {
+				await Online.put("feedback/" + id, rep);
+				lastSent = Date.now();
+				ta.value = "";
+				notify("thanks, it's sent", GOOD);
+				sfx("good");
+				if (Game.devOn()) loadReports();
+			} catch (e) {
+				notify("couldn't send, try again in a bit", BAD);
+				sfx("bad");
+			}
+		}, 0.05);
+		send.TextColor3 = GOOD;
+		send.TextSize = 22;
+		if (Game.devOn()) {
+			const hr = row(fp.body, 40, 1);
+			repHead = text(hr, "ALL REPORTS", U2(1, -10, 0, 30), UO(6, 8), 22, COIN, LEFT);
+			[, repBox] = htmlBox(fp.body, 420);
+			loadReports();
+		}
+	}
+	let repBox = null, repHead = null;
+	async function loadReports() {
+		if (!repBox) return;
+		repBox.innerHTML = `<div style="color:#9a9cab">loading…</div>`;
+		let all = {};
+		try {
+			all = (await Online.get("feedback")) || {};
+		} catch (e) {
+			repBox.innerHTML = `<div style="color:#ff6a6a">couldn't load, are the new firebase rules in?</div>`;
+			return;
+		}
+		const list = Object.entries(all).filter(([, r]) => r && typeof r === "object").sort((a, b) => (b[1].at || 0) - (a[1].at || 0));
+		repHead.Text = "ALL REPORTS  " + list.length;
+		repBox.innerHTML = "";
+		if (!list.length) repBox.innerHTML = `<div style="color:#9a9cab">nothing yet</div>`;
+		const col = { bug: "#ff6a6a", idea: "#6aff9a", other: "#5ad2ff" };
+		for (const [id, r] of list) {
+			const card = document.createElement("div");
+			card.style.cssText = `position:relative;background:#14161f;border-left:4px solid ${col[r.kind] || "#888"};border-radius:8px;padding:10px 40px 10px 12px;margin-bottom:8px;opacity:${r.done ? 0.45 : 1}`;
+			card.innerHTML = `<div style="display:flex;gap:10px;align-items:baseline;flex-wrap:wrap"><b style="color:${col[r.kind] || "#888"}">${esc(String(r.kind || "").toUpperCase())}</b><b>${esc(r.name)}</b><span style="color:#9a9cab;font-size:13px">${esc(when(r.at))}${r.where ? "  ,  " + esc(r.where) : ""}</span></div><div style="white-space:pre-wrap;margin-top:6px;font-weight:500">${esc(r.text)}</div><div style="color:#666a7a;font-size:11px;margin-top:6px">${esc(r.device || "")}</div>`;
+			const mk = (label, top, fn) => {
+				const b = document.createElement("button");
+				b.textContent = label;
+				b.title = label === "✓" ? "done" : "delete";
+				b.style.cssText = `position:absolute;right:6px;top:${top}px;width:26px;height:26px;border:0;border-radius:6px;background:#2a2d3c;color:#fff;font:700 14px system-ui;cursor:pointer`;
+				b.onclick = fn;
+				card.appendChild(b);
+			};
+			mk("✓", 6, async () => {
+				try {
+					await Online.put(`feedback/${id}/done`, !r.done);
+				} catch (e) {}
+				loadReports();
+			});
+			mk("×", 36, async () => {
+				try {
+					await Online.del("feedback/" + id);
+				} catch (e) {}
+				loadReports();
+			});
+			repBox.appendChild(card);
+		}
+	}
+	const fb = button(menu, "BUG REPORT / FEEDBACK", UO(220, 28), U2(1, -236, 1, -74), () => {
+		repBox = null;
+		drawFeedback();
+		openPanel("feedback");
+	}, 0.7);
+	fb.TextSize = 14;
+	fb.TextColor3 = DIM;
+
+	// ---------------- insights, only the dev
+	if (!DEV) return;
+	const ip = panel("insights", "INSIGHTS", UO(960, 660));
+	const WEEK = ["MON", "TUE", "WED", "THU", "FRI", "SAT", "SUN"];
+	const bars = (items, color, fmtV) => {
+		const max = Math.max(1, ...items.map((x) => x[1]));
+		return `<div style="display:flex;align-items:flex-end;gap:3px;height:120px;margin:6px 0 2px">${items.map(([k, v]) => `<div title="${esc(k)}: ${esc(fmtV ? fmtV(v) : v)}" style="flex:1;display:flex;flex-direction:column;justify-content:flex-end;align-items:center;height:100%"><span style="font-size:10px;color:#9a9cab">${v ? esc(fmtV ? fmtV(v) : v) : ""}</span><div style="width:100%;background:${color};border-radius:3px 3px 0 0;height:${Math.round((v / max) * 100)}%;min-height:${v ? 2 : 0}px"></div></div>`).join("")}</div><div style="display:flex;gap:3px">${items.map(([k]) => `<span style="flex:1;text-align:center;font-size:10px;color:#9a9cab;overflow:visible;white-space:nowrap">${esc(k)}</span>`).join("")}</div>`;
+	};
+	const tile = (k, v, c) => `<div style="background:#14161f;border-radius:10px;padding:10px 12px;border-left:4px solid ${c}"><div style="color:#9a9cab;font-size:12px">${esc(k)}</div><div style="font-size:24px;font-weight:800;color:${c}">${esc(v)}</div></div>`;
+	const section = (title, inner) => `<div style="margin:18px 0 6px;font-size:13px;letter-spacing:1px;color:#ffd23c">${esc(title)}</div>${inner}`;
+	const top = (title, list, fmtV, c) => `<div style="background:#14161f;border-radius:10px;padding:10px 12px"><div style="color:${c};font-weight:800;margin-bottom:6px">${esc(title)}</div>${list.map(([n, v], i) => `<div style="display:flex;justify-content:space-between;gap:8px;font-size:14px;padding:2px 0"><span style="overflow:hidden;white-space:nowrap;text-overflow:ellipsis">${i + 1}. ${esc(n)}</span><b>${esc(fmtV(v))}</b></div>`).join("") || `<div style="color:#9a9cab">nobody yet</div>`}</div>`;
+	const hrs = (s) => {
+		s = Math.floor(s || 0);
+		return Math.floor(s / 3600) + "h " + Math.floor((s % 3600) / 60) + "m";
+	};
+
+	async function loadInsights(box) {
+		box.innerHTML = `<div style="color:#9a9cab">loading everything…</div>`;
+		const now = Online.serverNow();
+		const days = [];
+		for (let i = 29; i >= 0; i--) days.push(dayOf(now - i * 86400000));
+		let players = {}, visits = {}, fbs = {};
+		try {
+			players = (await Online.get("players")) || {};
+		} catch (e) {}
+		try {
+			visits = (await Online.get("visits", `orderBy="$key"&startAt="${days[0]}"`)) || {};
+		} catch (e) {
+			visits = null;
+		}
+		try {
+			fbs = (await Online.get("feedback")) || {};
+		} catch (e) {}
+		const P = Object.entries(players).filter(([, p]) => p && typeof p === "object").map(([id, p]) => ({ id, ...p }));
+		const named = P.filter((p) => p.name && p.name !== "player");
+		const seen = (p) => Math.max(p.seen || 0, p.active || 0, p.updated || 0);
+		const within = (p, ms) => now - seen(p) < ms;
+		const onlineNow = P.filter((p) => Game.presence(p) === "online");
+		const DAY = 86400000;
+		const sum = (f) => P.reduce((a, p) => a + (f(p) || 0), 0);
+		const st = (p) => p.stats || {};
+
+		// days, weekdays and hours out of the visit notes
+		const perDay = days.map((d, i) => [i % 5 === 4 ? d.slice(8) + "." + d.slice(5, 7) : "", visits && visits[d] ? Object.keys(visits[d]).length : 0]);
+		const wk = [0, 0, 0, 0, 0, 0, 0], wkN = [0, 0, 0, 0, 0, 0, 0], hours = new Array(24).fill(0);
+		for (const d of days) {
+			const wd = (new Date(d + "T12:00:00Z").getUTCDay() + 6) % 7;
+			wkN[wd]++;
+			const v = visits && visits[d];
+			if (!v) continue;
+			wk[wd] += Object.keys(v).length;
+			for (const u of Object.values(v)) for (const k in u || {}) if (/^h\d+$/.test(k)) hours[Number(k.slice(1))]++;
+		}
+		const wkAvg = WEEK.map((n, i) => [n, wkN[i] ? Math.round((wk[i] / wkN[i]) * 10) / 10 : 0]);
+		const best = (arr) => arr.reduce((a, b) => (b[1] > a[1] ? b : a), arr[0]);
+		const bestDay = best(wkAvg), bestHour = best(hours.map((v, h) => [h, v]));
+
+		// how far people get
+		const stops = [{ id: "towers", name: "BLOCKS", at: 0 }].concat(CONFIG.starts.map((s) => ({ id: s.id, name: s.name, at: s.at }))).concat([{ id: "loop", name: "FULL LOOP", at: Infinity }]);
+		const funnel = stops.slice(0, -1).map((s) => [s.name, P.filter((p) => (s.at === 0 ? (st(p).runs || 0) > 0 : (p.best || 0) >= s.at)).length]);
+		funnel.push(["FULL LOOP", P.filter((p) => (st(p).loops || 0) >= 1).length]);
+
+		// planes people actually fly
+		const skins = {};
+		for (const p of P) if (p.skin) skins[p.skin] = (skins[p.skin] || 0) + 1;
+		const skinList = Object.entries(skins).sort((a, b) => b[1] - a[1]).slice(0, 12).map(([k, v]) => [niceName(k), v]);
+
+		const old = P.filter((p) => p.created && now - p.created > 7 * DAY);
+		const kept = old.filter((p) => within(p, 7 * DAY));
+		const topBy = (f, n = 10) => named.map((p) => [p.name, f(p) || 0]).filter((x) => x[1] > 0).sort((a, b) => b[1] - a[1]).slice(0, n);
+		const fbList = Object.values(fbs || {}).filter((r) => r && typeof r === "object");
+
+		let h = `<div style="display:grid;grid-template-columns:repeat(4,1fr);gap:8px">`;
+		h += tile("PLAYERS WITH A NAME", fmt(named.length), "#ffd23c");
+		h += tile("AVERAGE BEST", fmt(Math.round(named.reduce((a, p) => a + (p.best || 0), 0) / Math.max(1, named.length))), "#e8e8ee");
+		h += tile("ONLINE RIGHT NOW", fmt(onlineNow.length), "#6aff9a");
+		h += tile("PLAYED TODAY", fmt(P.filter((p) => dayOf(seen(p)) === dayOf(now)).length), "#5ad2ff");
+		h += tile("LAST 7 DAYS", fmt(P.filter((p) => within(p, 7 * DAY)).length), "#5ad2ff");
+		h += tile("LAST 30 DAYS", fmt(P.filter((p) => within(p, 30 * DAY)).length), "#5ad2ff");
+		h += tile("NEW THIS WEEK", fmt(P.filter((p) => p.created && now - p.created < 7 * DAY).length), "#c88cff");
+		h += tile("COME BACK AFTER A WEEK", old.length ? Math.round((kept.length / old.length) * 100) + "%" : "-", "#c88cff");
+		h += tile("RUNS, ALL TOGETHER", fmt(sum((p) => st(p).runs)), "#e8e8ee");
+		h += tile("TIME FLOWN", hrs(sum((p) => st(p).time)), "#e8e8ee");
+		h += tile("DISTANCE FLOWN", fmt(sum((p) => st(p).dist)), "#e8e8ee");
+		h += tile("COINS EARNED", fmt(sum((p) => st(p).coins)) + " ●", "#ffd23c");
+		h += tile("AVERAGE RUNS PER PLAYER", P.length ? (sum((p) => st(p).runs) / Math.max(1, P.filter((p) => st(p).runs).length)).toFixed(1) : "-", "#e8e8ee");
+		h += tile("AVERAGE TIME PER PLAYER", hrs(sum((p) => st(p).time) / Math.max(1, P.filter((p) => st(p).time).length)), "#e8e8ee");
+		h += tile("BUSIEST DAY", bestDay && bestDay[1] ? bestDay[0] + " (" + bestDay[1] + ")" : "-", "#ff9a5a");
+		h += tile("BUSIEST HOUR", bestHour && bestHour[1] ? bestHour[0] + ":00" : "-", "#ff9a5a");
+		h += `</div>`;
+		if (!visits) h += `<div style="margin-top:10px;color:#ff6a6a">the day and hour charts need the new firebase rules, they fill up from now on</div>`;
+		h += section("PLAYERS PER DAY, LAST 30 DAYS", bars(perDay, "#5ad2ff"));
+		h += `<div style="display:grid;grid-template-columns:1fr 1fr;gap:14px">`;
+		h += `<div>${section("AVERAGE PLAYERS PER WEEKDAY", bars(wkAvg, "#ff9a5a"))}</div>`;
+		h += `<div>${section("WHEN PEOPLE PLAY (VIENNA TIME)", bars(hours.map((v, i) => [i % 3 === 0 ? String(i) : "", v]), "#c88cff"))}</div>`;
+		h += `</div>`;
+		h += section("HOW FAR PEOPLE GET (PLAYERS WHO REACHED IT)", bars(funnel, "#6aff9a"));
+		h += section("PLANES PEOPLE FLY", bars(skinList, "#ffd23c"));
+		h += section("TOP PLAYERS", `<div style="display:grid;grid-template-columns:repeat(3,1fr);gap:8px">${[
+			top("BEST DISTANCE", topBy((p) => p.best), fmt, "#ffd23c"),
+			top("MOST RUNS", topBy((p) => st(p).runs), fmt, "#5ad2ff"),
+			top("MOST TIME", topBy((p) => st(p).time), hrs, "#6aff9a"),
+			top("HIGHEST LEVEL", topBy((p) => p.level), (v) => "LVL " + v, "#c88cff"),
+			top("MOST COINS EARNED", topBy((p) => st(p).coins), fmt, "#ffd23c"),
+			top("MOST ACHIEVEMENTS", topBy((p) => p.ach), String, "#ff9a5a"),
+		].join("")}</div>`);
+		const doing = onlineNow.concat(P.filter((p) => Game.presence(p) === "afk")).slice(0, 30);
+		h += section("WHO'S ON RIGHT NOW", doing.length ? `<div style="display:grid;grid-template-columns:1fr 1fr;gap:6px">${doing.map((p) => `<div style="background:#14161f;border-radius:8px;padding:8px 10px;display:flex;justify-content:space-between;gap:8px"><b>${esc(p.name || "guest")}</b><span style="color:${Game.presence(p) === "online" ? "#6aff9a" : "#ffbe3c"}">${esc(p.st || Game.presence(p).toUpperCase())}</span></div>`).join("")}</div>` : `<div style="color:#9a9cab">nobody</div>`);
+		h += section("NEWEST PLAYERS", `<div style="display:grid;grid-template-columns:1fr 1fr;gap:6px">${named.filter((p) => p.created).sort((a, b) => b.created - a.created).slice(0, 10).map((p) => `<div style="background:#14161f;border-radius:8px;padding:8px 10px;display:flex;justify-content:space-between"><b>${esc(p.name)}</b><span style="color:#9a9cab">${esc(when(p.created))}</span></div>`).join("")}</div>`);
+		h += section("FEEDBACK", `<div style="color:#e8e8ee">${fbList.length} reports, ${fbList.filter((r) => !r.done).length} still open (${fbList.filter((r) => r.kind === "bug" && !r.done).length} bugs)</div>`);
+		box.innerHTML = h;
+	}
+	const openInsights = () => {
+		for (const c of ip.body.GetChildren()) if (!c.IsA("UIListLayout")) c.Destroy();
+		const [, box] = htmlBox(ip.body, 560);
+		loadInsights(box);
+		openPanel("insights");
+	};
+	if (window.__dev) window.__dev.insights = openInsights;
+	const ib = button(menu, "INSIGHTS", UO(200, 40), U2(1, -216, 1, -316), openInsights, 0.3);
+	ib.TextSize = 18;
+	ib.TextColor3 = RGB(110, 255, 160);
+	Game.devButtons.push(ib);
 })();
 
 // ------------------------------------------------------------------ the casino

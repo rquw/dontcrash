@@ -87,6 +87,24 @@
     "trollpics": {
       ".read": "auth != null",
       ".write": "auth != null && auth.uid === 'Jj2BGaR4ZBSqqQxmWtX8Vym95Ji1'"
+    },
+    "feedback": {
+      ".read": "auth != null && auth.uid === 'Jj2BGaR4ZBSqqQxmWtX8Vym95Ji1'",
+      ".indexOn": [
+        "at"
+      ],
+      "$id": {
+        ".write": "(auth != null && !data.exists() && newData.child('uid').val() === auth.uid) || (auth != null && auth.uid === 'Jj2BGaR4ZBSqqQxmWtX8Vym95Ji1')",
+        ".validate": "!newData.exists() || (newData.child('text').isString() && newData.child('text').val().length <= 1000)"
+      }
+    },
+    "visits": {
+      ".read": "auth != null && auth.uid === 'Jj2BGaR4ZBSqqQxmWtX8Vym95Ji1'",
+      "$day": {
+        "$uid": {
+          ".write": "auth != null && auth.uid === $uid"
+        }
+      }
     }
   }
 }
