@@ -27,15 +27,15 @@ export const CONFIG = {
 	trafficLen: 5000,
 	desertLen: 4000,
 	// the first part of the sea is volcanoes, the last part ice
-	volcanoLen: 4500,
-	glacierLen: 4500,
+	volcanoLen: 7000,
+	glacierLen: 7000,
 	// five maps between the desert and the sea
 	midMaps: [
-		{ id: "ruins", name: "RUINS", len: 3500 },
-		{ id: "windfarm", name: "WIND FARM", len: 3500 },
-		{ id: "sky", name: "SKY ISLANDS", len: 3500 },
-		{ id: "factory", name: "FACTORY", len: 3500 },
-		{ id: "neon", name: "NEON", len: 3500 },
+		{ id: "ruins", name: "RUINS", len: 6500 },
+		{ id: "windfarm", name: "WIND FARM", len: 6500 },
+		{ id: "sky", name: "SKY ISLANDS", len: 6500 },
+		{ id: "factory", name: "FACTORY", len: 6500 },
+		{ id: "neon", name: "NEON", len: 6500 },
 	],
 	cityLen: 14900,
 	mapBonus: 250,
@@ -43,7 +43,7 @@ export const CONFIG = {
 	// boss 2 is out until it's reworked, flip this back on and it's all there again
 	boss2: false,
 	closeBonus: 15,
-	seaLen: 17900,
+	seaLen: 22900,
 	beyondGap: 3000,
 	starts: [
 		{ id: "moving", name: "WALLS", keys: 6, coins: 500 },
@@ -386,7 +386,7 @@ export function importAuth(data, sess) {
 export function profileOf(d) {
 	const p = {
 		name: d.name || "player", best: d.best || 0, at: d.bestAt || 0, level: d.level || 1, xp: d.xp || 0, skin: d.skin, death: d.death,
-		stats: d.stats, created: d.created || 0, updated: Date.now(), ach: Object.keys(d.ach || {}).length,
+		stats: d.stats, created: d.created || 0, updated: Date.now(), ach: Object.keys(d.ach || {}).length, al: Object.keys(d.ach || {}),
 		nc: (d.style && d.style.color) || "", tt: (d.style && d.style.title) || "", nf: (d.style && d.style.font) || "", ne: (d.style && d.style.effect) || "", ni: (d.style && d.style.icon) || "", nm: (d.style && d.style.marker) || "", rk: d.rank || 0, sv: d.styleV || 0,
 	};
 	for (const [k, kind] of [["d", "day"], ["w", "week"], ["m", "month"]]) {
@@ -794,11 +794,12 @@ handlers.run_end = (r) => {
 		d.revives = (d.revives || 0) + hearts;
 		award.revives = hearts;
 	}
-	d.farthest = Math.max(d.farthest || 0, (s.runFrom || 0) + dist);
-	// where in the world the best run ended, for the marker. a quick start puts that further out than the distance says
-	if (dist > d.best) d.bestAt = Math.max(dist, Math.min(dist + 400000, Math.floor(Number(r.at) || 0)));
-	d.best = Math.max(d.best, dist);
-	bumpLb(d, dist);
+	// starting at a later map counts the maps before it for the score. the coins only come from what you flew
+	const score = (s.runFrom || 0) + dist;
+	d.farthest = Math.max(d.farthest || 0, score);
+	if (score > d.best) d.bestAt = Math.max(score, Math.min(score + 400000, Math.floor(Number(r.at) || 0)));
+	d.best = Math.max(d.best, score);
+	bumpLb(d, score);
 	d.maxRun = d.maxRun || { glass: 0, close: 0, kills: 0 };
 	d.maxRun.glass = Math.max(d.maxRun.glass || 0, glass);
 	d.maxRun.close = Math.max(d.maxRun.close || 0, closes);
@@ -835,6 +836,7 @@ handlers.run_end = (r) => {
 	award.xpTo = d.xp;
 	award.best = d.best;
 	award.dist = dist;
+	award.score = score;
 	award.mult = mult;
 	award.missionsDone = missionProgress(d, { dist, one: dist, glass, kills, close: closes, runs: 1, maps, boss: bosses, coins: award.coins, pickups: gemPads + keyPads });
 	return [true, award];

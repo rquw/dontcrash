@@ -3,9 +3,9 @@ import {
 	camera, Lighting, Instance, workspace, markQueryRoot, Enum, OverlapParams, TweenService, TweenInfo, Debris, UIS, playSfx, loopSound, loadSounds, setSfxVolume,
 	NumberSequence, NumberSequenceKeypoint, NumberRange, ColorSequence, ColorSequenceKeypoint, guiRootInst, setUiScale, setLowGraphics, physicsGround,
 	mergeFloor, start, perf,
-} from "./engine.js?v=1792483564";
-import * as Server from "./server.js?v=1792483564";
-import * as Online from "./online.js?v=1792483564";
+} from "./engine.js?v=1792667351";
+import * as Server from "./server.js?v=1792667351";
+import * as Online from "./online.js?v=1792667351";
 
 const V3 = (x, y, z) => new Vector3(x, y, z);
 const RGB = Color3.fromRGB;
@@ -6554,7 +6554,8 @@ let showResults;
 			});
 		}
 
-		const record = award && info.prevBest != null && award.dist > info.prevBest && award.dist > 0;
+		const score = award ? (award.score != null ? award.score : award.dist) : (info.dist || 0) + (Game.scoreFrom || 0);
+		const record = award && info.prevBest != null && score > info.prevBest && score > 0;
 		title.Text = record ? "NEW RECORD" : info.stopped ? "STOPPED" : "CRASHED";
 		title.TextColor3 = record ? COIN : info.stopped ? WHITE : BAD;
 		titleScale.Scale = 1.4;
@@ -6588,7 +6589,7 @@ let showResults;
 		});
 
 		if (award) {
-			countUp(distL2, award.dist, 1.2, fmt, my);
+			countUp(distL2, score, 1.2, fmt, my);
 			rewardL.Text = "";
 			const gain = { coins: award.coins || 0, gems: award.gems || 0, keys: award.keys || 0 };
 			Game.holdWallet(gain);
@@ -6611,7 +6612,7 @@ let showResults;
 			noteL.Text = award.mult > 1 ? award.mult.toFixed(2).replace(/\.?0+$/, "") + "X COIN MULTIPLIER" : "";
 		} else {
 			Game.xpRow.Visible = false;
-			distL2.Text = fmt(info.dist);
+			distL2.Text = fmt(score);
 			rewardL.Text = "";
 			noteL.Text = "COULDN'T SAVE THIS RUN";
 		}
@@ -7409,7 +7410,8 @@ function xpBar(parent, size, pos, k, color) {
 		const ps = me ? "online" : Game.presence(p);
 		const dot = make("Frame", { Position: UO(310, 84), Size: UO(10, 10), BackgroundColor3: Game.PRESENCE_C[ps], Parent: h });
 		make("UICorner", { CornerRadius: UDim.new(0.5, 0), Parent: dot });
-		text(h, ps === "online" ? "ONLINE" : ps === "afk" ? "AFK" : "LAST ONLINE " + Game.lastOnline(p), U2(1, -350, 0, 18), UO(326, 80), 15, Game.PRESENCE_C[ps === "offline" ? "offline" : ps].Lerp(WHITE, ps === "offline" ? 0.3 : 0), LEFT);
+		const where = me ? Game.statusNow() : typeof p.st === "string" && ps !== "offline" ? p.st.slice(0, 40) : "";
+		text(h, (ps === "online" ? "ONLINE" : ps === "afk" ? "AFK" : "LAST ONLINE " + Game.lastOnline(p)) + (where ? ",  " + where : ""), U2(1, -350, 0, 18), UO(326, 80), 15, Game.PRESENCE_C[ps === "offline" ? "offline" : ps].Lerp(WHITE, ps === "offline" ? 0.3 : 0), LEFT);
 		const need = xpNeed(lvl);
 		text(h, "LEVEL " + lvl, UO(200, 24), UO(232, 100), 22, RGB(200, 185, 255), LEFT);
 		text(h, fmt(p.xp || 0) + " / " + fmt(need) + " XP", U2(1, -440, 0, 24), UO(430, 100), 18, DIM, RIGHT);
@@ -7451,9 +7453,13 @@ function xpBar(parent, size, pos, k, color) {
 				tw(t, 0.3, { BackgroundTransparency: 0.45 });
 			});
 		});
+		if (!me && Array.isArray(p.al)) {
+			const ar = row(pp.body, 64, 1);
+			button(ar, "SEE THEIR ACHIEVEMENTS  " + p.al.length + " / " + (Game.ACH_TOTAL || 0), U2(1, -10, 0, 54), UO(0, 5), () => Game.showAchOf(p.name || "player", p.al), 0.1).TextColor3 = COIN;
+		}
 		if (me) {
 			const ar = row(pp.body, 64, 1);
-			button(ar, "ACHIEVEMENTS  " + Object.keys(data.ach || {}).length + " / " + (Game.ACH_TOTAL || 0), U2(1, -10, 0, 54), UO(0, 5), () => openPanel("achievements"), 0.1).TextColor3 = COIN;
+			button(ar, "ACHIEVEMENTS  " + Object.keys(data.ach || {}).length + " / " + (Game.ACH_TOTAL || 0), U2(1, -10, 0, 54), UO(0, 5), () => Game.showAchOf(null), 0.1).TextColor3 = COIN;
 			const r = row(pp.body, 64, 1);
 			button(r, Online.account() ? "ACCOUNT" : "MAKE AN ACCOUNT", UO(260, 50), UO(0, 7), () => Game.openAccount(), 0.3);
 		}
@@ -9966,9 +9972,6 @@ function onStage(nw, old) {
 		if (nw === "sky") Game.mood(11, RGB(184, 212, 248), 4, RGB(190, 200, 215));
 		if (nw === "factory") Game.mood(16, RGB(150, 152, 160), 4, RGB(150, 150, 160));
 		if (nw === "neon") Game.mood(0.4, RGB(60, 20, 90), 4, RGB(160, 120, 220), 0.3);
-		for (const [id, msg, col] of [["volcano", "WATCH OUT FOR THE LAVA!", RGB(255, 120, 40)], ["glacier", "FLY THROUGH THE ICE GATES!", RGB(150, 220, 255)], ["ruins", "MIND THE SLIDING STONES!", RGB(240, 200, 120)], ["windfarm", "TIME THE BLADES!", RGB(200, 255, 170)], ["sky", "ISLANDS IN THE SKY!", RGB(170, 220, 255)], ["factory", "WATCH THE CRUSHERS!", RGB(250, 196, 30)], ["neon", "DODGE THE LASERS!", RGB(255, 60, 200)]]) {
-			if (nw === id) task.delay(2.2, () => curStage === id && !dead && banner(msg, col, 3));
-		}
 	}
 }
 
@@ -10086,6 +10089,7 @@ Game.startAt = (id) => {
 	if (id === "space") Game.marks.final = at;
 	pos = V3(0, ["volcano", "sea", "glacier"].includes(id) ? 70 : ALT, -(at + (id === "space" ? 60 : 5)));
 	Game.from = Math.floor(-pos.Z);
+	Game.scoreFrom = at;
 	buff.immortal = 3;
 };
 
@@ -10316,6 +10320,7 @@ startRun = (startId) => {
 	Game.hold = false;
 	Game.spd = null;
 	Game.from = 0;
+	Game.scoreFrom = 0;
 	ghost = false;
 	fuel = FUEL.max;
 	nitroK = 0;
@@ -10423,7 +10428,7 @@ function step(dt) {
 		Missiles.hide();
 		setVignette(0);
 		stats.dist = Math.max(0, Math.floor(Game.loopBase + Math.floor(-pos.Z) - (Game.from || 0)));
-		distL.Text = fmt(stats.dist);
+		distL.Text = fmt(stats.dist + (Game.scoreFrom || 0));
 		return;
 	}
 
@@ -10653,7 +10658,7 @@ function step(dt) {
 
 	stats.dist = Math.max(0, Math.floor(Game.loopBase + Math.floor(-pos.Z) - (Game.from || 0)));
 
-	distL.Text = fmt(stats.dist);
+	distL.Text = fmt(stats.dist + (Game.scoreFrom || 0));
 	stageL.Text = stageName(stage);
 	let [, prog] = stageFor(dist);
 	const inSpace = stage === "beyond" && Game.marks.final != null;
@@ -12079,6 +12084,29 @@ if (DEV && /^(localhost|127\.0\.0\.1)$/.test(location.hostname)) window.__dev = 
 		Online.put(`players/${Online.myId()}/active`, Online.SERVER_TIME).catch(() => {});
 	}, 500);
 
+	// what you're doing right now, shown on your profile. only sent when it changes
+	Game.statusNow = () => {
+		if (Game.inCasino) return "IN THE CASINO";
+		if (mode === "run") {
+			if (Game.race) return "IN A VERSUS RACE";
+			const n = curStage ? stageName(curStage) : "";
+			return n ? "FLYING THROUGH " + n : "FLYING";
+		}
+		for (const [k, t] of [["shop", "IN THE SHOP"], ["backpack", "IN THE BACKPACK"], ["leaderboard", "ON THE LEADERBOARD"], ["versus", "LOOKING FOR A RACE"], ["achievements", "LOOKING AT ACHIEVEMENTS"], ["rewards", "GRABBING FREE REWARDS"], ["profile", "LOOKING AT A PROFILE"], ["settings", "IN THE SETTINGS"]]) {
+			if (panels[k] && panels[k].frame.Visible) return t;
+		}
+		return "IN THE MENU";
+	};
+	let sentSt = "", sentStAt = 0;
+	setInterval(() => {
+		if (!Online.account() || !Online.enabled()) return;
+		const st = Game.statusNow();
+		if (st === sentSt || Date.now() - sentStAt < 4000) return;
+		sentSt = st;
+		sentStAt = Date.now();
+		Online.put(`players/${Online.myId()}/st`, st).catch(() => {});
+	}, 1500);
+
 	// ---------------- global messages: slides in at the top for everyone who's on the site
 	const bar = make("Frame", {
 		AnchorPoint: V2(0.5, 0),
@@ -12185,7 +12213,7 @@ if (DEV && /^(localhost|127\.0\.0\.1)$/.test(location.hostname)) window.__dev = 
 // ------------------------------------------------------------------ old version warning
 // every build has its own number, the page checks now and then whether a newer one is online
 (() => {
-	const BUILD = "1792483564";
+	const BUILD = "1792667351";
 	if (BUILD.startsWith("__")) return;
 	const bar = make("TextButton", {
 		AnchorPoint: V2(0.5, 0),
@@ -12272,7 +12300,10 @@ if (DEV && /^(localhost|127\.0\.0\.1)$/.test(location.hostname)) window.__dev = 
 	const BY_ID = {};
 	for (const a of LIST) BY_ID[a.id] = a;
 	Game.ACH_TOTAL = LIST.length;
+	// whose list the panel shows: null is you, otherwise { name, ach }
+	let view = null;
 	const has = (id) => !!(data.ach && data.ach[id]);
+	const shows = (id) => (view ? !!view.ach[id] : has(id));
 	// "+25 ◆  +2 ✦"
 	const rewardOf = (id) => {
 		const r = (CONFIG.achRewards || {})[id];
@@ -12389,13 +12420,19 @@ if (DEV && /^(localhost|127\.0\.0\.1)$/.test(location.hostname)) window.__dev = 
 
 	// ---------------- the list
 	const ap = panel("achievements", "ACHIEVEMENTS", UO(760, 600));
+	Game.showAchOf = (name, ids) => {
+		view = name ? { name, ach: Object.fromEntries((ids || []).map((id) => [id, 1])) } : null;
+		draw();
+		openPanel("achievements");
+	};
 	function draw() {
 		for (const c of ap.body.GetChildren()) if (!c.IsA("UIListLayout")) c.Destroy();
-		const got = LIST.filter((a) => has(a.id)).length;
+		const got = LIST.filter((a) => shows(a.id)).length;
 		// how far you are, big, with a bar across the whole thing
 		const head = row(ap.body, 78, 0.5);
 		make("UICorner", { CornerRadius: UDim.new(0, 12), Parent: head });
 		text(head, got + " / " + LIST.length, UO(200, 40), UO(16, 8), 36, COIN, LEFT);
+		if (view) text(head, String(view.name).toUpperCase(), U2(1, -232, 0, 22), UO(216, 0), 18, WHITE, RIGHT);
 		text(head, got === LIST.length ? "ALL OF THEM. RESPECT." : LIST.length - got + " TO GO", U2(1, -232, 0, 24), UO(216, 18), 17, DIM, RIGHT);
 		const bar = make("Frame", { Position: UO(16, 54), Size: U2(1, -32, 0, 10), BackgroundColor3: WHITE, BackgroundTransparency: 0.88, Parent: head });
 		make("UICorner", { CornerRadius: UDim.new(0, 5), Parent: bar });
@@ -12404,11 +12441,12 @@ if (DEV && /^(localhost|127\.0\.0\.1)$/.test(location.hostname)) window.__dev = 
 		tw(fill, 0.6, { Size: US(got / LIST.length, 1) });
 
 		// unlocked first, newest on top. two next to each other
-		const sorted = [...LIST].sort((a, b) => (data.ach[b.id] || 0) - (data.ach[a.id] || 0));
+		const src = view ? view.ach : data.ach || {};
+		const sorted = [...LIST].sort((a, b) => (src[b.id] ? 1 : 0) - (src[a.id] ? 1 : 0) || (src[b.id] || 0) - (src[a.id] || 0));
 		for (let i = 0; i < sorted.length; i += 2) {
 			const line = row(ap.body, 84, 1);
 			sorted.slice(i, i + 2).forEach((a, k) => {
-				const on = has(a.id);
+				const on = shows(a.id);
 				const c = make("Frame", { Position: U2(k * 0.5, k ? 3 : 0, 0, 0), Size: U2(0.5, -3, 1, 0), BackgroundColor3: BLACK, BackgroundTransparency: on ? 0.3 : 0.62, Parent: line });
 				make("UICorner", { CornerRadius: UDim.new(0, 10), Parent: c });
 				if (on) {
@@ -12427,7 +12465,7 @@ if (DEV && /^(localhost|127\.0\.0\.1)$/.test(location.hostname)) window.__dev = 
 				d.el.title = a.desc;
 				// what it pays. a tick once it's yours
 				const rl = Icons.text(c, U2(1, -84, 0, 18), UO(74, 56), 14, on ? GOOD : GEM, LEFT);
-				rl.Text = (on ? "✓  " : "") + rewardOf(a.id);
+				rl.Text = (on ? "✓  " : "") + (view ? "" : rewardOf(a.id));
 				rl.TextTransparency = on ? 0.25 : 0;
 			});
 		}

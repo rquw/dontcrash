@@ -13,6 +13,10 @@
         "active": {
           ".write": "auth != null && auth.uid === $uid",
           ".validate": "newData.isNumber()"
+        },
+        "st": {
+          ".write": "auth != null && auth.uid === $uid",
+          ".validate": "newData.isString() && newData.val().length <= 40"
         }
       }
     },
