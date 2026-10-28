@@ -3,9 +3,9 @@ import {
 	camera, Lighting, Instance, workspace, markQueryRoot, Enum, OverlapParams, TweenService, TweenInfo, Debris, UIS, playSfx, loopSound, loadSounds, setSfxVolume,
 	NumberSequence, NumberSequenceKeypoint, NumberRange, ColorSequence, ColorSequenceKeypoint, guiRootInst, setUiScale, setLowGraphics, physicsGround,
 	mergeFloor, start, perf,
-} from "./engine.js?v=1793206337";
-import * as Server from "./server.js?v=1793206337";
-import * as Online from "./online.js?v=1793206337";
+} from "./engine.js?v=1793207806";
+import * as Server from "./server.js?v=1793207806";
+import * as Online from "./online.js?v=1793207806";
 
 const V3 = (x, y, z) => new Vector3(x, y, z);
 const RGB = Color3.fromRGB;
@@ -12474,7 +12474,7 @@ if (DEV && /^(localhost|127\.0\.0\.1)$/.test(location.hostname)) window.__dev = 
 // ------------------------------------------------------------------ old version warning
 // every build has its own number, the page checks now and then whether a newer one is online
 (() => {
-	const BUILD = "1793206337";
+	const BUILD = "1793207806";
 	if (BUILD.startsWith("__")) return;
 	const bar = make("TextButton", {
 		AnchorPoint: V2(0.5, 0),
@@ -12492,19 +12492,31 @@ if (DEV && /^(localhost|127\.0\.0\.1)$/.test(location.hostname)) window.__dev = 
 	});
 	make("UICorner", { CornerRadius: UDim.new(0, 12), Parent: bar });
 	make("UIStroke", { Color: WHITE, Thickness: 2, Transparency: 0.4, ApplyStrokeMode: "Border", Parent: bar });
-	bar.MouseButton1Click.Connect(() => location.reload());
+	// a plain reload can get the old page straight out of the browser cache, a new address can't
+	let newest = "";
+	const fresh = () => {
+		const q = new URLSearchParams(location.search);
+		q.set("v", newest || String(Date.now()));
+		location.replace(location.pathname + "?" + q.toString() + location.hash);
+	};
+	bar.MouseButton1Click.Connect(fresh);
 	async function check() {
 		try {
 			const r = await fetch("./index.html?check=" + Date.now(), { cache: "no-store" });
 			const m = (await r.text()).match(/game\.js\?v=(\d+)/);
 			if (m && m[1] !== BUILD && Number(m[1]) > Number(BUILD)) {
+				newest = m[1];
 				if (!bar.Visible) sfx("bad");
 				bar.Visible = true;
 			}
 		} catch (e) {}
 	}
-	setTimeout(check, 20000);
-	setInterval(check, 90000);
+	setTimeout(check, 8000);
+	setInterval(check, 30000);
+	// coming back to the tab is a good moment to look
+	document.addEventListener("visibilitychange", () => {
+		if (!document.hidden) check();
+	});
 })();
 
 // ------------------------------------------------------------------ achievements
