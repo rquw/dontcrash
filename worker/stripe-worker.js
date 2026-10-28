@@ -1140,7 +1140,7 @@ handlers.buy_gems = (id) => {
 	s.data.gems += p.gems;
 	return [true, "+" + p.gems + " gems"];
 };
-// ---------------- the casino. the worker rolls everything, the browser only shows it. the house is always a bit ahead
+// ---------------- the casino. the worker rolls everything, the browser only shows it. every game pays back what goes in, on average
 const CASINO = {
 	// you play with stars. every visit starts you off with some, more cost a coin each,
 	// and on the way out stars turn into whatever you want at these prices
