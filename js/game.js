@@ -3,9 +3,9 @@ import {
 	camera, Lighting, Instance, workspace, markQueryRoot, Enum, OverlapParams, TweenService, TweenInfo, Debris, UIS, playSfx, loopSound, loadSounds, setSfxVolume,
 	NumberSequence, NumberSequenceKeypoint, NumberRange, ColorSequence, ColorSequenceKeypoint, guiRootInst, setUiScale, setLowGraphics, physicsGround,
 	mergeFloor, start, perf,
-} from "./engine.js?v=1793204340";
-import * as Server from "./server.js?v=1793204340";
-import * as Online from "./online.js?v=1793204340";
+} from "./engine.js?v=1793205797";
+import * as Server from "./server.js?v=1793205797";
+import * as Online from "./online.js?v=1793205797";
 
 const V3 = (x, y, z) => new Vector3(x, y, z);
 const RGB = Color3.fromRGB;
@@ -6596,10 +6596,10 @@ let showResults;
 		if (record) {
 			confetti(my);
 			sfx("record");
-			if (Game.rankFly && Online.account()) task.delay(1.1, () => Game.rankFly(info.prevBest, score));
+			if (Game.rankFly && Online.account() && !Game.tutRun && info.prevBest > 0 && score > info.prevBest) task.delay(1.1, () => Game.rankFly(info.prevBest, score));
 		}
 		stageL2.Text = "REACHED  " + info.stage;
-		unitL.Text = record ? "STUDS, YOUR BEST EVER" : "STUDS, BEST " + fmt(award ? award.best : data.best);
+		unitL.Text = record ? "" : "STUDS, BEST " + fmt(award ? award.best : data.best);
 
 		const st = [["TIME", fmtTimeShort(info.time)]];
 		for (const e of [["MAPS CLEARED", info.maps], ["BOSSES", info.bosses], ["DESTROYED", info.kills], ["GLASS SMASHED", info.glass], ["BONUS PADS", info.pads]]) {
@@ -7291,6 +7291,7 @@ function xpBar(parent, size, pos, k, color) {
 	}
 	Game.dressName = dress;
 	Game.titleOf = titleOf;
+	Game.titleOf = titleOf;
 	const withReal = (e) => String(e.name || "?").toUpperCase() + (realNames && realNames[e.id] ? "   (" + realNames[e.id] + ")" : "");
 
 	function podium(top, me) {
@@ -7312,10 +7313,7 @@ function xpBar(parent, size, pos, k, color) {
 			make("UIGradient", { Color: new ColorSequence(WHITE, RGB(90, 90, 90)), Rotation: 90, Parent: block });
 			if (isMe) make("UIStroke", { Color: GOOD, Thickness: 3, Transparency: 0.1, ApplyStrokeMode: "Border", Parent: block });
 			text(block, fmt(e.best || 0), U2(1, 0, 0, 30), UO(0, 10), i === 0 ? 30 : 26, BLACK);
-			if (e.rp && e.rp === (e.allBest || e.best)) {
-				const pb = button(block, "", UO(40, 30), U2(0.5, -20, 0, 44), () => Replay.play(e.id, e.name), 0.3);
-				Icons.text(pb, US(1, 1), null, 16, GOOD).Text = "\u25B6 ";
-			}
+			if (Game.hasReplay(e)) replayBox(block, U2(0.5, -45, 0, 44), e);
 			text(block, "#" + (i + 1), U2(1, 0, 0, 24), UO(0, H[i] - 32), 20, BLACK).TextTransparency = 0.45;
 			const top2 = H[i] + 8;
 			const av = avatar(col, e.name || "?", i === 0 ? 64 : 54, U2(0.5, 0, 1, -top2 - 60), MEDAL[i]);
@@ -7331,6 +7329,16 @@ function xpBar(parent, size, pos, k, color) {
 			const sc = make("UIScale", { Scale: 0.6, Parent: col });
 			task.delay(0.08 * (2 - i), () => tw(sc, 0.4, { Scale: 1 }, "Back"));
 		});
+	}
+
+	function replayBox(parent, position, e) {
+		const pb = button(parent, "\u25B6  REPLAY", UO(90, 24), position, () => Replay.play(e.id, e.name), 0.15);
+		pb.TextSize = 13;
+		pb.TextColor3 = GOOD;
+		pb.ZIndex = 6;
+		make("UIStroke", { Color: GOOD, Thickness: 1.5, Transparency: 0.35, ApplyStrokeMode: "Border", Parent: pb });
+		pb.el.style.pointerEvents = "auto";
+		return pb;
 	}
 
 	function entryRow(e, rank, me) {
@@ -7351,13 +7359,11 @@ function xpBar(parent, size, pos, k, color) {
 		}
 		realName(r, e, true);
 		text(r, "LVL " + (e.level || 1), UO(70, 46), U2(1, -250, 0, 0), 15, RGB(180, 165, 255), RIGHT);
-		const hasRp = !!(e.rp && e.rp === (e.allBest || e.best));
-		text(r, fmt(e.best || 0), UO(160, 46), U2(1, hasRp ? -206 : -176, 0, 0), 22, WHITE, RIGHT);
-		// a play button only when there's a replay of exactly this score
-		if (e.rp && e.rp === (e.allBest || e.best)) {
-			const pb = button(r, "", UO(34, 34), U2(1, -14, 0.5, -17), () => Replay.play(e.id, e.name), 0.2);
-			pb.AnchorPoint = V2(1, 0);
-			Icons.text(pb, US(1, 1), null, 16, GOOD).Text = "\u25B6";
+		text(r, fmt(e.best || 0), UO(160, 46), U2(1, -176, 0, 0), 22, WHITE, RIGHT);
+		// a replay box right behind the name, only when there's a replay of exactly this score
+		if (Game.hasReplay(e)) {
+			const nw = Math.min(Game.textWidth(nl.Text, 20), Math.max(60, r.AbsoluteSize.X - 440));
+			replayBox(r, UO(100 + nw + 12, titleOf(e) ? 5 : 11), e);
 		}
 		const sc = r.FindFirstChildOfClass("UIScale");
 		sc.Scale = 0.95;
@@ -7409,14 +7415,17 @@ function xpBar(parent, size, pos, k, color) {
 		const status = text(head, Online.enabled() ? "LOADING..." : "", U2(1, -130, 1, 0), UO(6, 0), 16, DIM, LEFT);
 		const rb = button(head, "REFRESH", UO(110, 30), U2(1, -116, 0.5, -15), () => load(), 0.4);
 		rb.TextSize = 15;
-		if (!Online.enabled()) {
+		if (!Online.enabled() && !Game.fakeTop) {
 			status.Text = "THE ONLINE LEADERBOARD ISN'T CONNECTED";
 			status.TextColor3 = BAD;
 			return;
 		}
 		try {
-			await Game.pushProfile();
-			list = await Online.top(500);
+			if (Game.fakeTop) list = Game.fakeTop;
+			else {
+				await Game.pushProfile();
+				list = await Online.top(500);
+			}
 			if (ADMIN && Game.devOn()) {
 				try {
 					const r = await Online.sync({ names: true });
@@ -7521,9 +7530,9 @@ function xpBar(parent, size, pos, k, color) {
 		levelBadge(h, lvl, 64, UO(232, 22));
 		const pn = text(h, String(p.name || "YOU").toUpperCase(), U2(1, -330, 0, 44), UO(308, 16), 40, me ? GOOD : WHITE, LEFT);
 		const pe = me ? { nc: (data.style || {}).color, nf: (data.style || {}).font, ne: (data.style || {}).effect, ni: (data.style || {}).icon, tt: (data.style || {}).title, rk: data.rank || 0, sv: 2 } : p;
-		dress(pn, pe, me ? GOOD : WHITE);
-		if (titleOf(pe)) {
-			const ptl = text(h, titleOf(pe), U2(1, -330, 0, 16), UO(232, 150), 14, COIN, LEFT);
+		Game.dressName(pn, pe, me ? GOOD : WHITE);
+		if (Game.titleOf(pe)) {
+			const ptl = text(h, Game.titleOf(pe), U2(1, -330, 0, 16), UO(232, 150), 14, COIN, LEFT);
 			if (Game.titleFx(pe)) Game.fancy(ptl);
 		}
 		const r0 = rank || (!me && p.id ? Game.rankOf(p.id) : me ? Game.rankOf(Online.myId()) : null);
@@ -9976,6 +9985,7 @@ let startBoss, updateBoss, resetSky;
 	});
 
 	Game.startTut = () => {
+		Game.tutRun = true;
 		const t = { step: 0 };
 		tut = t;
 		Game.tut = t;
@@ -10574,6 +10584,7 @@ startRun = (startId) => {
 	stats = { dist: 0, from: 0, maps: 0, bosses: 0, revives: 0, gems: 0, keys: 0, hearts: 0, glass: 0, kills: 0, close: 0, prevBest: data.best };
 	buff.immortal = 0;
 	Game.stopTut();
+	Game.tutRun = false;
 	Game.introEnd = null;
 	Game.lift = null;
 	Game.shiftStages(0);
@@ -12447,7 +12458,7 @@ if (DEV && /^(localhost|127\.0\.0\.1)$/.test(location.hostname)) window.__dev = 
 // ------------------------------------------------------------------ old version warning
 // every build has its own number, the page checks now and then whether a newer one is online
 (() => {
-	const BUILD = "1792671841";
+	const BUILD = "1793205797";
 	if (BUILD.startsWith("__")) return;
 	const bar = make("TextButton", {
 		AnchorPoint: V2(0.5, 0),
@@ -13097,7 +13108,7 @@ const PINK = RGB(255, 70, 170);
 			}
 			// where in the world that run ended. old records only know the distance, those count from the very start
 			const z = -((at > best ? at : best) - Game.loopBase);
-			const near = mode === "run" && z < cam.Z + 30 && z > cam.Z - 650;
+			const near = mode === "run" && !Game.tutRun && z < cam.Z + 30 && z > cam.Z - 650;
 			let on = false;
 			if (near) {
 				n++;
@@ -15218,6 +15229,12 @@ const Replay = (() => {
 		return v;
 	};
 
+	Game.hasReplay = (e) => !!(e && e.rp > 0 && e.rp >= (e.allBest || e.best || 0));
+	const measure = document.createElement("canvas").getContext("2d");
+	Game.textWidth = (str, size) => {
+		measure.font = `600 ${size}px Highway, sans-serif`;
+		return Math.ceil(measure.measureText(String(str)).width);
+	};
 	async function play(uid, name, given) {
 		if (mode !== "menu") return;
 		let p = given;
@@ -15442,7 +15459,7 @@ const Replay = (() => {
 		for (const [v, b] of ui.speedB) b.classList.toggle("on", v === R.speed);
 	}
 	if (window.__dev) window.__dev.menu = () => toMenu();
-	if (window.__dev) window.__dev.replayLast = async () => lastDone && play(null, "TEST", Object.assign(await pack(JSON.parse(JSON.stringify(lastDone))), { sc: lastDone.s[lastDone.s.length - 1] }));
+	if (window.__dev) window.__dev.replayLast = async () => lastDone && play(null, window.__rpName || "TEST", Object.assign(await pack(JSON.parse(JSON.stringify(lastDone))), { sc: lastDone.s[lastDone.s.length - 1] }));
 	return { play, active: () => !!R };
 })();
 // ------------------------------------------------------------------ new best: your card flies up the leaderboard past everyone you just beat
@@ -15708,98 +15725,200 @@ const Replay = (() => {
 // ------------------------------------------------------------------ what's new
 
 (() => {
-	// newest on top. a new entry here lights up the button for everyone who hasn't opened it yet
-	const ENTRIES = [
-		{
-			id: "2026-10-28",
-			title: "REPLAYS",
-			date: "28 OCT",
-			color: COIN,
-			lines: [
-				"Every best run is recorded now. Hit the play button next to someone on the leaderboard to watch it, drag the timeline to jump around.",
-				"New best? Your card flies up the leaderboard past everyone you just beat.",
-				"Every profile shows when that player last flew.",
-				"Players with 0 points are gone from the leaderboard.",
-				"New tutorial for new players.",
-				"In the casino you can type your own bet now, way above 250K.",
-				"Click the big title on the home screen. Then click it a lot.",
-				"RIVALRY and OVERDRIVE achievements are gone. The impressum loads again.",
-			],
-			buttons: [["SHOW ME THE NEW BEST ANIMATION", () => {
-				closePanels();
-				const n = ["ACE", "NOVA", "BLITZ", "ORBIT", "TURBO", "COMET", "VIPER", "ZEN", "ROCKET", "PIXEL", "STORM", "GHOST"];
-				task.delay(0.4, () => Game.rankFly(5200, 14800, n.map((x, i) => ({ id: "demo" + i, name: x, best: 19000 - i * 1100 }))));
-			}]],
-		},
-		{
-			id: "2026-10-casino",
-			title: "CASINO",
-			date: "EARLIER",
-			color: GEM,
-			lines: [
-				"The star casino: lucky wheel, roulette, minefield and blackjack.",
-				"Box rolls got more colors and effects.",
-				"Bug report / feedback button, bottom right.",
-				"You can see other players' achievements and what they're doing right now.",
-			],
-		},
-		{
-			id: "2026-10-maps",
-			title: "NEW MAPS",
-			date: "EARLIER",
-			color: GOOD,
-			lines: [
-				"5 new maps, longer maps and a new order: volcano, glacier, sea.",
-				"10 new planes.",
-				"The boss got easier.",
-				"Magnet and longer fuel are gone so it's fair for everyone. Whoever bought them got refunded.",
-			],
-		},
-	];
+	const css = document.createElement("style");
+	css.textContent = `
+.cl { pointer-events: auto; position: absolute; left: 18px; right: 18px; top: 72px; bottom: 14px; overflow-y: auto; padding-right: 6px; font-family: "Highway", sans-serif; font-weight: 600; color: #fff; scrollbar-width: thin; scrollbar-color: #fff6 transparent; }
+.cl * { box-sizing: border-box; }
+.cl-h { display: flex; align-items: center; height: 40px; margin: 4px 0 6px; }
+.cl-h i { width: 4px; height: 20px; margin: 0 12px 0 6px; }
+.cl-h b { font-size: 24px; font-weight: 600; flex: 1; }
+.cl-h span { font-size: 16px; color: #969696; padding-right: 10px; }
+.cl-h span.new { color: #ffcd3c; }
+.cl-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 6px; margin-bottom: 22px; }
+.cl-c { background: #00000080; padding: 12px 16px 14px; border-left: 4px solid var(--c); }
+.cl-c.w { grid-column: 1 / -1; }
+.cl-c h4 { margin: 0 0 6px; font-size: 20px; font-weight: 600; color: var(--c); }
+.cl-c p { margin: 0; font-size: 17px; line-height: 1.3; color: #d7d7d7; }
+.cl-c img { display: block; width: 100%; height: 200px; object-fit: cover; object-position: center top; margin-top: 10px; }
+.cl-c.w img { height: 250px; object-position: center 40%; }
+.cl-sc { margin-top: 10px; user-select: none; -webkit-user-select: none; }
+.cl-sc .t { position: relative; height: 30px; cursor: pointer; touch-action: none; }
+.cl-sc .b { position: absolute; left: 0; right: 0; top: 13px; height: 4px; background: #ffffff30; }
+.cl-sc .f { position: absolute; left: 0; top: 13px; height: 4px; background: #ffcd3c; }
+.cl-sc .k { position: absolute; top: 6px; width: 18px; height: 18px; background: #fff; translate: -50% 0; }
+.cl-sc .m { position: absolute; top: -4px; translate: -50% 0; font-size: 14px; cursor: pointer; }
+.cl-sc .r { display: flex; justify-content: space-between; font-size: 15px; color: #969696; }
+.cl-sc .r b { color: #fff; font-weight: 600; }
+.cl-in { display: flex; gap: 10px; align-items: center; margin-top: 10px; }
+.cl-in input { width: 170px; height: 40px; background: #000000b0; border: 2px solid #ffffff4d; color: #fff; padding: 0 12px; font: 600 20px "Highway", sans-serif; outline: none; }
+.cl-in input:focus { border-color: #ffcd3c; }
+.cl-in span { font-size: 15px; color: #969696; }
+.cl-in span.fix { color: #6eff96; }
+.cl-poke { display: inline-block; margin-top: 8px; font-size: 40px; cursor: pointer; user-select: none; -webkit-user-select: none; }
+.cl-poke span { display: inline-block; white-space: pre; }
+.cl-x { display: flex; gap: 8px; margin-top: 10px; }
+.cl-x s { background: #00000080; color: #ff5f5f; padding: 4px 10px; font-size: 15px; }
+.cl-ul { display: grid; gap: 6px; margin-bottom: 22px; }
+.cl-ul div { background: #00000080; padding: 10px 16px; font-size: 18px; color: #d7d7d7; line-height: 1.3; }
+`;
+	document.head.appendChild(css);
 
 	const KEY = "dontcrash_cl_seen";
+	// newest first. a new id on top lights up the button for everyone who hasn't opened it yet
+	const IDS = ["2026-10-28", "2026-10-casino", "2026-10-maps"];
 	let seen = null;
 	try {
 		seen = localStorage.getItem(KEY);
 	} catch (e) {}
 	const unseen = () => {
 		if (seen == null) return 1;
-		const i = ENTRIES.findIndex((e) => e.id === seen);
+		const i = IDS.indexOf(seen);
 		return i < 0 ? 1 : i;
 	};
 
-	const cp = panel("changelog", "WHAT'S NEW", UO(720, 600));
+	const card = (c, title, body, extra, wide) => `<div class="cl-c${wide ? " w" : ""}" style="--c:${c}"><h4>${title}</h4><p>${body}</p>${extra || ""}</div>`;
+	const head = (c, title, date, isNew) => `<div class="cl-h"><i style="background:${c}"></i><b>${title}</b><span class="${isNew ? "new" : ""}">${isNew ? "NEW" : date}</span></div>`;
+	const Y = "#ffcd3c", G = "#6eff96", B = "#5adcff", R = "#ff5f5f", P = "#b4a5ff";
+
+	const html = (n) => `
+${head(Y, "REPLAYS", "28 OCT", n > 0)}
+<div class="cl-grid">
+	${card(Y, "WATCH THE BEST RUNS", "Every best run is recorded now. Watch anyone's flight, jump around on the timeline. Try it:", `<img src="img/cl/replay.jpg" alt=""><div class="cl-sc" data-d="scrub"></div>`, true)}
+	${card(G, "REPLAY BUTTON", "Next to everyone on the leaderboard who has one. Players with 0 points are gone from the list.", `<img src="img/cl/board.jpg" alt="">`)}
+	${card(Y, "NEW BEST", "Beat your record and your card flies up the leaderboard past everyone you just overtook.", `<img src="img/cl/rank.jpg" alt="">`)}
+	${card(B, "TYPE YOUR BET", "In the casino you can type your bet now, way above 250K. Too high or nonsense gets fixed.", `<div class="cl-in" data-d="bet"><input inputmode="numeric" value="250000"><span>TYPE SOMETHING</span></div>`)}
+	${card(P, "CLICK THE TITLE", "The big title on the home screen does something now. Then click it 9 times fast.", `<div class="cl-poke" data-d="poke">DON'T CRASH!</div>`)}
+	${card(G, "NEW TUTORIAL", "New players learn it by flying: steer, roll, fuel, boost. And they can skip it.")}
+	${card(B, "LAST RUN", "Every profile shows when that player last flew.")}
+	${card("#ff5ac8", "ONE OF A KIND", "A new kind of title you can't buy and can't roll.", `<div style="margin-top:10px;font-size:28px" data-d="spm">FIRST MILLION</div>`)}
+	${card(R, "REMOVED", "Two achievements are gone. The impressum loads again.", `<div class="cl-x"><s>RIVALRY</s><s>OVERDRIVE</s></div>`)}
+</div>
+${head(B, "CASINO", "EARLIER", n > 1)}
+<div class="cl-ul">
+	<div>The star casino: lucky wheel, roulette, minefield and blackjack.</div>
+	<div>Box rolls got more colors and effects.</div>
+	<div>Bug report / feedback button, bottom right.</div>
+	<div>You can see other players' achievements and what they're doing right now.</div>
+</div>
+${head(G, "NEW MAPS", "EARLIER", n > 2)}
+<div class="cl-ul">
+	<div>5 new maps, longer maps and a new order: volcano, glacier, sea.</div>
+	<div>10 new planes.</div>
+	<div>The boss got easier.</div>
+	<div>Magnet and longer fuel are gone so it's fair for everyone. Whoever bought them got their coins back.</div>
+</div>`;
+
+	const demos = {
+		scrub(host) {
+			const EV = [[0.14, "⚡", Y], [0.27, "⚑", B], [0.41, "⚡", Y], [0.55, "⚑", B], [0.63, "♥", "#ff5ac8"], [0.77, "⚡", Y], [0.88, "⚑", B], [1, "✖", R]];
+			const NAME = { "⚡": "NEAR MISS", "⚑": "NEW MAP", "♥": "REVIVE", "✖": "CRASH" };
+			host.innerHTML = `<div class="t"><div class="b"></div><div class="f"></div>${EV.map((e) => `<span class="m" style="left:${e[0] * 100}%;color:${e[2]}">${e[1]}</span>`).join("")}<div class="k"></div></div><div class="r"><span>DISTANCE <b class="d">0</b></span><span class="e">DRAG IT</span></div>`;
+			const t = host.querySelector(".t"), f = host.querySelector(".f"), k = host.querySelector(".k"), d = host.querySelector(".d"), ev = host.querySelector(".e");
+			const set = (v) => {
+				v = Math.max(0, Math.min(1, v));
+				f.style.width = k.style.left = v * 100 + "%";
+				d.textContent = fmt(Math.round(v * 18420));
+				const hit = EV.find((e) => Math.abs(e[0] - v) < 0.03);
+				ev.textContent = hit ? NAME[hit[1]] : "";
+				ev.style.color = hit ? hit[2] : "";
+			};
+			const at = (e) => {
+				const r = t.getBoundingClientRect();
+				set((e.clientX - r.left) / r.width);
+			};
+			t.addEventListener("pointerdown", (e) => {
+				t.setPointerCapture(e.pointerId);
+				at(e);
+				const mv = (x) => at(x);
+				const up = () => {
+					t.removeEventListener("pointermove", mv);
+					t.removeEventListener("pointerup", up);
+				};
+				t.addEventListener("pointermove", mv);
+				t.addEventListener("pointerup", up);
+			});
+			set(0);
+		},
+		bet(host) {
+			const inp = host.querySelector("input"), note = host.querySelector("span");
+			const fix = () => {
+				const raw = inp.value.replace(/[^\d]/g, "");
+				let n = parseInt(raw, 10), msg = "";
+				if (!(n > 0)) (n = 50), (msg = "NOT A NUMBER, SET TO 50");
+				else if (n > 1e9) (n = 1e9), (msg = "TOO HIGH, MAX 1,000,000,000");
+				inp.value = n;
+				note.textContent = msg || fmt(n) + " ★";
+				note.className = msg ? "fix" : "";
+			};
+			inp.addEventListener("keydown", (e) => {
+				e.stopPropagation();
+				if (e.key === "Enter") inp.blur();
+			});
+			inp.addEventListener("focus", () => inp.select());
+			inp.addEventListener("blur", fix);
+		},
+		poke(el) {
+			const ls = [...el.textContent].map((ch) => {
+				const s = document.createElement("span");
+				s.textContent = ch;
+				return s;
+			});
+			el.textContent = "";
+			ls.forEach((s) => el.appendChild(s));
+			const cols = ["#ff5f5f", "#ffcd3c", "#6eff96", "#5adcff", "#b4a5ff", "#ff5ac8"];
+			el.addEventListener("pointerdown", (ev) => {
+				sfx("click", 1.1, 0.6);
+				let idx = 0, best = 1e9;
+				ls.forEach((s, i) => {
+					const r = s.getBoundingClientRect(), dd = Math.abs(r.left + r.width / 2 - ev.clientX);
+					if (dd < best) (best = dd), (idx = i);
+				});
+				ls.forEach((s, i) => {
+					const dd = Math.abs(i - idx);
+					s.animate([{ transform: "none", color: "#fff" }, { transform: `translateY(${-(22 - Math.min(dd, 6) * 2.5)}px) rotate(${(Math.random() - 0.5) * 24}deg)`, color: cols[i % cols.length], offset: 0.35 }, { transform: "none", color: "#fff" }], { duration: 480, delay: dd * 30, easing: "cubic-bezier(.3,.8,.4,1)" });
+				});
+			});
+		},
+		spm(el) {
+			const str = el.textContent;
+			el.textContent = "";
+			[...str].forEach((ch, i) => {
+				const sp = document.createElement("span");
+				sp.className = "spm-l";
+				sp.textContent = ch;
+				sp.style.animationDelay = -(i * 0.1) + "s, " + -(i * 0.17) + "s";
+				el.appendChild(sp);
+			});
+		},
+	};
+
+	const cp = panel("changelog", "WHAT'S NEW", UO(820, 640));
+	cp.body.Visible = false;
+	cp.more.Visible = false;
+	const root = document.createElement("div");
+	root.className = "cl";
+	cp.frame.el.appendChild(root);
+
 	const draw = () => {
-		for (const c of cp.body.GetChildren()) if (!c.IsA("UIListLayout")) c.Destroy();
-		const n = unseen();
-		ENTRIES.forEach((e, idx) => {
-			const head = row(cp.body, 40, 1);
-			make("Frame", { Size: UO(4, 20), Position: UO(6, 12), BackgroundColor3: e.color, Parent: head });
-			text(head, e.title, U2(0.6, 0, 1, 0), UO(18, 4), 24, WHITE, LEFT);
-			text(head, idx < n ? "NEW" : e.date, U2(0.4, -20, 1, 0), U2(0.6, 0, 0, 4), 16, idx < n ? e.color : DIM, RIGHT);
-			for (const line of e.lines) {
-				const r = row(cp.body, 0);
-				r.AutomaticSize = "Y";
-				make("UIPadding", { PaddingTop: UDim.new(0, 10), PaddingBottom: UDim.new(0, 10), PaddingLeft: UDim.new(0, 16), PaddingRight: UDim.new(0, 16), Parent: r });
-				const l = text(r, line, US(1, 0), null, 20, RGB(215, 215, 215), LEFT);
-				l.AutomaticSize = "Y";
-				l.el.style.position = "relative";
-				l.el.style.transform = "none";
-			}
-			for (const [label, fn] of e.buttons || []) {
-				const r = row(cp.body, 56, 1);
-				const b = button(r, label, U2(1, 0, 0, 48), UO(0, 4), fn);
-				b.TextSize = 18;
-				b.TextColor3 = e.color;
-			}
-			if (idx < ENTRIES.length - 1) row(cp.body, 14, 1);
-		});
+		root.innerHTML = html(unseen());
+		root.querySelectorAll("[data-d]").forEach((el) => demos[el.dataset.d](el));
+		// the casino's text helper is gone outside the casino, so do the translating here
+		if (Game.lang !== "en") {
+			const walk = (n) => {
+				if (n.nodeType === 3) {
+					const t = Game.tr(n.data);
+					if (t !== n.data) n.data = t;
+				} else for (const c of n.childNodes) walk(c);
+			};
+			walk(root);
+		}
+		root.scrollTop = 0;
 	};
 
 	const btn = button(menu, "WHAT'S NEW", UO(104, 28), U2(1, -236, 1, -40), () => {
 		draw();
 		openPanel("changelog");
-		seen = ENTRIES[0].id;
+		seen = IDS[0];
 		try {
 			localStorage.setItem(KEY, seen);
 		} catch (e) {}
