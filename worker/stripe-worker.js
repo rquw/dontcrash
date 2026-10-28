@@ -256,6 +256,22 @@ function resetStyle(d) {
 	d.styleV = 2;
 }
 
+// presents for one player, by name. they land once, then the game shows them the next time they're in the menu
+const AUTO_GIFTS = [{ id: "fm1", name: "bigpiece", title: "firstmillion", note: "GLÜCKWUNSCH!" }];
+function autoGifts(d) {
+	const n = String(d.name || "").toLowerCase();
+	if (!n) return;
+	for (const g of AUTO_GIFTS) {
+		d.gifted = d.gifted || {};
+		if (g.name !== n || d.gifted[g.id]) continue;
+		d.gifted[g.id] = Date.now();
+		if (g.title) {
+			d.style.own["title:" + g.title] = true;
+			d.style.title = g.title;
+		}
+		d.giftQueue = (Array.isArray(d.giftQueue) ? d.giftQueue : []).concat([{ title: g.title, note: g.note }]);
+	}
+}
 // tank and magnet are gone, it has to stay fair. whoever bought levels gets every coin back
 const GONE_POWERS = { tank: 2000, magnet: 1500 };
 function refundPowers(d) {
@@ -339,6 +355,7 @@ function setState(data, sess, name) {
 	refundPowers(d);
 	if (!d.created) d.created = Date.now();
 	if (name) d.name = name;
+	autoGifts(d);
 	// saves from before the daily and monthly boards only knew the week, carry that over
 	if (d.week && d.week.id && !(d.lb && d.lb.week)) {
 		d.lb = d.lb || {};
@@ -386,7 +403,7 @@ function importAuth(data, sess) {
 function profileOf(d) {
 	const p = {
 		name: d.name || "player", best: d.best || 0, at: d.bestAt || 0, level: d.level || 1, xp: d.xp || 0, skin: d.skin, death: d.death,
-		stats: d.stats, created: d.created || 0, updated: Date.now(), ach: Object.keys(d.ach || {}).length, al: Object.keys(d.ach || {}),
+		stats: d.stats, created: d.created || 0, updated: Date.now(), ach: Object.keys(d.ach || {}).length, al: Object.keys(d.ach || {}), lr: d.lastRun || 0,
 		nc: (d.style && d.style.color) || "", tt: (d.style && d.style.title) || "", nf: (d.style && d.style.font) || "", ne: (d.style && d.style.effect) || "", ni: (d.style && d.style.icon) || "", nm: (d.style && d.style.marker) || "", rk: d.rank || 0, sv: d.styleV || 0,
 	};
 	for (const [k, kind] of [["d", "day"], ["w", "week"], ["m", "month"]]) {
@@ -705,6 +722,10 @@ handlers.revive_gems = (price) => {
 	return [true];
 };
 // gems bought with real money. the payment itself is checked by the worker, this just makes sure one payment counts once
+handlers.gift_seen = () => {
+	s.data.giftQueue = [];
+	return [true];
+};
 handlers.paid = (g) => {
 	if (!g || typeof g.id !== "string") return [false, "bad payment"];
 	// on the worker this only ever gets what it read from the database itself
@@ -724,6 +745,10 @@ handlers.paid = (g) => {
 	if (typeof g.death === "string" && CONFIG.deaths.some((x) => x.id === g.death)) {
 		s.data.deaths[g.death] = true;
 		s.data.death = g.death;
+	}
+	if (typeof g.title === "string" && CONFIG.style.title.some((x) => x.id === g.title)) {
+		s.data.style.own["title:" + g.title] = true;
+		s.data.style.title = g.title;
 	}
 	// a gift can open the casino: it's in the canyon on every run until they've been in
 	if (g.casino === true) s.data.casinoNext = true;
@@ -796,6 +821,7 @@ handlers.run_end = (r) => {
 	}
 	// starting at a later map counts the maps before it for the score. the coins only come from what you flew
 	const score = (s.runFrom || 0) + dist;
+	d.lastRun = Date.now();
 	d.farthest = Math.max(d.farthest || 0, score);
 	if (score > d.best) d.bestAt = Math.max(score, Math.min(score + 400000, Math.floor(Number(r.at) || 0)));
 	d.best = Math.max(d.best, score);
@@ -937,7 +963,7 @@ function checkAch() {
 	const d = s.data;
 	d.ach = d.ach || {};
 	d.achPaid = d.achPaid || {};
-	for (const id of ["towers", "moving", "canyon", "smash", "turrets", "traffic", "city", "desert", "ruins", "windfarm", "sky", "factory", "neon", "volcano", "glacier", "sea", "boss", "space", "run5k", "run25k", "glass50", "close10", "kills50", "heart", "revive", "pickups100", "rich", "skins3", "codes5", "dist100k", "runs100", "level10", "vs10"]) {
+	for (const id of ["towers", "moving", "canyon", "smash", "turrets", "traffic", "city", "desert", "ruins", "windfarm", "sky", "factory", "neon", "volcano", "glacier", "sea", "boss", "space", "run5k", "run25k", "glass50", "close10", "kills50", "heart", "revive", "pickups100", "rich", "skins3", "codes5", "dist100k", "runs100", "level10"]) {
 		if (d.ach[id] || !earned(d, id)) continue;
 		d.ach[id] = Date.now();
 		if (ACH_REWARDS[id] && !d.achPaid[id]) {
@@ -958,6 +984,21 @@ CONFIG.style = {
 		{ id: "crimson", name: "CRIMSON", hex: "#e0223a", r: 3 }, { id: "toxic", name: "TOXIC", hex: "#39ff14", r: 3 }, { id: "electric", name: "ELECTRIC", hex: "#00e5ff", r: 3 },
 		{ id: "ultraviolet", name: "ULTRAVIOLET", hex: "#8a2bff", r: 3 },
 		{ id: "gold", name: "GOLD", hex: "#ffd35a", r: 4 }, { id: "rainbow", name: "RAINBOW", hex: "rainbow", r: 4 },
+		// more, from plain to ones that move
+		{ id: "peach", name: "PEACH", hex: "#ffb38a", r: 1 }, { id: "lemon", name: "LEMON", hex: "#fff59a", r: 1 }, { id: "aqua", name: "AQUA", hex: "#5ff5ff", r: 1 },
+		{ id: "rose", name: "ROSE", hex: "#ff9ab5", r: 1 }, { id: "olive", name: "OLIVE", hex: "#c8d65a", r: 1 }, { id: "silver", name: "SILVER", hex: "#c9d1dc", r: 1 },
+		{ id: "sand", name: "SAND", hex: "#e8cf9a", r: 1 }, { id: "snow", name: "SNOW", hex: "#f4f8ff", r: 1 }, { id: "denim", name: "DENIM", hex: "#7a9cff", r: 1 },
+		{ id: "cherry", name: "CHERRY", hex: "#ff3d6e", r: 2 }, { id: "jade", name: "JADE", hex: "#2fe0a0", r: 2 }, { id: "periwinkle", name: "PERIWINKLE", hex: "#9aa8ff", r: 2 },
+		{ id: "amber", name: "AMBER", hex: "#ffb627", r: 2 }, { id: "bubblegum", name: "BUBBLEGUM", hex: "#ff9ff3", r: 2 }, { id: "ice", name: "ICE", hex: "#bff4ff", r: 2 },
+		{ id: "tangerine", name: "TANGERINE", hex: "#ff7a45", r: 2 }, { id: "orchid", name: "ORCHID", hex: "#e08cff", r: 2 },
+		{ id: "blood", name: "BLOOD", hex: "#d1001f", r: 3 }, { id: "acid", name: "ACID", hex: "#d4ff00", r: 3 }, { id: "laser", name: "LASER", hex: "#ff00a8", r: 3 },
+		{ id: "deepsea", name: "DEEP SEA", hex: "#1f8bff", r: 3 }, { id: "royal", name: "ROYAL", hex: "#7a4dff", r: 3 }, { id: "plasma", name: "PLASMA", hex: "#ff2bd6", r: 3 },
+		{ id: "frost", name: "FROST", hex: "~#bff4ff,#ffffff,#7fd8ff", r: 3 }, { id: "ember", name: "EMBER", hex: "~#ff6a2a,#ffb35a,#ff3b1f", r: 3 },
+		{ id: "fire", name: "FIRE", hex: "~#ff3b1f,#ffd35a,#ff8a2a", r: 4 }, { id: "ocean", name: "OCEAN", hex: "~#00c6ff,#0072ff,#6cf2ff", r: 4 },
+		{ id: "galaxy", name: "GALAXY", hex: "~#8a2bff,#ff4fb0,#00e5ff", r: 4 }, { id: "toxicwaste", name: "TOXIC WASTE", hex: "~#39ff14,#d4ff00,#00ff9c", r: 4 },
+		{ id: "candy", name: "CANDY", hex: "~#ff7ad8,#7af2ff,#fff07a", r: 4 }, { id: "vaporwave", name: "VAPORWAVE", hex: "~#ff71ce,#01cdfe,#05ffa1,#b967ff", r: 4 },
+		{ id: "aurora", name: "AURORA", hex: "~#00ffa3,#00b3ff,#a259ff", r: 4 }, { id: "goldrush", name: "GOLD RUSH", hex: "~#ffd35a,#fff4c2,#e0a82e", r: 4 },
+		{ id: "bloodmoon", name: "BLOOD MOON", hex: "~#ff0033,#ff5577,#a0001a", r: 4 }, { id: "sunset", name: "SUNSET", hex: "~#ff5e62,#ff9966,#ffd35a,#b967ff", r: 4 },
 	],
 	title: [
 		{ id: "rookie", name: "ROOKIE", r: 1 }, { id: "pilot", name: "PILOT", r: 1 }, { id: "cadet", name: "CADET", r: 1 }, { id: "tourist", name: "TOURIST", r: 1 },
@@ -966,6 +1007,8 @@ CONFIG.style = {
 		{ id: "stormchaser", name: "STORMCHASER", r: 2 }, { id: "skypirate", name: "SKY PIRATE", r: 2 },
 		{ id: "menace", name: "MENACE", r: 3 }, { id: "phantom", name: "PHANTOM", r: 3 }, { id: "untouchable", name: "UNTOUCHABLE", r: 3 }, { id: "crashdummy", name: "CRASH DUMMY", r: 3 },
 		{ id: "legend", name: "LEGEND", r: 4 }, { id: "myth", name: "MYTH", r: 4 },
+		// r 5: never in a box, only ever handed out. fx is how the letters move
+		{ id: "firstmillion", name: "FIRST MILLION", r: 5, fx: "spm" },
 	],
 	// no font files: these are ones the device already has, with something close as a fallback
 	font: [
@@ -981,6 +1024,10 @@ CONFIG.style = {
 		{ id: "neon", name: "NEON", r: 2 }, { id: "pulse", name: "PULSE", r: 2 }, { id: "flicker", name: "FLICKER", r: 2 },
 		{ id: "bounce", name: "BOUNCE", r: 3 }, { id: "fire", name: "ON FIRE", r: 3 },
 		{ id: "glitch", name: "GLITCH", r: 4 },
+		{ id: "lift", name: "LIFT", r: 1 }, { id: "soft", name: "SOFT GLOW", r: 1 }, { id: "retro", name: "RETRO", r: 1 }, { id: "double", name: "DOUBLE", r: 1 },
+		{ id: "wave", name: "WAVE", r: 2 }, { id: "breathe", name: "BREATHE", r: 2 }, { id: "shimmer", name: "SHIMMER", r: 2 }, { id: "chroma", name: "CHROMA", r: 2 }, { id: "jitter", name: "JITTER", r: 2 },
+		{ id: "float", name: "FLOAT", r: 3 }, { id: "swing", name: "SWING", r: 3 }, { id: "heartbeat", name: "HEARTBEAT", r: 3 }, { id: "ghost", name: "GHOST", r: 3 }, { id: "electric", name: "ELECTRIC", r: 3 }, { id: "frozen", name: "FROZEN", r: 3 },
+		{ id: "prism", name: "PRISM", r: 4 }, { id: "flip", name: "FLIP", r: 4 }, { id: "supernova", name: "SUPERNOVA", r: 4 }, { id: "matrix", name: "MATRIX", r: 4 },
 	],
 	// a sign in front of your name
 	icon: [
@@ -1100,7 +1147,8 @@ const CASINO = {
 	gift: 500,
 	rates: { coins: 1, gems: 10, keys: 100, revives: 500 },
 	min: { points: 50 },
-	max: { points: 250000 },
+	// as much as you have. the cap only stops silly numbers
+	max: { points: 1000000000 },
 	// the wheel of fortune, 24 fields that add up to 24: on average you get back exactly what you put in
 	wheel: [0, 1.5, 0, 0.5, 2, 0, 1.5, 0, 0.5, 3, 0, 2, 0, 1.5, 0.5, 0, 5, 0, 2, 0, 0.5, 1.5, 2, 0],
 	// minefield: 5x5, the fair multiplier times this
@@ -1497,7 +1545,7 @@ async function whoIs(env, token) {
 }
 
 // what the browser may ask for. everything else isn't a thing
-const ACTIONS = new Set(["mission_claim", "mission_bonus", "claim_daily", "claim_hourly", "claim_play", "redeem", "shop_hint", "buy_code", "box", "buy_power", "loadout", "skin", "death", "tut_done", "unlock_start", "use_revive", "revive_gems", "paid", "buy_revive", "run_start", "run_end", "race_prize", "vs_played", "ach", "ach_retro", "reset", "cas_wheel", "cas_roulette", "cas_mines_start", "cas_mines_pick", "cas_mines_cash", "cas_bj_start", "cas_bj_hit", "cas_bj_stand", "cas_bj_double", "cas_enter", "cas_buy", "cas_cash", "rank_up", "cas_leave", "buy_gems", "style"]);
+const ACTIONS = new Set(["mission_claim", "mission_bonus", "claim_daily", "claim_hourly", "claim_play", "redeem", "shop_hint", "buy_code", "box", "buy_power", "loadout", "skin", "death", "tut_done", "unlock_start", "use_revive", "revive_gems", "paid", "buy_revive", "run_start", "run_end", "race_prize", "vs_played", "ach", "ach_retro", "reset", "cas_wheel", "cas_roulette", "cas_mines_start", "cas_mines_pick", "cas_mines_cash", "cas_bj_start", "cas_bj_hit", "cas_bj_stand", "cas_bj_double", "cas_enter", "cas_buy", "cas_cash", "rank_up", "gift_seen", "cas_leave", "buy_gems", "style"]);
 
 async function sync(req, env, ctx) {
 	let body;

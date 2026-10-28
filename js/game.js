@@ -3,12 +3,22 @@ import {
 	camera, Lighting, Instance, workspace, markQueryRoot, Enum, OverlapParams, TweenService, TweenInfo, Debris, UIS, playSfx, loopSound, loadSounds, setSfxVolume,
 	NumberSequence, NumberSequenceKeypoint, NumberRange, ColorSequence, ColorSequenceKeypoint, guiRootInst, setUiScale, setLowGraphics, physicsGround,
 	mergeFloor, start, perf,
-} from "./engine.js?v=1792668440";
-import * as Server from "./server.js?v=1792668440";
-import * as Online from "./online.js?v=1792668440";
+} from "./engine.js?v=1793204340";
+import * as Server from "./server.js?v=1793204340";
+import * as Online from "./online.js?v=1793204340";
 
 const V3 = (x, y, z) => new Vector3(x, y, z);
 const RGB = Color3.fromRGB;
+// colours that move: "rainbow", or "~#aaa,#bbb,#ccc" which flows from one to the next
+const isAnimHex = (h) => typeof h === "string" && (h === "rainbow" || h[0] === "~");
+const hexRGB = (h) => RGB(parseInt(h.slice(1, 3), 16), parseInt(h.slice(3, 5), 16), parseInt(h.slice(5, 7), 16));
+function animColor(h, off) {
+	const t = performance.now() / 1000 + (off || 0);
+	if (h === "rainbow") return Color3.fromHSV((t * 0.35) % 1, 0.7, 1);
+	const list = h.slice(1).split(",");
+	const k = (t * 0.7) % list.length, i = Math.floor(k), f = k - i;
+	return hexRGB(list[i]).Lerp(hexRGB(list[(i + 1) % list.length]), f * f * (3 - 2 * f));
+}
 const CFn = (x, y, z) => CFrame.new(x, y, z);
 const Ang = CFrame.Angles;
 const U2 = (a, b, c, d) => new UDim2(a, b, c, d);
@@ -1854,6 +1864,7 @@ let trackChunks, updateMovers, regenerate, canyonPath, canyonHalfGap, updatePads
 		maxRow = Math.min(maxRow, row - 1);
 		lastKey = null;
 	};
+	Game.flushChunks = () => processQueue(0.08);
 	// where the next stage can start: a few chunks in front of you
 	Game.nextStart = () => {
 		const row = Math.floor(-pos.Z / CHUNK) + 3;
@@ -1923,6 +1934,14 @@ let trackChunks, updateMovers, regenerate, canyonPath, canyonHalfGap, updatePads
 		}
 		// one run in forty has a casino in the canyon. with ?dev it's always there
 		Game.fork = !Game.race && !Game.shop && ((Game.devOn && Game.devOn()) || data.casinoNext === true || Math.random() < 0.025);
+		// a replay brings back exactly the world it was flown in
+		const rw = Game.replayWorld;
+		if (rw) {
+			seed = rw.seed;
+			canyonOffset = rw.co;
+			Game.fork = !!rw.fork;
+		}
+		if (Game.onRegen) Game.onRegen({ seed, co: canyonOffset, fork: !!Game.fork, loop: Game.loop || 0 });
 		maxRow = -1;
 		lastKey = null;
 		updateChunks(x || 0, z || 0);
@@ -5370,7 +5389,19 @@ function planeView(parent, id, size, pos, opts) {
 			if (o.count) countL = text(stage, "+0", UO(380, 130), U2(0.5, -40, 0.5, -65), 110, WHITE, LEFT);
 		} else {
 			const str = String(o.label || o.name);
-			text(stage, str, US(1, 1), null, str.length > 12 ? 60 : 96, col);
+			if (o.glow) {
+				const g = document.createElement("div");
+				g.style.cssText = `position:absolute;left:50%;top:50%;width:760px;height:420px;translate:-50% -50%;pointer-events:none;background:radial-gradient(ellipse at center, rgba(255,210,90,.55) 0%, rgba(255,90,200,.28) 38%, transparent 70%);filter:blur(6px);animation:spmGlow 2.4s ease-in-out infinite`;
+				if (!document.getElementById("spm-glow-css")) {
+					const st = document.createElement("style");
+					st.id = "spm-glow-css";
+					st.textContent = "@keyframes spmGlow { 50% { scale: 1.12; opacity: .75; } }";
+					document.head.appendChild(st);
+				}
+				stage.el.appendChild(g);
+			}
+			const big = text(stage, str, US(1, 1), null, str.length > 12 ? 60 : 96, col);
+			if (o.fancy) Game.fancy(big);
 		}
 
 		const head = text(root, o.head || "UNLOCKED", U2(1, 0, 0, 30), U2(0, 0, 0.4, -230), 26, col);
@@ -5803,12 +5834,15 @@ function deathView(vp, kind, delay, fov) {
 
 	// colours, titles and trails for coins. chips in a row, yours have a tick, the one you wear is lit
 	// ---------------- name colours, titles and fonts: they come out of boxes, what you've rolled is yours to wear
-	const RARITY = [null, ["COMMON", RGB(170, 176, 190)], ["RARE", RGB(90, 180, 255)], ["EPIC", RGB(200, 110, 255)], ["LEGENDARY", RGB(255, 190, 60)]];
+	const RARITY = [null, ["COMMON", RGB(170, 176, 190)], ["RARE", RGB(90, 180, 255)], ["EPIC", RGB(200, 110, 255)], ["LEGENDARY", RGB(255, 190, 60)], ["ONE OF A KIND", RGB(255, 90, 200)]];
 	const myName = () => String(Online.account() || "YOU").toUpperCase();
 	// how one of them looks: a colour is your name in it, a font is your name set in it, a title is just the title
 	function styleFace(parent, kind, it, size, pos, ts) {
-		const l = text(parent, kind === "title" ? it.name : myName(), size, pos, ts, kind === "title" ? COIN : kind === "color" && it.hex !== "rainbow" ? Game.hexColor(it.hex) : WHITE);
-		if (kind === "color" && it.hex === "rainbow") rainbowLabels.push(l);
+		const l = text(parent, kind === "title" ? it.name : myName(), size, pos, ts, kind === "title" ? COIN : kind === "color" && !isAnimHex(it.hex) ? Game.hexColor(it.hex) : WHITE);
+		if (kind === "color" && isAnimHex(it.hex)) {
+			l._anim = it.hex;
+			rainbowLabels.push(l);
+		}
 		if (kind === "font") Game.applyFont(l, it.id);
 		if (kind === "effect") Game.applyEffect(l, it.id);
 		if (kind === "icon") l.Text = it.sym + " " + myName();
@@ -6123,7 +6157,7 @@ function deathView(vp, kind, delay, fov) {
 		// what's inside the one you picked. you put things on in the backpack
 		{
 			const [kind, head] = BOXES.find((x) => x[0] === boxView) || BOXES[0];
-			const list = CONFIG.style[kind];
+			const list = CONFIG.style[kind].filter((it) => it.r < 5 || (data.style.own || {})[kind + ":" + it.id]);
 			const hr = row(shopItems, 40, 1);
 			text(hr, "INSIDE THE " + head, U2(0.6, 0, 1, 0), UO(4, 0), 18, TINT[kind], LEFT);
 			const bp = button(hr, "WEAR THEM IN THE BACKPACK", UO(250, 32), U2(1, -256, 0.5, -16), () => Game.openBackpack(null, "name"), 0.4);
@@ -6144,7 +6178,7 @@ function deathView(vp, kind, delay, fov) {
 					}
 					if (wear(kind, it, on)) rebuildShop();
 				}, on ? 0.15 : mine ? 0.45 : 0.75);
-				b.LayoutOrder = i;
+				b.LayoutOrder = it.r * 1000 + (mine ? 0 : 500) + i;
 				make("UIStroke", { Color: on ? GOOD : rc, Thickness: on ? 2 : 1, Transparency: on ? 0.1 : mine ? 0.35 : 0.7, ApplyStrokeMode: "Border", Parent: b });
 				if (mine) {
 					styleFace(b, kind, it, U2(1, -8, 0, 24), UO(4, 8), 18).TextStrokeTransparency = 0.6;
@@ -6194,11 +6228,10 @@ function deathView(vp, kind, delay, fov) {
 	const rainbowLabels = [];
 	RunService.RenderStepped.Connect(() => {
 		if (!rainbowLabels.length) return;
-		const c = Color3.fromHSV((clock() * 0.35) % 1, 0.7, 1);
 		for (let i = rainbowLabels.length - 1; i >= 0; i--) {
 			const l = rainbowLabels[i];
 			if (l._destroyed || !l.Parent) rainbowLabels.splice(i, 1);
-			else l.TextColor3 = c;
+			else l.TextColor3 = animColor(l._anim || "rainbow");
 		}
 	});
 
@@ -6563,6 +6596,7 @@ let showResults;
 		if (record) {
 			confetti(my);
 			sfx("record");
+			if (Game.rankFly && Online.account()) task.delay(1.1, () => Game.rankFly(info.prevBest, score));
 		}
 		stageL2.Text = "REACHED  " + info.stage;
 		unitL.Text = record ? "STUDS, YOUR BEST EVER" : "STUDS, BEST " + fmt(award ? award.best : data.best);
@@ -7143,6 +7177,39 @@ function xpBar(parent, size, pos, k, color) {
 .nfx-bounce { animation: nfxBounce .9s ease-in-out infinite; }
 .nfx-fire { animation: nfxFire .7s ease-in-out infinite alternate; }
 .nfx-glitch { animation: nfxGlitch 1.6s steps(1) infinite; }
+.nfx-lift { filter: drop-shadow(0 4px 0 rgba(0,0,0,.65)); }
+.nfx-soft { filter: drop-shadow(0 0 4px currentColor) drop-shadow(0 0 2px #fff8); }
+.nfx-retro { filter: drop-shadow(3px 3px 0 #ff2a6d) drop-shadow(3px 3px 0 #00e5ff); }
+.nfx-double { filter: drop-shadow(4px 0 0 rgba(255,255,255,.35)) drop-shadow(-4px 0 0 rgba(0,0,0,.6)); }
+.nfx-wave { animation: nfxWave 1.6s ease-in-out infinite; }
+.nfx-breathe { animation: nfxBreathe 2.2s ease-in-out infinite; }
+.nfx-shimmer { animation: nfxShimmer 1.8s linear infinite; }
+.nfx-chroma { filter: drop-shadow(2px 0 0 #ff2a6d) drop-shadow(-2px 0 0 #00e5ff); }
+.nfx-jitter { animation: nfxJitter .25s steps(2) infinite; }
+.nfx-float { animation: nfxFloat 2.4s ease-in-out infinite; filter: drop-shadow(0 6px 6px rgba(0,0,0,.5)); }
+.nfx-swing { animation: nfxSwing 1.8s ease-in-out infinite; transform-origin: 50% 0; }
+.nfx-heartbeat { animation: nfxHeart 1.1s ease-in-out infinite; }
+.nfx-ghost { animation: nfxGhost 2.6s ease-in-out infinite; }
+.nfx-electric { animation: nfxElectric 1.3s steps(1) infinite; }
+.nfx-frozen { filter: drop-shadow(0 0 2px #fff) drop-shadow(0 0 8px #7fd8ff); animation: nfxFrozen 3s ease-in-out infinite; }
+.nfx-prism { animation: nfxPrism 2.5s linear infinite; }
+.nfx-flip { animation: nfxFlip 3.5s ease-in-out infinite; }
+.nfx-supernova { animation: nfxNova 1.6s ease-in-out infinite; }
+.nfx-matrix { animation: nfxMatrix 1.4s steps(1) infinite; }
+@keyframes nfxWave { 0%,100% { rotate: -3deg; translate: 0 1px; } 50% { rotate: 3deg; translate: 0 -2px; } }
+@keyframes nfxBreathe { 50% { scale: 1.08; } }
+@keyframes nfxShimmer { 0%,100% { filter: brightness(1); } 50% { filter: brightness(1.7) drop-shadow(0 0 6px #fff); } }
+@keyframes nfxJitter { 0% { translate: 1px 0; } 50% { translate: -1px 1px; } 100% { translate: 0 -1px; } }
+@keyframes nfxFloat { 50% { translate: 0 -6px; } }
+@keyframes nfxSwing { 0%,100% { rotate: -6deg; } 50% { rotate: 6deg; } }
+@keyframes nfxHeart { 0%,40%,100% { scale: 1; } 15% { scale: 1.14; } 28% { scale: 1.05; } }
+@keyframes nfxGhost { 0%,100% { opacity: 1; filter: blur(0); } 50% { opacity: .35; filter: blur(1.5px); } }
+@keyframes nfxElectric { 0%,30%,60%,100% { filter: drop-shadow(0 0 4px #6cf2ff); translate: 0 0; } 10%,70% { filter: drop-shadow(0 0 12px #fff) drop-shadow(0 0 20px #00b3ff); translate: 1px 0; } 40% { filter: none; } }
+@keyframes nfxFrozen { 50% { filter: drop-shadow(0 0 4px #fff) drop-shadow(0 0 14px #bff4ff); } }
+@keyframes nfxPrism { from { filter: hue-rotate(0deg) drop-shadow(0 0 6px currentColor); } to { filter: hue-rotate(360deg) drop-shadow(0 0 6px currentColor); } }
+@keyframes nfxFlip { 0%,70%,100% { rotate: x 0deg; } 85% { rotate: x 360deg; } }
+@keyframes nfxNova { 0%,100% { filter: drop-shadow(0 0 4px #ffd35a); scale: 1; } 50% { filter: drop-shadow(0 0 6px #fff) drop-shadow(0 0 18px #ffd35a) drop-shadow(0 0 34px #ff8a2a); scale: 1.06; } }
+@keyframes nfxMatrix { 0%,100% { filter: drop-shadow(0 0 4px #39ff14); translate: 0 0; } 20% { filter: drop-shadow(0 0 10px #39ff14) brightness(1.5); translate: 0 -1px; } 45% { filter: drop-shadow(2px 0 0 #39ff14); } 70% { filter: drop-shadow(0 0 8px #00ff9c); translate: 0 1px; } }
 @keyframes nfxPulse { 50% { opacity: .45; } }
 @keyframes nfxFlicker { 0%, 41%, 44%, 70%, 73%, 100% { opacity: 1; } 42% { opacity: .2; } 71% { opacity: .3; } }
 @keyframes nfxBounce { 50% { translate: 0 -5px; } }
@@ -7168,7 +7235,35 @@ function xpBar(parent, size, pos, k, color) {
 	const nameColor = (e, fallback) => {
 		const it = styled(e) && e.nc && CONFIG.style.color.find((x) => x.id === e.nc);
 		if (!it) return fallback;
-		return it.hex === "rainbow" ? Color3.fromHSV((clock() * 0.35) % 1, 0.7, 1) : Game.hexColor(it.hex);
+		return isAnimHex(it.hex) ? animColor(it.hex) : Game.hexColor(it.hex);
+	};
+	// letters that each go round in a little circle and run through the rainbow, one after the other
+	{
+		const css = document.createElement("style");
+		css.textContent = `
+.spm-l { display: inline-block; white-space: pre; animation: spmSpin 1.2s linear infinite, spmHue 2.4s linear infinite; text-shadow: 0 0 10px currentColor, 0 2px 0 rgba(0,0,0,.55); }
+@keyframes spmSpin { 0% { translate: .11em 0; } 12.5% { translate: .08em .08em; } 25% { translate: 0 .11em; } 37.5% { translate: -.08em .08em; } 50% { translate: -.11em 0; } 62.5% { translate: -.08em -.08em; } 75% { translate: 0 -.11em; } 87.5% { translate: .08em -.08em; } 100% { translate: .11em 0; } }
+@keyframes spmHue { 0%, 100% { color: #ff5a6a; } 16% { color: #ffb347; } 33% { color: #fff15a; } 50% { color: #5dff8a; } 66% { color: #59c8ff; } 83% { color: #c27aff; } }
+`;
+		document.head.appendChild(css);
+	}
+	Game.fancy = (label) => {
+		const el = (label.el && (label.el.querySelector(".gui-text") || label.el)) || null;
+		if (!el) return;
+		const str = el.textContent;
+		el.textContent = "";
+		[...str].forEach((ch, i) => {
+			const sp = document.createElement("span");
+			sp.className = "spm-l";
+			sp.textContent = ch;
+			sp.style.animationDelay = -(i * 0.1) + "s, " + -(i * 0.17) + "s";
+			el.appendChild(sp);
+		});
+	};
+	// does what they wear come with moving letters
+	Game.titleFx = (e) => {
+		const it = styled(e) && e.tt && CONFIG.style.title.find((x) => x.id === e.tt);
+		return !!(it && it.fx);
 	};
 	const titleOf = (e) => {
 		const it = styled(e) && e.tt && CONFIG.style.title.find((x) => x.id === e.tt);
@@ -7178,15 +7273,18 @@ function xpBar(parent, size, pos, k, color) {
 	const flashy = [];
 	RunService.RenderStepped.Connect(() => {
 		if (!flashy.length) return;
-		const c = Color3.fromHSV((clock() * 0.35) % 1, 0.7, 1);
 		for (let i = flashy.length - 1; i >= 0; i--) {
 			if (flashy[i]._destroyed || !flashy[i].Parent) flashy.splice(i, 1);
-			else flashy[i].TextColor3 = c;
+			else flashy[i].TextColor3 = animColor(flashy[i]._anim || "rainbow");
 		}
 	});
 	function dress(label, e, fallback) {
 		label.TextColor3 = nameColor(e, fallback);
-		if (styled(e) && e.nc === "rainbow") flashy.push(label);
+		const nc = styled(e) && e.nc && CONFIG.style.color.find((x) => x.id === e.nc);
+		if (nc && isAnimHex(nc.hex)) {
+			label._anim = nc.hex;
+			if (!flashy.includes(label)) flashy.push(label);
+		} else label._anim = null;
 		Game.applyFont(label, styled(e) ? e.nf : "");
 		Game.applyEffect(label, styled(e) ? e.ne : "");
 		Game.applyIcon(label, styled(e) ? e.ni : "");
@@ -7214,6 +7312,10 @@ function xpBar(parent, size, pos, k, color) {
 			make("UIGradient", { Color: new ColorSequence(WHITE, RGB(90, 90, 90)), Rotation: 90, Parent: block });
 			if (isMe) make("UIStroke", { Color: GOOD, Thickness: 3, Transparency: 0.1, ApplyStrokeMode: "Border", Parent: block });
 			text(block, fmt(e.best || 0), U2(1, 0, 0, 30), UO(0, 10), i === 0 ? 30 : 26, BLACK);
+			if (e.rp && e.rp === (e.allBest || e.best)) {
+				const pb = button(block, "", UO(40, 30), U2(0.5, -20, 0, 44), () => Replay.play(e.id, e.name), 0.3);
+				Icons.text(pb, US(1, 1), null, 16, GOOD).Text = "\u25B6 ";
+			}
 			text(block, "#" + (i + 1), U2(1, 0, 0, 24), UO(0, H[i] - 32), 20, BLACK).TextTransparency = 0.45;
 			const top2 = H[i] + 8;
 			const av = avatar(col, e.name || "?", i === 0 ? 64 : 54, U2(0.5, 0, 1, -top2 - 60), MEDAL[i]);
@@ -7222,7 +7324,10 @@ function xpBar(parent, size, pos, k, color) {
 			const nm = text(col, String(e.name || "?").toUpperCase(), U2(1, 0, 0, 24), U2(0, 0, 1, -top2 - 24), 20, isMe ? GOOD : WHITE);
 			nm.TextTruncate = "AtEnd";
 			dress(nm, e, isMe ? GOOD : WHITE);
-			if (titleOf(e)) text(col, titleOf(e), U2(1, 0, 0, 14), U2(0, 0, 1, -top2 - 2), 12, COIN);
+			if (titleOf(e)) {
+				const tl = text(col, titleOf(e), U2(1, 0, 0, 14), U2(0, 0, 1, -top2 - 2), 12, COIN);
+				if (Game.titleFx(e)) Game.fancy(tl);
+			}
 			const sc = make("UIScale", { Scale: 0.6, Parent: col });
 			task.delay(0.08 * (2 - i), () => tw(sc, 0.4, { Scale: 1 }, "Back"));
 		});
@@ -7240,10 +7345,20 @@ function xpBar(parent, size, pos, k, color) {
 		nl.TextTruncate = "AtEnd";
 		nl.TextWrapped = false;
 		dress(nl, e, me ? GOOD : WHITE);
-		if (titleOf(e)) text(r, titleOf(e), U2(1, -320, 0, 14), UO(100, 28), 12, COIN, LEFT);
+		if (titleOf(e)) {
+			const tl = text(r, titleOf(e), U2(1, -320, 0, 14), UO(100, 28), 12, COIN, LEFT);
+			if (Game.titleFx(e)) Game.fancy(tl);
+		}
 		realName(r, e, true);
 		text(r, "LVL " + (e.level || 1), UO(70, 46), U2(1, -250, 0, 0), 15, RGB(180, 165, 255), RIGHT);
-		text(r, fmt(e.best || 0), UO(160, 46), U2(1, -176, 0, 0), 22, WHITE, RIGHT);
+		const hasRp = !!(e.rp && e.rp === (e.allBest || e.best));
+		text(r, fmt(e.best || 0), UO(160, 46), U2(1, hasRp ? -206 : -176, 0, 0), 22, WHITE, RIGHT);
+		// a play button only when there's a replay of exactly this score
+		if (e.rp && e.rp === (e.allBest || e.best)) {
+			const pb = button(r, "", UO(34, 34), U2(1, -14, 0.5, -17), () => Replay.play(e.id, e.name), 0.2);
+			pb.AnchorPoint = V2(1, 0);
+			Icons.text(pb, US(1, 1), null, 16, GOOD).Text = "\u25B6";
+		}
 		const sc = r.FindFirstChildOfClass("UIScale");
 		sc.Scale = 0.95;
 		task.delay(Math.min(rank, 20) * 0.02, () => tw(sc, 0.3, { Scale: 1 }, "Back"));
@@ -7318,7 +7433,7 @@ function xpBar(parent, size, pos, k, color) {
 		}
 		if (my !== token) return;
 		const bd = BOARDS.find((x) => x.id === board);
-		let shown = list;
+		let shown = list.filter((e) => (e.best || 0) > 0);
 		if (bd.k) {
 			// only runs from this period count, sorted by the best one
 			const cur = Server.periodId(bd.id);
@@ -7404,7 +7519,13 @@ function xpBar(parent, size, pos, k, color) {
 		make("UIGradient", { Transparency: new NumberSequence(0.1, 1), Parent: hb });
 		planeView(h, p.skin || "Default", UO(210, 150), UO(10, 10), { bgT: 1, wind: V3(-28, 0, -12), fov: 32 });
 		levelBadge(h, lvl, 64, UO(232, 22));
-		text(h, String(p.name || "YOU").toUpperCase(), U2(1, -330, 0, 44), UO(308, 16), 40, me ? GOOD : WHITE, LEFT);
+		const pn = text(h, String(p.name || "YOU").toUpperCase(), U2(1, -330, 0, 44), UO(308, 16), 40, me ? GOOD : WHITE, LEFT);
+		const pe = me ? { nc: (data.style || {}).color, nf: (data.style || {}).font, ne: (data.style || {}).effect, ni: (data.style || {}).icon, tt: (data.style || {}).title, rk: data.rank || 0, sv: 2 } : p;
+		dress(pn, pe, me ? GOOD : WHITE);
+		if (titleOf(pe)) {
+			const ptl = text(h, titleOf(pe), U2(1, -330, 0, 16), UO(232, 150), 14, COIN, LEFT);
+			if (Game.titleFx(pe)) Game.fancy(ptl);
+		}
 		const r0 = rank || (!me && p.id ? Game.rankOf(p.id) : me ? Game.rankOf(Online.myId()) : null);
 		text(h, r0 ? "#" + r0 + " ON THE LEADERBOARD" : me ? "YOUR PROFILE" : "", U2(1, -330, 0, 22), UO(308, 60), 17, r0 && r0 <= 3 ? COIN : DIM, LEFT);
 		const ps = me ? "online" : Game.presence(p);
@@ -7437,6 +7558,7 @@ function xpBar(parent, size, pos, k, color) {
 			["SKIN", niceName(p.skin || "Default"), GEM],
 			["DEATH EFFECT", niceName(p.death || "Default"), KEY],
 			["ACHIEVEMENTS", (p.ach || 0) + " / " + (Game.ACH_TOTAL || 0), COIN],
+			["LAST RUN", p.lr ? Game.lastOnline({ seen: p.lr }) : "NONE YET", GOOD],
 			["PLAYING SINCE", ago(p.created), DIM],
 		];
 		tiles.forEach(([k, v, c], i) => {
@@ -7710,7 +7832,7 @@ Game.showXp = (award, my, alive) => {
 		const card = row(bp.body, 124, 0.35);
 		make("UICorner", { CornerRadius: UDim.new(0, 12), Parent: card });
 		const col = find("color");
-		const edge = col && col.hex !== "rainbow" ? Game.hexColor(col.hex) : WHITE;
+		const edge = col && !isAnimHex(col.hex) ? Game.hexColor(col.hex) : WHITE;
 		make("UIStroke", { Color: edge, Thickness: 2, Transparency: 0.3, ApplyStrokeMode: "Border", Parent: card });
 		const glow = make("Frame", { Size: US(1, 1), BackgroundColor3: edge, BackgroundTransparency: 0.82, Parent: card });
 		make("UICorner", { CornerRadius: UDim.new(0, 12), Parent: glow });
@@ -7719,10 +7841,11 @@ Game.showXp = (award, my, alive) => {
 		const nm = text(card, String(Online.account() || "YOU").toUpperCase(), U2(1, -20, 0, 56), UO(10, 28), 50, WHITE);
 		Game.dressName(nm, { nc: st.color, nf: st.font, ne: st.effect, ni: st.icon, sv: 2 }, WHITE);
 		const under = Game.titleOf({ tt: st.title, rk: data.rank || 0, sv: 2 });
-		text(card, under || "NO TITLE", U2(1, 0, 0, 22), UO(0, 90), 18, under ? COIN : DIM);
+		const ul = text(card, under || "NO TITLE", U2(1, 0, 0, 22), UO(0, 90), 18, under ? COIN : DIM);
+		if (Game.titleFx({ tt: st.title, sv: 2 })) Game.fancy(ul);
 
 		for (const [kind, head] of [["color", "COLOUR"], ["title", "TITLE"], ["font", "FONT"], ["effect", "EFFECT"], ["icon", "ICON"], ["marker", "MARKER"]]) {
-			const mine = CONFIG.style[kind].filter((it) => st.own[kind + ":" + it.id]);
+			const mine = CONFIG.style[kind].filter((it) => st.own[kind + ":" + it.id]).sort((x, y) => y.r - x.r);
 			const hr = row(bp.body, 34, 1);
 			text(hr, head + "   " + mine.length + " OF " + CONFIG.style[kind].length, U2(0.7, 0, 1, 0), UO(4, 0), 18, COIN, LEFT);
 			if (!mine.length) {
@@ -9672,13 +9795,13 @@ let startBoss, updateBoss, resetSky;
 	};
 })();
 
-// ------------------------------------------------------------------ first run tips
+// ------------------------------------------------------------------ first run tutorial: learn it by flying it
 
 (() => {
 	const box = make("CanvasGroup", {
 		AnchorPoint: V2(0.5, 0),
-		Position: U2(0.5, 0, 0.26, 0),
-		Size: UO(900, 150),
+		Position: U2(0.5, 0, 0.2, 0),
+		Size: UO(900, 210),
 		BackgroundTransparency: 1,
 		GroupTransparency: 1,
 		Visible: false,
@@ -9686,104 +9809,210 @@ let startBoss, updateBoss, resetSky;
 		Parent: gui,
 	});
 	box.el.style.pointerEvents = "none";
-	const head = text(box, "", U2(1, 0, 0, 50), null, 44, WHITE);
+	const stepL = text(box, "", U2(1, 0, 0, 24), null, 18, DIM);
+	const head = text(box, "", U2(1, 0, 0, 50), UO(0, 26), 44, WHITE);
 	head.TextStrokeTransparency = 0.4;
-	const row_ = make("Frame", { Position: UO(0, 64), Size: U2(1, 0, 0, 72), BackgroundTransparency: 1, Parent: box });
+	const sub = text(box, "", U2(1, 0, 0, 28), UO(0, 80), 22, RGB(215, 215, 215));
+	sub.TextStrokeTransparency = 0.6;
+	const row_ = make("Frame", { Position: UO(0, 122), Size: U2(1, 0, 0, 72), BackgroundTransparency: 1, Parent: box });
 	make("UIListLayout", { FillDirection: "row", HorizontalAlignment: "center", Padding: UDim.new(0, 14), Parent: row_ });
 
-	const STEPS = [
-		{ text: () => Game.keyName("left") + " AND " + Game.keyName("right") + " TO STEER", touch: "LEFT AND RIGHT TO STEER", keys: ["A", "D"] },
-		{ text: () => Game.keyName("dashL") + " AND " + Game.keyName("dashR") + " TO ROLL", touch: "DOUBLE TAP LEFT OR RIGHT TO ROLL", keys: ["Q", "E"] },
-		{ text: () => Game.keyName("nitro") + " FOR BOOST", touch: "NITRO FOR BOOST", keys: ["W"] },
-		{ text: "YOU'RE INVINCIBLE WHILE BOOSTING!", hold: 2.6 },
-		{ text: "YOU CAN USE IT TO FLY THROUGH DEAD ENDS", hold: 3.2 },
-		{ text: "IT USES A LOT OF FUEL!", hold: 2.6 },
-	];
+	// skip lives outside the box so it can be clicked
+	const skip = button(gui, "SKIP TUTORIAL", UO(170, 34), U2(0.5, -85, 0.2, 222), () => finish(true), 0.6);
+	skip.TextSize = 16;
+	skip.TextColor3 = DIM;
+	skip.Visible = false;
+	skip.ZIndex = 30;
+
 	const TOUCH = { A: "LEFT", D: "RIGHT", Q: "2x LEFT", E: "2x RIGHT", W: "NITRO" };
 	const ACT = { A: "left", D: "right", Q: "dashL", E: "dashR", W: "nitro" };
+	const STEPS = [
+		{ text: "STEER", sub: () => (Game.touch.on ? "HOLD LEFT AND RIGHT" : "HOLD " + Game.keyName("left") + " AND " + Game.keyName("right")), keys: ["A", "D"], hold: 0.55 },
+		{ text: "BARREL ROLL", sub: () => (Game.touch.on ? "DOUBLE TAP LEFT OR RIGHT" : Game.keyName("dashL") + " AND " + Game.keyName("dashR") + " THROW YOU TO THE SIDE"), keys: ["Q", "E"] },
+		{ text: "GRAB THE RED FUEL CANS", sub: () => "YOUR TANK EMPTIES ALL THE TIME", fuel: 2 },
+		{ text: "BOOST", sub: () => (Game.touch.on ? "HOLD NITRO" : "HOLD " + Game.keyName("nitro")), keys: ["W"], hold: 0.9 },
+		{ text: "YOU'RE INVINCIBLE WHILE BOOSTING!", sub: () => "FLY STRAIGHT THROUGH DEAD ENDS. BUT IT USES A LOT OF FUEL", hold: 3.4, info: true },
+	];
 
-	let show;
-	async function nextStep(tut) {
-		if (Game.tut !== tut) return;
-		tw(box, 0.25, { GroupTransparency: 1 });
-		await task.wait(0.3);
-		if (Game.tut !== tut) return;
-		tut.step++;
-		if (tut.step > STEPS.length) {
-			Game.tut = null;
+	let tut = null;
+	const fit = () => {
+		const room = Math.min(880, gui.AbsoluteSize.X - 30);
+		head.TextSize = clamp(Math.floor(room / ([...head.Text].length * 0.62)), 18, 44);
+		sub.TextSize = clamp(Math.floor(room / ([...sub.Text].length * 0.55)), 14, 22);
+	};
+
+	const finish = (skipped) => {
+		if (!tut) return;
+		tut = null;
+		Game.tut = null;
+		skip.Visible = false;
+		data.tutDone = true;
+		request("tut_done");
+		if (skipped) {
 			box.Visible = false;
-			data.tutDone = true;
-			request("tut_done");
 			Game.endIntro();
 			return;
 		}
-		show(tut);
-	}
+		// 3 2 1 go, in the same spot
+		const my = runId;
+		for (const c of row_.GetChildren()) if (c.IsA("Frame")) c.Destroy();
+		stepL.Text = "";
+		sub.Text = "";
+		["3", "2", "1", "GO!"].forEach((n, i) =>
+			task.delay(0.3 + i * 0.7, () => {
+				if (runId !== my || mode !== "run") return;
+				head.Text = n;
+				head.TextSize = 80;
+				head.TextColor3 = i === 3 ? GOOD : WHITE;
+				sfx(i === 3 ? "go" : "count", 1 + i * 0.1);
+				if (i === 3) {
+					Game.endIntro();
+					task.delay(0.8, () => {
+						if (tut) return;
+						tw(box, 0.3, { GroupTransparency: 1 });
+						task.delay(0.3, () => {
+							if (!tut) box.Visible = false;
+						});
+					});
+				}
+			})
+		);
+	};
 
-	show = (tut) => {
-		const st = STEPS[tut.step - 1];
+	const show = () => {
+		const st = STEPS[tut.step];
 		for (const c of row_.GetChildren()) if (c.IsA("Frame")) c.Destroy();
 		tut.caps = {};
 		tut.left = 0;
+		tut.got = 0;
 		tut.busy = false;
-		let tx = st.text;
-		if (typeof tx === "function") tx = tx();
-		head.Text = Game.touch.on && st.touch ? st.touch : tx;
-		// one line, always. long ones get smaller so they don't fall onto the keys below
-		const room = Math.min(880, gui.AbsoluteSize.X - 30);
-		head.TextSize = clamp(Math.floor(room / ([...head.Text].length * 0.62)), 18, 44);
+		stepL.Text = tut.step + 1 + " / " + STEPS.length;
+		head.Text = st.text;
+		head.TextColor3 = WHITE;
+		sub.Text = st.sub();
+		fit();
 		for (const k of st.keys || []) {
 			const label = Game.touch.on ? TOUCH[k] : Game.keyName(ACT[k]);
-			const cap = make("Frame", { Size: UO(Math.max(72, [...label].length * 24 + 32), 72), BackgroundColor3: BLACK, BackgroundTransparency: 0.35, Parent: row_ });
+			const cap = make("Frame", { Size: UO(Math.max(72, [...label].length * 24 + 32), 72), BackgroundColor3: BLACK, BackgroundTransparency: 0.35, ClipsDescendants: true, Parent: row_ });
+			const fill = make("Frame", { AnchorPoint: V2(0, 1), Position: U2(0, 0, 1, 0), Size: U2(1, 0, 0, 0), BackgroundColor3: GOOD, BackgroundTransparency: 0.4, BorderSizePixel: 0, Parent: cap });
 			const stroke = make("UIStroke", { Color: WHITE, Thickness: 2, Transparency: 0.3, Parent: cap });
 			const l = text(cap, label, US(1, 1), null, 40, WHITE);
-			tut.caps[k] = { f: cap, stroke, l, sc: make("UIScale", { Parent: cap }) };
+			tut.caps[k] = { f: cap, fill, stroke, l, sc: make("UIScale", { Parent: cap }), p: 0, last: 0 };
 			tut.left++;
 		}
+		if (st.fuel) {
+			const cap = make("Frame", { Size: UO(150, 72), BackgroundColor3: BLACK, BackgroundTransparency: 0.35, Parent: row_ });
+			make("UIStroke", { Color: RGB(255, 70, 55), Thickness: 2, Transparency: 0.3, Parent: cap });
+			tut.fuelL = text(cap, "0 / " + st.fuel, US(1, 1), null, 36, WHITE);
+			fuel = Math.min(fuel, FUEL.max * 0.4);
+			spawnCans();
+		}
 		box.Visible = true;
+		skip.Visible = true;
 		box.GroupTransparency = 1;
-		box.Position = U2(0.5, 0, 0.26, 16);
-		tw(box, 0.35, { GroupTransparency: 0, Position: U2(0.5, 0, 0.26, 0) });
+		box.Position = U2(0.5, 0, 0.2, 16);
+		tw(box, 0.35, { GroupTransparency: 0, Position: U2(0.5, 0, 0.2, 0) });
 		sfx("open");
-		if (st.hold) {
-			const my = tut.step;
+		if (st.info) {
+			const my = tut, at = tut.step;
 			task.delay(st.hold, () => {
-				if (Game.tut === tut && tut.step === my) nextStep(tut);
+				if (tut === my && tut.step === at) next();
 			});
 		}
 	};
 
-	Game.startTut = () => {
-		const tut = { step: 1 };
-		Game.tut = tut;
-		task.delay(0.8, () => {
-			if (Game.tut === tut) show(tut);
-		});
+	const spawnCans = () => {
+		if (!tut || !Game.makePad) return;
+		tut.cansAt = -pos.Z;
+		for (let i = 0; i < 3; i++) Game.makePad("fuel", pos.X + (i - 1) * 6, pos.Z - 170 - i * 70, pickups);
 	};
-	Game.stopTut = () => {
-		Game.tut = null;
-		box.Visible = false;
+
+	const next = async () => {
+		if (!tut || tut.busy) return;
+		tut.busy = true;
+		const my = tut;
+		await task.wait(0.5);
+		if (tut !== my) return;
+		tw(box, 0.25, { GroupTransparency: 1 });
+		await task.wait(0.3);
+		if (tut !== my) return;
+		tut.step++;
+		if (tut.step >= STEPS.length) finish(false);
+		else show();
 	};
-	Game.tutPress = (k) => {
-		const tut = Game.tut;
-		if (!tut || tut.busy || !tut.caps) return;
+
+	const capDone = (k) => {
 		const c = tut.caps[k];
 		if (!c || c.done) return;
 		c.done = true;
 		tut.left--;
+		c.fill.Size = US(1, 1);
 		tw(c.f, 0.2, { BackgroundColor3: GOOD, BackgroundTransparency: 0.05 });
 		c.stroke.Color = GOOD;
 		c.l.TextColor3 = BLACK;
 		c.sc.Scale = 1.25;
 		tw(c.sc, 0.35, { Scale: 1 }, "Back");
 		sfx("good", 1.3 + tut.left * 0.15);
-		if (tut.left <= 0) {
-			tut.busy = true;
-			task.delay(0.7, () => nextStep(tut));
+		if (tut.left <= 0) next();
+	};
+
+	// hold steps fill the key from the bottom while it's down
+	RunService.RenderStepped.Connect((dt) => {
+		if (!tut || tut.busy || !tut.caps) return;
+		const st = STEPS[tut.step];
+		if (st.keys && st.hold) {
+			const now = clock();
+			for (const k of st.keys) {
+				const c = tut.caps[k];
+				if (!c || c.done) continue;
+				const held = now - c.last < 0.6;
+				c.p = Math.max(0, c.p + (held ? dt / st.hold : -dt));
+				c.fill.Size = U2(1, 0, Math.min(1, c.p), 0);
+				if (c.p >= 1) capDone(k);
+			}
 		}
+		// flew past the cans: new ones
+		if (st.fuel && tut.got < st.fuel && !dead && -pos.Z - tut.cansAt > 420) spawnCans();
+	});
+
+	Game.startTut = () => {
+		const t = { step: 0 };
+		tut = t;
+		Game.tut = t;
+		task.delay(0.8, () => {
+			if (tut === t) show();
+		});
+	};
+	Game.stopTut = () => {
+		tut = null;
+		Game.tut = null;
+		box.Visible = false;
+		skip.Visible = false;
+	};
+	task.defer(() => {
+		if (window.__dev) window.__dev.tutStep = (n) => {
+			if (!tut) return;
+			tut.step = n;
+			show();
+		};
+	});
+	Game.tutPress = (k) => {
+		if (!tut || tut.busy || !tut.caps) return;
+		const st = STEPS[tut.step];
+		if (k === "F") {
+			if (!st.fuel) return;
+			tut.got++;
+			tut.fuelL.Text = Math.min(tut.got, st.fuel) + " / " + st.fuel;
+			sfx("good", 1.2 + tut.got * 0.15);
+			if (tut.got >= st.fuel) next();
+			return;
+		}
+		const c = tut.caps[k];
+		if (!c || c.done) return;
+		if (st.hold) c.last = clock();
+		else capDone(k);
 	};
 })();
-
 // ------------------------------------------------------------------ run
 
 function runCoins() {
@@ -9802,6 +10031,7 @@ function collect(p) {
 		fuel = Math.min(FUEL.max, fuel + FUEL.pad);
 		Game.fuelFlash = clock();
 		if (wasEmpty) popup("SAVED", GOOD);
+		if (Game.tut) Game.tutPress("F");
 	} else if (kind === "gem") {
 		sfx("pick_gem");
 		stats.gems++;
@@ -10457,7 +10687,6 @@ function step(dt) {
 	// how long the boost has been held without a break, for the achievements
 	Game.nitroT = nitro ? (Game.nitroT || 0) + dt : 0;
 	if (Game.nitroT >= 5 && Game.ach) Game.ach("hyper");
-	if (Game.nitroT >= 10 && Game.ach) Game.ach("overdrive");
 	devK += ((cheat ? 1 : 0) - devK) * Math.min(1, dt * 3);
 	nitroK += ((nitro ? 1 : 0) - nitroK) * Math.min(1, dt * (nitro ? 4 : 2));
 	speedNow = BASE_SPEED * diff * (Game.flow.tier >= 3 ? 0.75 : 1) * (1 + (FUEL.mult - 1) * nitroK) * (1 + 19 * devK);
@@ -10815,6 +11044,11 @@ RunService.RenderStepped.Connect((dt) => {
 			regenerate(menuX);
 		}
 		camera.CFrame = CFrame.lookAt(V3(menuX, mc.y, menuZ + 40), V3(mc.lookX + Math.sin(clock() * 0.25) * 25, 25, menuZ - 250));
+		return;
+	}
+
+	if (mode === "replay") {
+		Game.replayTick(dt);
 		return;
 	}
 
@@ -12213,7 +12447,7 @@ if (DEV && /^(localhost|127\.0\.0\.1)$/.test(location.hostname)) window.__dev = 
 // ------------------------------------------------------------------ old version warning
 // every build has its own number, the page checks now and then whether a newer one is online
 (() => {
-	const BUILD = "1792668440";
+	const BUILD = "1792671841";
 	if (BUILD.startsWith("__")) return;
 	const bar = make("TextButton", {
 		AnchorPoint: V2(0.5, 0),
@@ -12293,9 +12527,7 @@ if (DEV && /^(localhost|127\.0\.0\.1)$/.test(location.hostname)) window.__dev = 
 		{ id: "level10", name: "DOUBLE DIGITS", desc: "Reach level 10", color: RGB(170, 150, 255) },
 		// versus
 		{ id: "vswin", name: "WINNER WINNER", desc: "Win a versus match", color: COIN },
-		{ id: "vs10", name: "RIVALRY", desc: "Play 10 versus matches", color: KEY },
 		{ id: "hyper", name: "HYPER", desc: "Boost for 5 seconds without letting go", color: RGB(120, 220, 255) },
-		{ id: "overdrive", name: "OVERDRIVE", desc: "Boost for 10 seconds without letting go", color: RGB(255, 120, 60) },
 	];
 	const BY_ID = {};
 	for (const a of LIST) BY_ID[a.id] = a;
@@ -12415,7 +12647,6 @@ if (DEV && /^(localhost|127\.0\.0\.1)$/.test(location.hostname)) window.__dev = 
 			if (R.final[0] && R.final[0].id === Online.myId()) Game.ach("vswin");
 			request("vs_played");
 		}
-		if ((data.vsGames || 0) >= 10) Game.ach("vs10");
 	}, 500);
 
 	// ---------------- the list
@@ -12519,6 +12750,27 @@ const PINK = RGB(255, 70, 170);
 		});
 	};
 
+	// ---------------- a title as a present: the title itself, big, moving, on a glow
+	function titleShow(id, note) {
+		const it = CONFIG.style.title.find((x) => x.id === id);
+		const name = it ? it.name : String(id).toUpperCase();
+		return { head: "YOU GOT A GIFT!", name, label: name, fancy: !!(it && it.fx), glow: true, color: RGB(255, 200, 80), tag: it && it.r >= 5 ? "ONE OF A KIND" : "NEW TITLE", sub: note ? String(note).toUpperCase() : "GLÜCKWUNSCH!", action: ["WEAR IT", () => Game.openBackpack(null, "name")] };
+	}
+	let giftBusy = false;
+	setInterval(() => {
+		const q = data.giftQueue;
+		if (giftBusy || mode !== "menu" || !Array.isArray(q) || !q.length) return;
+		giftBusy = true;
+		const list = q.slice();
+		request("gift_seen");
+		task.delay(0.6, () => {
+			sfx("levelup");
+			for (const g of list) if (g && g.title) Game.reveal(titleShow(g.title, g.note));
+			Game.pushProfile();
+			giftBusy = false;
+		});
+	}, 2000);
+
 	// ---------------- picking up what you paid for
 	function thanks(g) {
 		const paid = g.pack !== "gift" && g.pack !== "lb";
@@ -12533,6 +12785,7 @@ const PINK = RGB(255, 70, 170);
 		if (g.keys) shows.push({ head, name: g.keys === 1 ? "KEY" : "KEYS", icon: "key", count: g.keys, color: KEY, sub });
 		if (g.revives) shows.push({ head, name: g.revives === 1 ? "REVIVE" : "REVIVES", icon: "heart", count: g.revives, color: RGB(255, 100, 130), sub });
 		if (g.casino) shows.push({ head, name: "CASINO", icon: "coin", color: COIN, sub: "TAKE THE RIGHT WAY IN THE CANYON ON YOUR NEXT RUN" });
+		if (g.title) shows.push(titleShow(g.title, g.note));
 		Game.pushProfile();
 		// not in the middle of a run, it waits for the menu
 		const go = () => {
@@ -12551,7 +12804,7 @@ const PINK = RGB(255, 70, 170);
 		if (busy.has(id)) return;
 		busy.add(id);
 		// the worker reads what's in it from the database itself and ticks it off, this is only so it shows right away
-		const [ok] = request("paid", { id, gems: g.gems, coins: g.coins, keys: g.keys, revives: g.revives, skin: g.skin, death: g.death });
+		const [ok] = request("paid", { id, gems: g.gems, coins: g.coins, keys: g.keys, revives: g.revives, skin: g.skin, death: g.death, title: g.title });
 		if (ok) thanks(g);
 	}
 
@@ -12635,7 +12888,7 @@ const PINK = RGB(255, 70, 170);
 // drops a grant for someone, their game picks it up like a purchase. the database only lets the dev account write these
 (() => {
 	if (!DEV) return;
-	const gp = panel("gift", "GIVE SOMEONE STUFF", UO(640, 630));
+	const gp = panel("gift", "GIVE SOMEONE STUFF", UO(640, 700));
 	function box(parent, ph, size, pos) {
 		const b = make("TextBox", { Size: size, Position: pos, BackgroundColor3: BLACK, BackgroundTransparency: 0.2, PlaceholderText: ph, Text: "", Font: FONT, TextSize: 22, TextColor3: WHITE, Parent: parent });
 		return b;
@@ -12661,6 +12914,7 @@ const PINK = RGB(255, 70, 170);
 	}
 	const skin = picker("SKIN", CONFIG.skins.filter((x) => x.id !== "Default"));
 	const death = picker("DEATH", CONFIG.deaths.filter((x) => x.id !== "Default"));
+	const title = picker("TITLE", CONFIG.style.title.slice().sort((a, b) => b.r - a.r));
 	const r5 = row(gp.body, 64, 1);
 	const note = box(r5, "MESSAGE (OPTIONAL)", U2(1, -10, 0, 54), UO(0, 5));
 	note.el.maxLength = 80;
@@ -12692,6 +12946,7 @@ const PINK = RGB(255, 70, 170);
 		}
 		if (skin()) g.skin = skin();
 		if (death()) g.death = death();
+		if (title()) g.title = title();
 		if (casino) g.casino = true;
 		if (note.Text.trim()) g.note = note.Text.trim();
 		if (Object.keys(g).length <= 3) return notify("pick something to give", BAD);
@@ -13491,7 +13746,8 @@ const PINK = RGB(255, 70, 170);
 .cas-side h3 { margin:0; font-size:15px; letter-spacing:1px; color:#ffd77a; font-weight:800; white-space:pre; }
 .cas-row { display:flex; gap:8px; } .cas-row > * { flex:1; }
 .cas-tab { padding:9px 0; font-size:18px; } .cas-tab.on { background:#fff; color:#12081c; border-color:#fff; }
-.cas-amt { font-size:44px; font-weight:900; text-align:center; background:#000a; border-radius:14px; padding:6px; border:2px solid #ffffff22; }
+.cas-amt { font-size:44px; font-weight:900; text-align:center; background:#000a; border-radius:14px; padding:6px; border:2px solid #ffffff22; color:inherit; font-family:inherit; width:100%; min-width:0; box-sizing:border-box; outline:none; cursor:text; }
+.cas-amt:focus { border-color:#ffd35a; background:#000c; }
 .cas-small { font-size:14px; padding:8px 0; }
 .cas-arow { align-items:stretch; } .cas-arow .cas-amt { flex:3; font-size:38px; } .cas-pm { flex:1; font-size:30px; padding:0; }
 .cas-btn.go, .cas-btn.cash { font-size:24px; }
@@ -13858,7 +14114,12 @@ const PINK = RGB(255, 70, 170);
 		const head2 = h("h3", null, (single ? "1" : "2") + "   HOW MANY POINTS?", side);
 		const arow = h("div", "cas-row cas-arow", null, side);
 		const minus = h("button", "cas-btn cas-pm", "−", arow);
-		const amt = h("div", "cas-amt", "", arow);
+		// you can type your own number. anything too big, too small or not a number gets fixed when you're done
+		const amt = h("input", "cas-amt", null, arow);
+		amt.type = "text";
+		amt.inputMode = "numeric";
+		amt.autocomplete = "off";
+		amt.spellcheck = false;
 		const plus = h("button", "cas-btn cas-pm", "+", arow);
 		const row = h("div", "cas-row", null, side);
 		const set = (v) => {
@@ -13873,6 +14134,29 @@ const PINK = RGB(255, 70, 170);
 			const a = bet.amt[bet.cur], m = lim().min[bet.cur];
 			return a >= m * 100 ? m * 20 : a >= m * 20 ? m * 10 : a >= m * 4 ? m * 2 : m;
 		};
+		amt.addEventListener("focus", () => {
+			if (api.locked) return amt.blur();
+			amt.value = String(bet.amt[bet.cur]);
+			amt.select();
+		});
+		amt.addEventListener("input", () => {
+			const clean = amt.value.replace(/[^0-9]/g, "").slice(0, 10);
+			if (clean !== amt.value) amt.value = clean;
+		});
+		const typed = () => {
+			const v = parseInt(amt.value.replace(/[^0-9]/g, ""), 10);
+			if (Number.isFinite(v)) set(v);
+			else api.draw();
+		};
+		amt.addEventListener("keydown", (e) => {
+			e.stopPropagation();
+			if (e.key === "Enter") amt.blur();
+			if (e.key === "Escape") {
+				amt.value = "";
+				amt.blur();
+			}
+		});
+		amt.addEventListener("blur", typed);
 		click(minus, () => set(bet.amt[bet.cur] - stepOf()));
 		click(plus, () => set(bet.amt[bet.cur] + stepOf()));
 		click(h("button", "cas-btn cas-small", "LEAST", row), () => set(0));
@@ -13886,7 +14170,7 @@ const PINK = RGB(255, 70, 170);
 			draw() {
 				if (!BETS().includes(bet.cur)) bet.cur = BETS()[0];
 				for (const c of BETS()) tabB[c].classList.toggle("on", c === bet.cur);
-				amt.textContent = fmt(bet.amt[bet.cur]) + " " + SYM[bet.cur];
+				if (document.activeElement !== amt) amt.value = fmt(bet.amt[bet.cur]) + " " + SYM[bet.cur];
 				amt.className = "cas-amt c-" + bet.cur;
 				if (onChange) onChange();
 			},
@@ -14721,4 +15005,811 @@ const PINK = RGB(255, 70, 170);
 		openCash(true);
 	});
 	if (window.__dev) window.__dev.casino = () => Game.casino.enter();
+})();
+// ------------------------------------------------------------------ replays
+// every run gets recorded: where the plane was five times a second, which world it flew through and what happened.
+// only your best run is kept online, packed small, and only downloaded when someone presses play
+const Replay = (() => {
+	const HZ = 5, STEP = 1 / HZ, MAX = 30 * 60 * HZ;
+	const ICON = { m: "⚑", c: "⚡", x: "✖", r: "♥", b: "☠", g: "◇", p: "✈" };
+	const ICON_C = { m: "#ffffff", c: "#ffd35a", x: "#ff4a5a", r: "#ff7aa8", b: "#c27aff", g: "#5fdcff", p: "#9dff8a" };
+	const ICON_N = { m: "MAP", c: "NEAR MISS", x: "CRASH", r: "REVIVE", b: "BOSS DOWN", g: "GLASS", p: "PLANE" };
+
+	// ---------------- packing: numbers become small deltas, deltas become a few bytes, bytes get gzipped
+	function varints(nums) {
+		const out = [];
+		for (let v of nums) {
+			v = v < 0 ? -v * 2 - 1 : v * 2;
+			while (v >= 128) {
+				out.push((v % 128) | 128);
+				v = Math.floor(v / 128);
+			}
+			out.push(v);
+		}
+		return new Uint8Array(out);
+	}
+	function unvarints(bytes) {
+		const out = [];
+		let v = 0, mul = 1;
+		for (const b of bytes) {
+			v += (b & 127) * mul;
+			if (b & 128) mul *= 128;
+			else {
+				out.push(v % 2 ? -(v + 1) / 2 : v / 2);
+				v = 0;
+				mul = 1;
+			}
+		}
+		return out;
+	}
+	async function pipe(bytes, stream) {
+		const r = new Response(new Blob([bytes]).stream().pipeThrough(stream));
+		return new Uint8Array(await r.arrayBuffer());
+	}
+	const b64 = (u8) => {
+		let s = "";
+		for (let i = 0; i < u8.length; i += 0x8000) s += String.fromCharCode.apply(null, u8.subarray(i, i + 0x8000));
+		return btoa(s);
+	};
+	const unb64 = (s) => Uint8Array.from(atob(s), (c) => c.charCodeAt(0));
+	async function pack(rec) {
+		const n = rec.x.length, nums = [];
+		let px = 0, py = 0, pd = 0, ps = 0;
+		for (let i = 0; i < n; i++) {
+			nums.push(rec.x[i] - px, rec.y[i] - py, rec.d[i] - pd, rec.s[i] - ps);
+			px = rec.x[i];
+			py = rec.y[i];
+			pd = rec.d[i];
+			ps = rec.s[i];
+		}
+		let bytes = varints(nums), gz = 0;
+		if (typeof CompressionStream === "function") {
+			try {
+				bytes = await pipe(bytes, new CompressionStream("gzip"));
+				gz = 1;
+			} catch (e) {}
+		}
+		return { v: 1, hz: rec.hz, n, gz, d: b64(bytes), e: rec.ev };
+	}
+	async function unpack(p) {
+		let bytes = unb64(p.d);
+		if (p.gz) bytes = await pipe(bytes, new DecompressionStream("gzip"));
+		const nums = unvarints(bytes);
+		const x = [], y = [], d = [], s = [];
+		let px = 0, py = 0, pd = 0, ps = 0;
+		for (let i = 0; i + 3 < nums.length; i += 4) {
+			px += nums[i];
+			py += nums[i + 1];
+			pd += nums[i + 2];
+			ps += nums[i + 3];
+			x.push(px / 2);
+			y.push(py / 2);
+			d.push(pd);
+			s.push(ps);
+		}
+		return { hz: p.hz || HZ, x, y, d, s, ev: Array.isArray(p.e) ? p.e : [] };
+	}
+
+	// ---------------- recording
+	let rec = null, acc = 0, last = null, lastDone = null;
+	const snap = () => ({ sh: Game.shift || 0, ie: Game.introEnd === Infinity ? -1 : Game.introEnd == null ? null : Game.introEnd, bs: beyondStart, ms: Game.marks.sea == null ? null : Game.marks.sea, mf: Game.marks.final == null ? null : Game.marks.final, sr: Game.safeRow == null ? null : Game.safeRow });
+	Game.onRegen = (w) => {
+		if (!rec) return;
+		rec.ev.push([rec.x.length, "w", w]);
+	};
+	function begin() {
+		rec = { hz: HZ, x: [], y: [], d: [], s: [], ev: [] };
+		acc = 0;
+		last = null;
+	}
+	function sample() {
+		const i = rec.x.length;
+		if (i >= MAX) return;
+		rec.x.push(Math.round(pos.X * 2));
+		rec.y.push(Math.round(pos.Y * 2));
+		rec.d.push(Math.round(-pos.Z));
+		rec.s.push(Math.floor((stats.dist || 0) + (Game.scoreFrom || 0)));
+		const now = { st: curStage, c: stats.close || 0, g: stats.glass || 0, b: stats.bosses || 0, r: stats.revives || 0, dead, sk: Game.planeSkin, k: snap() };
+		const p = last;
+		if (!p || JSON.stringify(now.k) !== JSON.stringify(p.k)) rec.ev.push([i, "k", now.k]);
+		if (!p || now.sk !== p.sk) rec.ev.push([i, "p", now.sk || "Default"]);
+		if (p) {
+			if (now.st && now.st !== p.st) rec.ev.push([i, "m", now.st]);
+			if (now.c > p.c) rec.ev.push([i, "c"]);
+			if (now.g > p.g) rec.ev.push([i, "g", now.g - p.g]);
+			if (now.b > p.b) rec.ev.push([i, "b"]);
+			if (now.r > p.r) rec.ev.push([i, "r"]);
+			if (now.dead && !p.dead) rec.ev.push([i, "x"]);
+		} else if (now.st) rec.ev.push([i, "m", now.st]);
+		last = now;
+	}
+	RunService.RenderStepped.Connect((dt) => {
+		if (!rec || mode !== "run" || Game.race) return;
+		acc += Math.min(dt, 0.1);
+		while (acc >= STEP) {
+			acc -= STEP;
+			sample();
+		}
+	});
+	// wrap the start and the end of a run
+	const startPlain = startRun;
+	startRun = (id) => {
+		if (!Game.race) begin();
+		else rec = null;
+		startPlain(id);
+	};
+	const requestPlain = request;
+	request = (a, b) => {
+		const r = requestPlain(a, b);
+		if (a === "run_end" && rec) {
+			const done = rec;
+			rec = null;
+			lastDone = done;
+			const award = r && r[0] && typeof r[1] === "object" ? r[1] : null;
+			const score = award ? (award.score != null ? award.score : award.dist) : 0;
+			if (award && score > 0 && score > (b && b.prevBest != null ? b.prevBest : 0) && done.x.length > 10) upload(done, score);
+		}
+		return r;
+	};
+	async function upload(done, score) {
+		if (!Online.enabled() || !Online.account()) return;
+		// a really long run gets thinned out instead of cut off
+		while (done.x.length > MAX / 2) {
+			for (const k of ["x", "y", "d", "s"]) done[k] = done[k].filter((_, i) => i % 2 === 0);
+			done.ev = done.ev.map(([i, t, a]) => [Math.floor(i / 2), t, a]);
+			done.hz /= 2;
+		}
+		try {
+			const p = await pack(done);
+			p.sc = score;
+			p.nm = Online.account();
+			p.at = Online.SERVER_TIME;
+			await Online.put("replays/" + Online.myId(), p);
+			await Online.put(`players/${Online.myId()}/rp`, score);
+		} catch (e) {}
+	}
+
+	// ---------------- watching
+	let R = null;
+	const css = document.createElement("style");
+	css.textContent = `
+.rp-ui { position: fixed; inset: 0; z-index: 9000; pointer-events: none; font: 700 15px system-ui, sans-serif; color: #fff; }
+.rp-top { position: absolute; top: 16px; left: 50%; translate: -50% 0; display: flex; gap: 14px; align-items: center; background: #0b0d14d0; border: 1px solid #ffffff22; padding: 10px 18px; border-radius: 14px; pointer-events: auto; }
+.rp-top .rp-rec { color: #ff4a5a; letter-spacing: 2px; } .rp-top .rp-name { font-size: 20px; } .rp-top .rp-best { color: #ffd35a; }
+.rp-x { border: 0; background: #ffffff1a; color: #fff; border-radius: 8px; width: 32px; height: 32px; font: 800 16px system-ui; cursor: pointer; }
+.rp-dist { position: absolute; top: 76px; left: 50%; translate: -50% 0; text-align: center; text-shadow: 0 2px 10px #000; }
+.rp-dist b { display: block; font-size: 44px; } .rp-dist span { color: #ffffffb0; letter-spacing: 2px; }
+.rp-bar { position: absolute; left: 24px; right: 24px; bottom: 20px; background: #0b0d14e0; border: 1px solid #ffffff22; border-radius: 16px; padding: 12px 16px 14px; pointer-events: auto; }
+.rp-row { display: flex; align-items: center; gap: 10px; margin-bottom: 10px; }
+.rp-btn { border: 0; background: #ffffff1a; color: #fff; border-radius: 9px; height: 34px; min-width: 42px; padding: 0 12px; font: 800 15px system-ui; cursor: pointer; }
+.rp-btn:hover { background: #ffffff33; } .rp-btn.on { background: #ffd35a; color: #000; }
+.rp-time { font-variant-numeric: tabular-nums; color: #ffffffcc; } .rp-stage { margin-left: auto; color: #5fdcff; letter-spacing: 1px; }
+.rp-track { position: relative; height: 34px; cursor: pointer; touch-action: none; }
+.rp-rail { position: absolute; left: 0; right: 0; top: 22px; height: 6px; border-radius: 3px; background: #ffffff22; overflow: hidden; }
+.rp-fill { height: 100%; background: linear-gradient(90deg, #5fdcff, #c27aff); width: 0; }
+.rp-maps { position: absolute; left: 0; right: 0; top: 22px; height: 6px; }
+.rp-maps i { position: absolute; top: 0; bottom: 0; border-left: 2px solid #ffffff88; }
+.rp-ev { position: absolute; top: 0; translate: -50% 0; font-size: 14px; line-height: 16px; text-shadow: 0 0 6px #000; cursor: pointer; }
+.rp-head { position: absolute; top: 15px; width: 14px; height: 20px; translate: -50% 0; border-radius: 5px; background: #fff; box-shadow: 0 0 10px #fff8; }
+.rp-legend { display: flex; flex-wrap: wrap; gap: 14px; margin-top: 8px; color: #ffffff99; font-size: 12px; }
+.rp-tip { position: absolute; bottom: 40px; translate: -50% 0; background: #000d; padding: 4px 8px; border-radius: 6px; white-space: nowrap; font-size: 12px; pointer-events: none; }
+`;
+	document.head.appendChild(css);
+	const fmtT = (s) => Math.floor(s / 60) + ":" + String(Math.floor(s % 60)).padStart(2, "0");
+	const MOOD = {
+		city: [0.3, RGB(30, 30, 70), RGB(150, 150, 195), 0.25], traffic: [17.7, RGB(240, 150, 95)], desert: [11, RGB(240, 215, 170)],
+		volcano: [17.4, RGB(130, 60, 40), RGB(210, 140, 115)], glacier: [12, RGB(176, 204, 232), RGB(190, 205, 230)], ruins: [15.2, RGB(232, 204, 156)],
+		windfarm: [13, RGB(190, 220, 240), RGB(170, 180, 190)], sky: [11, RGB(184, 212, 248), RGB(190, 200, 215)], factory: [16, RGB(150, 152, 160), RGB(150, 150, 160)],
+		neon: [0.4, RGB(60, 20, 90), RGB(160, 120, 220), 0.3],
+	};
+	function moodFor(st) {
+		if (st === "beyond") return Game.space();
+		const m = MOOD[st];
+		if (m) Game.mood(m[0], m[1], 1.5, m[2], m[3]);
+		else if (st === "sea" || st === "boss2") Game.mood(Game.sky.clock, RGB(170, 200, 230), 1.5);
+		else Game.daySky(1.5);
+	}
+	const at = (list, i) => {
+		let v = null;
+		for (const e of list) {
+			if (e[0] > i) break;
+			v = e;
+		}
+		return v;
+	};
+
+	async function play(uid, name, given) {
+		if (mode !== "menu") return;
+		let p = given;
+		if (!p) {
+			notify("loading the replay…", WHITE);
+			try {
+				p = await Online.get("replays/" + uid);
+			} catch (e) {}
+		}
+		if (!p || typeof p.d !== "string") return notify("no replay for this one", BAD);
+		let r;
+		try {
+			r = await unpack(p);
+		} catch (e) {
+			return notify("this replay is broken", BAD);
+		}
+		if (r.x.length < 2) return notify("this replay is empty", BAD);
+		closePanels();
+		R = { ...r, name: p.nm || name || "?", best: p.sc || r.s[r.s.length - 1], t: 0, speed: 1, playing: true, world: null, stage: null, skin: null, len: (r.x.length - 1) / r.hz };
+		R.worlds = R.ev.filter((e) => e[1] === "w");
+		R.snaps = R.ev.filter((e) => e[1] === "k");
+		R.skins = R.ev.filter((e) => e[1] === "p");
+		mode = "replay";
+		menu.Visible = false;
+		wallet.Visible = false;
+		hud.Visible = false;
+		results.Visible = false;
+		Missiles.clear();
+		for (const k in Game.marks) delete Game.marks[k];
+		buildUI();
+		seek(0, true);
+	}
+	function applyAt(i, force) {
+		const w = at(R.worlds, i);
+		const wk = w ? JSON.stringify(w[2]) : "none";
+		const s = at(R.snaps, i);
+		if (s) {
+			const k = s[2];
+			Game.shiftStages(k.sh || 0);
+			Game.introEnd = k.ie === -1 ? Infinity : k.ie;
+			beyondStart = k.bs;
+			if (k.ms == null) delete Game.marks.sea;
+			else Game.marks.sea = k.ms;
+			if (k.mf == null) delete Game.marks.final;
+			else Game.marks.final = k.mf;
+			Game.safeRow = k.sr == null ? null : k.sr;
+		}
+		if (force || wk !== R.world) {
+			R.world = wk;
+			Game.replayWorld = w ? w[2] : null;
+			Game.loop = w && w[2].loop ? w[2].loop : 0;
+			regenerate(R.x[i], -R.d[i]);
+			Game.replayWorld = null;
+			R.stage = null;
+		}
+		const sk = at(R.skins, i);
+		const skin = sk ? sk[2] : "Default";
+		if (skin !== R.skin || !planeModel || !planeModel.Parent) {
+			R.skin = skin;
+			buildPlane(skin);
+		}
+	}
+	function seek(t, force) {
+		R.t = clamp(t, 0, R.len);
+		const i = Math.floor(R.t * R.hz);
+		applyAt(i, force);
+		Game.cam.last = null;
+		Game.cam.blend = null;
+		R.camPos = null;
+		frame(0);
+		if (Game.flushChunks) Game.flushChunks();
+	}
+	function frame(dt) {
+		const f = R.t * R.hz, i = Math.min(Math.floor(f), R.x.length - 2), k = clamp(f - i, 0, 1);
+		const big = Math.abs(R.d[i + 1] - R.d[i]) > 600;
+		const x = R.x[i] + (R.x[i + 1] - R.x[i]) * k, y = R.y[i] + (R.y[i + 1] - R.y[i]) * k;
+		const d = big ? R.d[i] : R.d[i] + (R.d[i + 1] - R.d[i]) * k;
+		const vxe = (R.x[i + 1] - R.x[i]) * R.hz;
+		applyAt(i, false);
+		pos = V3(x, y, -d);
+		runTime = R.t;
+		const [st] = stageFor(d);
+		if (st !== R.stage) {
+			R.stage = st;
+			curStage = st;
+			moodFor(st);
+		}
+		if (planeMain) planeMain.CFrame = CFrame.fromPos(pos).mul(Ang(0, 0, -clamp(vxe / 60, -1, 1) * 0.6));
+		trackChunks(pos.X, pos.Z);
+		updateMovers();
+		updatePads(pos.Y, pos.Z);
+		const want = CFrame.lookAt(pos.add(V3(0, 10, 28)), pos.add(V3(0, 2, -60)));
+		R.camPos = R.camPos && !big ? R.camPos.Lerp(want, Math.min(1, dt * 6)) : want;
+		camera.CFrame = R.camPos;
+		draw();
+	}
+	Game.replayTick = (dt) => {
+		if (!R) return;
+		if (R.playing && !R.drag) {
+			R.t += dt * R.speed;
+			if (R.t >= R.len) {
+				R.t = R.len;
+				R.playing = false;
+			}
+		}
+		frame(dt);
+	};
+	Game.playReplay = play;
+
+	// ---------------- the bar at the bottom
+	let ui = null;
+	function stop() {
+		if (!R) return;
+		R = null;
+		if (ui) ui.root.remove();
+		ui = null;
+		removeEventListener("keydown", onKey, true);
+		toMenu();
+	}
+	function onKey(e) {
+		if (!R) return;
+		if (e.key === "Escape") stop();
+		else if (e.key === " ") {
+			R.playing = !R.playing;
+			if (R.playing && R.t >= R.len) seek(0);
+		} else if (e.key === "ArrowRight") seek(R.t + 5);
+		else if (e.key === "ArrowLeft") seek(R.t - 5);
+		else return;
+		e.preventDefault();
+		e.stopPropagation();
+	}
+	function buildUI() {
+		const root = document.createElement("div");
+		root.className = "rp-ui";
+		const esc = (s) => String(s).replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[c]);
+		root.innerHTML = `<div class="rp-top"><span class="rp-rec">● REPLAY</span><span class="rp-name">${esc(String(R.name).toUpperCase())}</span><span class="rp-best">BEST ${fmt(R.best)}</span><button class="rp-x" title="close (esc)">✕</button></div>
+<div class="rp-dist"><b>0</b><span></span></div>
+<div class="rp-bar"><div class="rp-row"><button class="rp-btn rp-play">❚❚</button><button class="rp-btn rp-back">-5S</button><button class="rp-btn rp-fwd">+5S</button><span class="rp-speeds"></span><span class="rp-time"></span><span class="rp-stage"></span></div>
+<div class="rp-track"><div class="rp-rail"><div class="rp-fill"></div></div><div class="rp-maps"></div><div class="rp-evs"></div><div class="rp-head"></div></div>
+<div class="rp-legend"></div></div>`;
+		document.body.appendChild(root);
+		const $ = (s) => root.querySelector(s);
+		ui = { root, dist: $(".rp-dist b"), stage: $(".rp-dist span"), time: $(".rp-time"), st2: $(".rp-stage"), fill: $(".rp-fill"), head: $(".rp-head"), play: $(".rp-play"), track: $(".rp-track") };
+		$(".rp-x").onclick = stop;
+		ui.play.onclick = () => {
+			R.playing = !R.playing;
+			if (R.playing && R.t >= R.len) seek(0);
+		};
+		$(".rp-back").onclick = () => seek(R.t - 5);
+		$(".rp-fwd").onclick = () => seek(R.t + 5);
+		const sp = $(".rp-speeds");
+		ui.speedB = [];
+		for (const v of [0.5, 1, 2, 4]) {
+			const b = document.createElement("button");
+			b.className = "rp-btn";
+			b.textContent = v + "X";
+			b.onclick = () => (R.speed = v);
+			sp.appendChild(b);
+			ui.speedB.push([v, b]);
+		}
+		// the markers: where each map starts, and everything that happened
+		const pct = (i) => (i / Math.max(1, R.x.length - 1)) * 100 + "%";
+		const maps = $(".rp-maps"), evs = $(".rp-evs");
+		const counts = {};
+		let lastPx = {};
+		for (const [i, t, a] of R.ev) {
+			if (!ICON[t] || (t === "p" && i === 0)) continue;
+			counts[t] = (counts[t] || 0) + 1;
+			if (t === "m") {
+				const m = document.createElement("i");
+				m.style.left = pct(i);
+				maps.appendChild(m);
+			}
+			// don't stack the same icon on top of itself
+			const px = Math.round((i / R.x.length) * 400);
+			if (lastPx[t] === px && t !== "m") continue;
+			lastPx[t] = px;
+			const e = document.createElement("span");
+			e.className = "rp-ev";
+			e.textContent = ICON[t];
+			e.style.left = pct(i);
+			e.style.color = ICON_C[t];
+			e.title = ICON_N[t] + (t === "m" ? ": " + stageName(a) : t === "p" ? ": " + niceName(a) : "") + "  " + fmtT(i / R.hz);
+			e.onclick = (ev) => {
+				ev.stopPropagation();
+				seek(Math.max(0, i / R.hz - 1.5));
+				R.playing = true;
+			};
+			evs.appendChild(e);
+		}
+		$(".rp-legend").innerHTML = Object.keys(ICON).filter((t) => counts[t]).map((t) => `<span><b style="color:${ICON_C[t]}">${ICON[t]}</b> ${ICON_N[t]} ${counts[t]}</span>`).join("") + `<span style="margin-left:auto">SPACE PLAY/PAUSE   ← → 5S   ESC CLOSE</span>`;
+		// drag anywhere on the track to scrub
+		const tr = ui.track;
+		const toT = (e) => {
+			const b = tr.getBoundingClientRect();
+			return clamp((e.clientX - b.left) / b.width, 0, 1) * R.len;
+		};
+		tr.addEventListener("pointerdown", (e) => {
+			R.drag = true;
+			tr.setPointerCapture(e.pointerId);
+			seek(toT(e));
+		});
+		tr.addEventListener("pointermove", (e) => {
+			if (R && R.drag) seek(toT(e));
+		});
+		const up = () => R && (R.drag = false);
+		tr.addEventListener("pointerup", up);
+		tr.addEventListener("pointercancel", up);
+		addEventListener("keydown", onKey, true);
+	}
+	function draw() {
+		if (!ui) return;
+		const k = R.t / Math.max(0.001, R.len);
+		ui.fill.style.width = k * 100 + "%";
+		ui.head.style.left = k * 100 + "%";
+		const i = Math.min(Math.floor(R.t * R.hz), R.s.length - 1);
+		ui.dist.textContent = fmt(R.s[i] || 0);
+		ui.stage.textContent = R.stage ? stageName(R.stage) : "";
+		ui.st2.textContent = R.stage ? stageName(R.stage) : "";
+		ui.time.textContent = fmtT(R.t) + " / " + fmtT(R.len);
+		ui.play.textContent = R.playing ? "❚❚" : "▶";
+		for (const [v, b] of ui.speedB) b.classList.toggle("on", v === R.speed);
+	}
+	if (window.__dev) window.__dev.menu = () => toMenu();
+	if (window.__dev) window.__dev.replayLast = async () => lastDone && play(null, "TEST", Object.assign(await pack(JSON.parse(JSON.stringify(lastDone))), { sc: lastDone.s[lastDone.s.length - 1] }));
+	return { play, active: () => !!R };
+})();
+// ------------------------------------------------------------------ new best: your card flies up the leaderboard past everyone you just beat
+(() => {
+	const css = document.createElement("style");
+	css.textContent = `
+.rf-wrap { position: fixed; right: 28px; top: 50%; width: 360px; height: 330px; translate: 0 -50%; z-index: 60; pointer-events: none; font: 800 16px "Highway", system-ui, sans-serif; color: #fff; }
+.rf-head { position: absolute; top: -34px; left: 0; right: 0; text-align: center; letter-spacing: 3px; color: #ffd35a; font-size: 14px; opacity: 0; transition: opacity .4s; }
+.rf-win { position: absolute; inset: 0; overflow: hidden; border-radius: 0; -webkit-mask-image: linear-gradient(transparent, #000 18%, #000 82%, transparent); mask-image: linear-gradient(transparent, #000 18%, #000 82%, transparent); }
+.rf-list { position: absolute; left: 0; right: 0; top: 0; }
+.rf-card { position: absolute; left: 10px; right: 10px; height: 54px; display: flex; align-items: center; gap: 12px; padding: 0 14px; border-radius: 0; background: #000000a6; border: 0; box-sizing: border-box; transition: background .3s, opacity .3s, scale .3s, translate .3s, top .28s cubic-bezier(.3,1.4,.5,1); }
+.rf-card .rk { width: 46px; color: #ffffff88; font-variant-numeric: tabular-nums; }
+.rf-card .nm { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.rf-card .sc { font-variant-numeric: tabular-nums; color: #ffffffcc; }
+.rf-card.beat { background: #000000a6; color: #ff6a6a; opacity: .55; translate: 18px 0; scale: .96; }
+.rf-me { position: absolute; left: 4px; right: 4px; height: 60px; display: flex; align-items: center; gap: 12px; padding: 0 16px; border-radius: 0; box-sizing: border-box; z-index: 2; background: #000000e0; color: #ffd35a; box-shadow: inset 0 0 0 2px #ffd35a; }
+.rf-me .rk { width: 46px; font-variant-numeric: tabular-nums; } .rf-me .nm { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 18px; } .rf-me .sc { font-variant-numeric: tabular-nums; font-size: 18px; }
+.rf-trail { position: absolute; left: 20px; right: 20px; height: 60px; background: linear-gradient(#ffd35a00, #ffd35a33); filter: blur(6px); z-index: 1; opacity: 0; }
+@media (max-width: 900px) { .rf-wrap { right: auto; left: 50%; top: auto; bottom: 12px; translate: -50% 0; width: min(360px, 92vw); height: 200px; } .rf-head { top: -26px; } }
+.rf-up { position: absolute; right: 18px; top: -18px; background: #000; color: #5dff8a; padding: 2px 8px; border-radius: 0; font-size: 13px; opacity: 0; transition: opacity .3s; }
+`;
+	document.head.appendChild(css);
+	const esc = (s) => String(s).replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[c]);
+	const ROW = 62;
+	const de = Game.lang === "de";
+	let busy = false;
+
+	Game.rankFly = async (prevBest, score, fake) => {
+		if (busy || (!fake && !Online.enabled()) || !(score > 0)) return;
+		busy = true;
+		let top = fake || [];
+		if (!fake) {
+			try {
+				top = await Online.top(300);
+			} catch (e) {}
+		}
+		let me = null;
+		try {
+			me = Online.myId();
+		} catch (e) {}
+		const others = (top || []).filter((e) => e.id !== me && (e.best || 0) > 0).sort((a, b) => b.best - a.best);
+		// where you stood before and where you stand now
+		const oldIdx = prevBest > 0 ? others.filter((e) => e.best > prevBest).length : others.length;
+		const newIdx = others.filter((e) => e.best > score).length;
+		const passed = Math.max(0, oldIdx - newIdx);
+		const skip = Math.max(0, passed - 40);
+		if (mode === "replay") {
+			busy = false;
+			return;
+		}
+		const wrap = document.createElement("div");
+		wrap.className = "rf-wrap";
+		wrap.innerHTML = `<div class="rf-head">${passed > 0 ? (de ? passed + " SPIELER ÜBERHOLT" : Game.tr("YOU PASSED " + passed + (passed === 1 ? " PLAYER" : " PLAYERS"))) : Game.tr("NEW BEST")}</div><div class="rf-win"><div class="rf-list"></div><div class="rf-trail"></div><div class="rf-me"><span class="rk"></span><span class="nm"></span><span class="sc"></span><span class="rf-up"></span></div></div>`;
+		document.body.appendChild(wrap);
+		const list = wrap.querySelector(".rf-list"), meEl = wrap.querySelector(".rf-me"), trail = wrap.querySelector(".rf-trail");
+		const H = wrap.clientHeight || 330, mid = H / 2 - 30;
+		// the cards from just above your new spot to just below your old one
+		const from = Math.max(0, newIdx - 1), to = Math.min(others.length, oldIdx + 1, newIdx + 44);
+		const cards = [];
+		for (let i = from; i < to; i++) {
+			const e = others[i];
+			const c = document.createElement("div");
+			c.className = "rf-card";
+			const rank = i + 1 + (i >= oldIdx ? 1 : 0);
+			c.innerHTML = `<span class="rk">#${rank}</span><span class="nm">${esc(String(e.name || "?").toUpperCase())}</span><span class="sc">${fmt(e.best)}</span>`;
+			// the spot you leave stays open at first
+			const slot = i < oldIdx ? i : i + 1;
+			c.style.top = (slot - from) * ROW + 3 + "px";
+			list.appendChild(c);
+			cards.push({ c, i, e });
+		}
+		const name = String(Online.account() || "YOU").toUpperCase();
+		meEl.querySelector(".nm").textContent = name;
+		const rkL = meEl.querySelector(".rk"), scL = meEl.querySelector(".sc"), up = meEl.querySelector(".rf-up");
+		rkL.textContent = prevBest > 0 ? "#" + (oldIdx + 1) : de ? "NEU" : Game.tr("NEW");
+		scL.textContent = fmt(prevBest || 0);
+		// the camera follows your card: list moves, your card stays roughly in the middle
+		const listY = (slotRow) => mid - (slotRow - from) * ROW;
+		let cur = oldIdx;
+		list.style.transform = `translateY(${listY(oldIdx)}px)`;
+		meEl.style.top = mid + "px";
+		trail.style.top = mid + "px";
+		wrap.animate([{ opacity: 0, scale: 0.9 }, { opacity: 1, scale: 1 }], { duration: 400, easing: "cubic-bezier(.2,1.2,.4,1)", fill: "forwards" });
+		wrap.querySelector(".rf-head").style.opacity = 1;
+		const wait = (ms) => new Promise((r) => setTimeout(r, ms));
+		await wait(700);
+		// lift off
+		meEl.animate([{ scale: 1 }, { scale: 1.08 }], { duration: 250, fill: "forwards", easing: "ease-out" });
+		sfx("whoosh", 1.2);
+		scL.textContent = fmt(score);
+		await wait(300);
+		const per = Math.min(330, Math.max(55, 2400 / (passed - skip)));
+		trail.style.opacity = 0.9;
+		if (skip) {
+			cur = newIdx + 40;
+			list.style.transform = `translateY(${listY(cur)}px)`;
+			for (const x of cards) if (x.i >= cur) {
+				x.c.classList.add("beat");
+				x.c.style.top = (x.i + 1 - from) * ROW + 3 + "px";
+				x.c.querySelector(".rk").textContent = "#" + (x.i + 2);
+			}
+		}
+		for (let k = skip; k < passed; k++) {
+			cur--;
+			list.animate([{ transform: `translateY(${listY(cur + 1)}px)` }, { transform: `translateY(${listY(cur)}px)` }], { duration: per, easing: "cubic-bezier(.4,0,.2,1)", fill: "forwards" });
+			const passedCard = cards.find((x) => x.i === cur);
+			setTimeout(() => {
+				if (!passedCard) return;
+				passedCard.c.classList.add("beat");
+				passedCard.c.style.top = (passedCard.i + 1 - from) * ROW + 3 + "px";
+				// everyone you pass drops one place
+				const rk = passedCard.c.querySelector(".rk");
+				rk.textContent = "#" + (passedCard.i + 2);
+				rkL.textContent = "#" + (passedCard.i + 1);
+			}, per * 0.55);
+			if (k < 14 || k % 4 === 0) sfx("tick", 1 + Math.min(k, 20) * 0.04);
+			await wait(per);
+		}
+		trail.style.opacity = 0;
+		// slot in
+		meEl.animate([{ scale: 1.08 }, { scale: 0.96 }, { scale: 1 }], { duration: 380, fill: "forwards", easing: "ease-out" });
+		rkL.textContent = "#" + (newIdx + 1);
+		if (passed > 0) {
+			up.textContent = "▲ " + passed;
+			up.style.opacity = 1;
+		}
+		sfx(newIdx === 0 ? "record" : "good");
+		if (newIdx === 0) wrap.querySelector(".rf-head").textContent = de ? "DU BIST #1" : Game.tr("YOU ARE #1");
+		await wait(3600);
+		wrap.animate([{ opacity: 1, scale: 1 }, { opacity: 0, scale: 0.92 }], { duration: 400, fill: "forwards" });
+		await wait(420);
+		wrap.remove();
+		busy = false;
+	};
+	if (window.__dev) window.__dev.rankfly = (p, s) => Game.rankFly(p || 1200, s || 9000, Array.from({ length: 30 }, (_, i) => ({ id: "x" + i, name: ["JAKS", "CHRISI", "NIKI", "XAVER", "DAVID", "BIGPIECE", "ZIPPI", "ARTHUR"][i % 8] + (i > 7 ? i : ""), best: 20000 - i * 650 })));
+})();
+// ------------------------------------------------------------------ poke the big title
+(() => {
+	const css = document.createElement("style");
+	css.textContent = `
+.tt-hit { pointer-events: auto; cursor: pointer; user-select: none; -webkit-user-select: none; }
+.tt-l { display: inline-block; white-space: pre; will-change: transform; }
+.tt-ring { position: fixed; pointer-events: none; z-index: 40; border: 3px solid #fff; border-radius: 50%; width: 10px; height: 10px; translate: -50% -50%; }
+.tt-bit { position: fixed; pointer-events: none; z-index: 40; width: 8px; height: 8px; border-radius: 2px; }
+`;
+	document.head.appendChild(css);
+	const COLORS = ["#ff4a5a", "#ffb02e", "#ffd35a", "#5dff8a", "#4ac8ff", "#a77bff", "#ff6ad5"];
+	let combo = 0, last = 0, falling = false, letters = [];
+
+	const grab = () => {
+		const host = titleL && titleL.el;
+		if (!host) return null;
+		const el = host.querySelector(".gui-text") || host;
+		el.classList.add("tt-hit");
+		// split once, again only if something rewrote the text
+		if (!letters.length || !letters[0].isConnected) {
+			const str = el.textContent;
+			el.textContent = "";
+			letters = [...str].map((ch) => {
+				const sp = document.createElement("span");
+				sp.className = "tt-l";
+				sp.textContent = ch;
+				el.appendChild(sp);
+				return sp;
+			});
+		}
+		return el;
+	};
+
+	const burst = (x, y, n, power) => {
+		const ring = document.createElement("div");
+		ring.className = "tt-ring";
+		ring.style.left = x + "px";
+		ring.style.top = y + "px";
+		document.body.appendChild(ring);
+		ring.animate([{ width: "10px", height: "10px", opacity: 1 }, { width: 140 * power + "px", height: 140 * power + "px", opacity: 0, borderWidth: "1px" }], { duration: 450, easing: "ease-out" }).onfinish = () => ring.remove();
+		for (let i = 0; i < n; i++) {
+			const b = document.createElement("div");
+			b.className = "tt-bit";
+			b.style.left = x + "px";
+			b.style.top = y + "px";
+			b.style.background = COLORS[i % COLORS.length];
+			document.body.appendChild(b);
+			const a = Math.random() * Math.PI * 2, d = (60 + Math.random() * 90) * power;
+			b.animate([{ translate: "0 0", rotate: "0deg", opacity: 1 }, { translate: `${Math.cos(a) * d}px ${Math.sin(a) * d + 60}px`, rotate: Math.random() * 720 + "deg", opacity: 0 }], { duration: 600 + Math.random() * 400, easing: "cubic-bezier(.2,.7,.4,1)" }).onfinish = () => b.remove();
+		}
+	};
+
+	const wave = (fromIdx, strength) => {
+		letters.forEach((sp, i) => {
+			const dist = Math.abs(i - fromIdx);
+			const h = (34 - Math.min(dist, 8) * 2.5) * strength;
+			const r = (Math.random() - 0.5) * 30 * strength;
+			const c = COLORS[(i + combo) % COLORS.length];
+			sp.animate(
+				[
+					{ transform: "translateY(0) rotate(0) scale(1)", color: "inherit" },
+					{ transform: `translateY(${-h}px) rotate(${r}deg) scale(${1 + 0.15 * strength})`, color: c, offset: 0.35 },
+					{ transform: "translateY(4px) rotate(0) scale(1.05, .92)", offset: 0.7 },
+					{ transform: "translateY(0) rotate(0) scale(1)", color: "inherit" },
+				],
+				{ duration: 520, delay: dist * 35, easing: "cubic-bezier(.3,.8,.4,1)" }
+			);
+		});
+	};
+
+	// click it too often and the title crashes. obviously.
+	const crash = () => {
+		falling = true;
+		sfx("crash", 1.1, 0.8);
+		const shake = document.getElementById("gui") || document.body;
+		shake.animate([{ translate: "0 0" }, { translate: "-10px 6px" }, { translate: "8px -6px" }, { translate: "-6px 4px" }, { translate: "0 0" }], { duration: 380 });
+		const r = titleL.el.getBoundingClientRect();
+		burst(r.left + r.width / 2, r.top + r.height / 2, 40, 2.2);
+		letters.forEach((sp, i) => {
+			const dx = (Math.random() - 0.5) * 300, rot = (Math.random() - 0.5) * 900;
+			sp.animate([{ transform: "translate(0,0) rotate(0)" }, { transform: `translate(${dx * 0.3}px,-60px) rotate(${rot * 0.2}deg)`, offset: 0.2 }, { transform: `translate(${dx}px, ${innerHeight}px) rotate(${rot}deg)` }], { duration: 1100 + Math.random() * 300, delay: i * 25, easing: "cubic-bezier(.5,0,.9,.6)", fill: "forwards" });
+		});
+		setTimeout(() => {
+			letters.forEach((sp, i) => {
+				sp.getAnimations().forEach((a) => a.cancel());
+				sp.animate([{ transform: "translateY(-160px) scale(.2)", opacity: 0 }, { transform: "translateY(10px) scale(1.1)", opacity: 1, offset: 0.7 }, { transform: "translateY(0) scale(1)", opacity: 1 }], { duration: 480, delay: i * 45, easing: "cubic-bezier(.3,1.4,.5,1)", fill: "backwards" });
+			});
+			setTimeout(() => sfx("good", 1.2), letters.length * 45);
+			setTimeout(() => (falling = false), letters.length * 45 + 500);
+		}, 1900);
+	};
+
+	const poke = (ev) => {
+		if (mode !== "menu" || falling) return;
+		ev.stopPropagation();
+		const el = grab();
+		if (!el) return;
+		const now = performance.now();
+		combo = now - last < 650 ? combo + 1 : 1;
+		last = now;
+		if (combo >= 9) {
+			combo = 0;
+			crash();
+			return;
+		}
+		let idx = 0, best = 1e9;
+		letters.forEach((sp, i) => {
+			const r = sp.getBoundingClientRect(), d = Math.abs(r.left + r.width / 2 - ev.clientX);
+			if (d < best) (best = d), (idx = i);
+		});
+		const strength = 1 + Math.min(combo, 8) * 0.12;
+		wave(idx, strength);
+		burst(ev.clientX, ev.clientY, 8 + combo * 2, 0.8 + combo * 0.1);
+		sfx("click", 0.9 + combo * 0.08, 0.7);
+		if (combo >= 6) titleL.el.animate([{ translate: "0 0" }, { translate: `${(Math.random() - 0.5) * 8}px ${(Math.random() - 0.5) * 6}px` }, { translate: "0 0" }], { duration: 160 });
+	};
+
+	const hook = () => {
+		const el = grab();
+		if (!el || el._ttHooked) return;
+		el._ttHooked = true;
+		el.addEventListener("pointerdown", poke);
+	};
+	task.delay(1, hook);
+	setInterval(hook, 3000);
+})();
+// ------------------------------------------------------------------ what's new
+
+(() => {
+	// newest on top. a new entry here lights up the button for everyone who hasn't opened it yet
+	const ENTRIES = [
+		{
+			id: "2026-10-28",
+			title: "REPLAYS",
+			date: "28 OCT",
+			color: COIN,
+			lines: [
+				"Every best run is recorded now. Hit the play button next to someone on the leaderboard to watch it, drag the timeline to jump around.",
+				"New best? Your card flies up the leaderboard past everyone you just beat.",
+				"Every profile shows when that player last flew.",
+				"Players with 0 points are gone from the leaderboard.",
+				"New tutorial for new players.",
+				"In the casino you can type your own bet now, way above 250K.",
+				"Click the big title on the home screen. Then click it a lot.",
+				"RIVALRY and OVERDRIVE achievements are gone. The impressum loads again.",
+			],
+			buttons: [["SHOW ME THE NEW BEST ANIMATION", () => {
+				closePanels();
+				const n = ["ACE", "NOVA", "BLITZ", "ORBIT", "TURBO", "COMET", "VIPER", "ZEN", "ROCKET", "PIXEL", "STORM", "GHOST"];
+				task.delay(0.4, () => Game.rankFly(5200, 14800, n.map((x, i) => ({ id: "demo" + i, name: x, best: 19000 - i * 1100 }))));
+			}]],
+		},
+		{
+			id: "2026-10-casino",
+			title: "CASINO",
+			date: "EARLIER",
+			color: GEM,
+			lines: [
+				"The star casino: lucky wheel, roulette, minefield and blackjack.",
+				"Box rolls got more colors and effects.",
+				"Bug report / feedback button, bottom right.",
+				"You can see other players' achievements and what they're doing right now.",
+			],
+		},
+		{
+			id: "2026-10-maps",
+			title: "NEW MAPS",
+			date: "EARLIER",
+			color: GOOD,
+			lines: [
+				"5 new maps, longer maps and a new order: volcano, glacier, sea.",
+				"10 new planes.",
+				"The boss got easier.",
+				"Magnet and longer fuel are gone so it's fair for everyone. Whoever bought them got refunded.",
+			],
+		},
+	];
+
+	const KEY = "dontcrash_cl_seen";
+	let seen = null;
+	try {
+		seen = localStorage.getItem(KEY);
+	} catch (e) {}
+	const unseen = () => {
+		if (seen == null) return 1;
+		const i = ENTRIES.findIndex((e) => e.id === seen);
+		return i < 0 ? 1 : i;
+	};
+
+	const cp = panel("changelog", "WHAT'S NEW", UO(720, 600));
+	const draw = () => {
+		for (const c of cp.body.GetChildren()) if (!c.IsA("UIListLayout")) c.Destroy();
+		const n = unseen();
+		ENTRIES.forEach((e, idx) => {
+			const head = row(cp.body, 40, 1);
+			make("Frame", { Size: UO(4, 20), Position: UO(6, 12), BackgroundColor3: e.color, Parent: head });
+			text(head, e.title, U2(0.6, 0, 1, 0), UO(18, 4), 24, WHITE, LEFT);
+			text(head, idx < n ? "NEW" : e.date, U2(0.4, -20, 1, 0), U2(0.6, 0, 0, 4), 16, idx < n ? e.color : DIM, RIGHT);
+			for (const line of e.lines) {
+				const r = row(cp.body, 0);
+				r.AutomaticSize = "Y";
+				make("UIPadding", { PaddingTop: UDim.new(0, 10), PaddingBottom: UDim.new(0, 10), PaddingLeft: UDim.new(0, 16), PaddingRight: UDim.new(0, 16), Parent: r });
+				const l = text(r, line, US(1, 0), null, 20, RGB(215, 215, 215), LEFT);
+				l.AutomaticSize = "Y";
+				l.el.style.position = "relative";
+				l.el.style.transform = "none";
+			}
+			for (const [label, fn] of e.buttons || []) {
+				const r = row(cp.body, 56, 1);
+				const b = button(r, label, U2(1, 0, 0, 48), UO(0, 4), fn);
+				b.TextSize = 18;
+				b.TextColor3 = e.color;
+			}
+			if (idx < ENTRIES.length - 1) row(cp.body, 14, 1);
+		});
+	};
+
+	const btn = button(menu, "WHAT'S NEW", UO(104, 28), U2(1, -236, 1, -40), () => {
+		draw();
+		openPanel("changelog");
+		seen = ENTRIES[0].id;
+		try {
+			localStorage.setItem(KEY, seen);
+		} catch (e) {}
+		paint();
+	}, 0.7);
+	btn.TextSize = 14;
+	const paint = () => {
+		const n = unseen();
+		btn.Text = n > 0 ? "NEW  (" + n + ")" : "WHAT'S NEW";
+		btn.TextColor3 = n > 0 ? COIN : DIM;
+	};
+	paint();
 })();

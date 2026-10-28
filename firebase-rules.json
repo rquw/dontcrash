@@ -17,6 +17,10 @@
         "st": {
           ".write": "auth != null && auth.uid === $uid",
           ".validate": "newData.isString() && newData.val().length <= 40"
+        },
+        "rp": {
+          ".write": "auth != null && auth.uid === $uid",
+          ".validate": "newData.isNumber()"
         }
       }
     },
@@ -104,6 +108,13 @@
         "$uid": {
           ".write": "auth != null && auth.uid === $uid"
         }
+      }
+    },
+    "replays": {
+      ".read": true,
+      "$uid": {
+        ".write": "auth != null && auth.uid === $uid",
+        ".validate": "newData.child('d').isString() && newData.child('d').val().length < 200000"
       }
     }
   }
