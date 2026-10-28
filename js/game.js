@@ -3,9 +3,9 @@ import {
 	camera, Lighting, Instance, workspace, markQueryRoot, Enum, OverlapParams, TweenService, TweenInfo, Debris, UIS, playSfx, loopSound, loadSounds, setSfxVolume,
 	NumberSequence, NumberSequenceKeypoint, NumberRange, ColorSequence, ColorSequenceKeypoint, guiRootInst, setUiScale, setLowGraphics, physicsGround,
 	mergeFloor, start, perf,
-} from "./engine.js?v=1793205797";
-import * as Server from "./server.js?v=1793205797";
-import * as Online from "./online.js?v=1793205797";
+} from "./engine.js?v=1793206337";
+import * as Server from "./server.js?v=1793206337";
+import * as Online from "./online.js?v=1793206337";
 
 const V3 = (x, y, z) => new Vector3(x, y, z);
 const RGB = Color3.fromRGB;
@@ -7313,7 +7313,7 @@ function xpBar(parent, size, pos, k, color) {
 			make("UIGradient", { Color: new ColorSequence(WHITE, RGB(90, 90, 90)), Rotation: 90, Parent: block });
 			if (isMe) make("UIStroke", { Color: GOOD, Thickness: 3, Transparency: 0.1, ApplyStrokeMode: "Border", Parent: block });
 			text(block, fmt(e.best || 0), U2(1, 0, 0, 30), UO(0, 10), i === 0 ? 30 : 26, BLACK);
-			if (Game.hasReplay(e)) replayBox(block, U2(0.5, -45, 0, 44), e);
+			if (Game.hasReplay(e)) replayBox(block, U2(0.5, -48, 0, 42), e);
 			text(block, "#" + (i + 1), U2(1, 0, 0, 24), UO(0, H[i] - 32), 20, BLACK).TextTransparency = 0.45;
 			const top2 = H[i] + 8;
 			const av = avatar(col, e.name || "?", i === 0 ? 64 : 54, U2(0.5, 0, 1, -top2 - 60), MEDAL[i]);
@@ -7332,8 +7332,21 @@ function xpBar(parent, size, pos, k, color) {
 	}
 
 	function replayBox(parent, position, e) {
-		const pb = button(parent, "\u25B6  REPLAY", UO(90, 24), position, () => Replay.play(e.id, e.name), 0.15);
-		pb.TextSize = 13;
+		const pb = button(parent, "\u25B6  REPLAY", UO(96, 28), position, () => {}, 0.15);
+		pb.TextSize = 14;
+		// fires on press and keeps the press to itself, so the row underneath never sees it
+		const go = (ev) => {
+			ev.stopPropagation();
+			if (ev.type === "pointerdown" && ev.button === 0) {
+				sfx("click");
+				Replay.play(e.id, e.name);
+			}
+		};
+		pb.el.addEventListener("pointerdown", go);
+		pb.el.addEventListener("pointerup", go);
+		pb.el.addEventListener("click", go);
+		const sc = pb.FindFirstChildOfClass("UIScale");
+		if (sc) sc.Destroy();
 		pb.TextColor3 = GOOD;
 		pb.ZIndex = 6;
 		make("UIStroke", { Color: GOOD, Thickness: 1.5, Transparency: 0.35, ApplyStrokeMode: "Border", Parent: pb });
@@ -7363,7 +7376,7 @@ function xpBar(parent, size, pos, k, color) {
 		// a replay box right behind the name, only when there's a replay of exactly this score
 		if (Game.hasReplay(e)) {
 			const nw = Math.min(Game.textWidth(nl.Text, 20), Math.max(60, r.AbsoluteSize.X - 440));
-			replayBox(r, UO(100 + nw + 12, titleOf(e) ? 5 : 11), e);
+			replayBox(r, UO(100 + nw + 12, titleOf(e) ? 4 : 9), e);
 		}
 		const sc = r.FindFirstChildOfClass("UIScale");
 		sc.Scale = 0.95;
@@ -10035,6 +10048,7 @@ function collect(p) {
 	const kind = m && m.GetAttribute("Kind");
 	if (!kind || !m.Parent || m.GetAttribute("Taken")) return;
 	Game.pickupFx(m, kind);
+	if (Game.recEv) Game.recEv("u", kind);
 	if (kind === "fuel") {
 		sfx("pick_fuel");
 		const wasEmpty = fuel <= 0;
@@ -10308,6 +10322,7 @@ Game.roll = (dir) => {
 	roll.cd = 0.7;
 	roll.kick = 1;
 	sfx("roll", 1, 1, dir * 0.4);
+	if (Game.recEv) Game.recEv("o", dir);
 	if (Game.tut) Game.tutPress(dir < 0 ? "Q" : "E");
 };
 
@@ -11186,12 +11201,13 @@ task.spawn(async () => {
 	for (const n of LOOPS) L[n] = loopSound(n);
 	let nitroOn = false, alarmT = 0;
 	RunService.RenderStepped.Connect((dt) => {
-		const run = mode === "run" && !dead && !Game.inCasino;
+		const rp = mode === "replay";
+		const run = (mode === "run" && !dead && !Game.inCasino) || (rp && !Game.replayPaused && Game.replayTier != null);
 		const pause = Game.paused ? 0.2 : 1;
 		const F = Game.flow;
 		const c = F.cine;
 		const spd = clamp(speedNow / BASE_SPEED, 0, 8);
-		const jet = F.tier >= 2 || (c && c.kind === "launch");
+		const jet = rp ? Game.replayTier >= 2 : F.tier >= 2 || (c && c.kind === "launch");
 		// the engine coughs when the tank is empty
 		const eng = run ? (fuel > 0 || curStage === "beyond" ? 0.16 : 0.06 + 0.06 * Math.abs(Math.sin(clock() * 9))) : 0;
 		const rate = 0.85 + Math.min(spd, 3) * 0.12 + nitroK * 0.25;
@@ -12458,7 +12474,7 @@ if (DEV && /^(localhost|127\.0\.0\.1)$/.test(location.hostname)) window.__dev = 
 // ------------------------------------------------------------------ old version warning
 // every build has its own number, the page checks now and then whether a newer one is online
 (() => {
-	const BUILD = "1793205797";
+	const BUILD = "1793206337";
 	if (BUILD.startsWith("__")) return;
 	const bar = make("TextButton", {
 		AnchorPoint: V2(0.5, 0),
@@ -15098,12 +15114,16 @@ const Replay = (() => {
 			d.push(pd);
 			s.push(ps);
 		}
-		return { hz: p.hz || HZ, x, y, d, s, ev: Array.isArray(p.e) ? p.e : [] };
+		return { hz: p.hz || HZ, x, y, d, s, ev: Array.isArray(p.e) ? p.e.slice().sort((a, b) => a[0] - b[0]) : [] };
 	}
 
 	// ---------------- recording
 	let rec = null, acc = 0, last = null, lastDone = null;
 	const snap = () => ({ sh: Game.shift || 0, ie: Game.introEnd === Infinity ? -1 : Game.introEnd == null ? null : Game.introEnd, bs: beyondStart, ms: Game.marks.sea == null ? null : Game.marks.sea, mf: Game.marks.final == null ? null : Game.marks.final, sr: Game.safeRow == null ? null : Game.safeRow });
+	// pickups and rolls happen between samples, they get written down right away
+	Game.recEv = (t, a) => {
+		if (rec && mode === "run" && rec.x.length < MAX) rec.ev.push([rec.x.length, t, a]);
+	};
 	Game.onRegen = (w) => {
 		if (!rec) return;
 		rec.ev.push([rec.x.length, "w", w]);
@@ -15120,7 +15140,7 @@ const Replay = (() => {
 		rec.y.push(Math.round(pos.Y * 2));
 		rec.d.push(Math.round(-pos.Z));
 		rec.s.push(Math.floor((stats.dist || 0) + (Game.scoreFrom || 0)));
-		const now = { st: curStage, c: stats.close || 0, g: stats.glass || 0, b: stats.bosses || 0, r: stats.revives || 0, dead, sk: Game.planeSkin, k: snap() };
+		const now = { st: curStage, c: stats.close || 0, g: stats.glass || 0, b: stats.bosses || 0, r: stats.revives || 0, dead, sk: Game.planeSkin, k: snap(), n: nitroK > 0.5 ? 1 : 0, tr: Game.flow.tier || 1 };
 		const p = last;
 		if (!p || JSON.stringify(now.k) !== JSON.stringify(p.k)) rec.ev.push([i, "k", now.k]);
 		if (!p || now.sk !== p.sk) rec.ev.push([i, "p", now.sk || "Default"]);
@@ -15130,8 +15150,13 @@ const Replay = (() => {
 			if (now.g > p.g) rec.ev.push([i, "g", now.g - p.g]);
 			if (now.b > p.b) rec.ev.push([i, "b"]);
 			if (now.r > p.r) rec.ev.push([i, "r"]);
-			if (now.dead && !p.dead) rec.ev.push([i, "x"]);
-		} else if (now.st) rec.ev.push([i, "m", now.st]);
+			if (now.dead && !p.dead) rec.ev.push([i, "x", data.death || "Default"]);
+			if (now.n !== p.n) rec.ev.push([i, "n", now.n]);
+			if (now.tr !== p.tr) rec.ev.push([i, "t", now.tr]);
+		} else {
+			if (now.st) rec.ev.push([i, "m", now.st]);
+			rec.ev.push([i, "t", now.tr]);
+		}
 		last = now;
 	}
 	RunService.RenderStepped.Connect((dt) => {
@@ -15257,6 +15282,15 @@ const Replay = (() => {
 		R.worlds = R.ev.filter((e) => e[1] === "w");
 		R.snaps = R.ev.filter((e) => e[1] === "k");
 		R.skins = R.ev.filter((e) => e[1] === "p");
+		R.tiers = R.ev.filter((e) => e[1] === "t");
+		R.nitros = R.ev.filter((e) => e[1] === "n");
+		R.lastI = -1;
+		R.nk = 0;
+		R.shake = 0;
+		R.roll = null;
+		R.kick = 0;
+		R.dead = false;
+		fuel = FUEL.max;
 		mode = "replay";
 		menu.Visible = false;
 		wallet.Visible = false;
@@ -15290,22 +15324,96 @@ const Replay = (() => {
 			Game.replayWorld = null;
 			R.stage = null;
 		}
+		const tr = at(R.tiers, i);
+		Game.replayTier = tr ? tr[2] : 1;
 		const sk = at(R.skins, i);
 		const skin = sk ? sk[2] : "Default";
-		if (skin !== R.skin || !planeModel || !planeModel.Parent) {
+		if (!R.dead && (skin !== R.skin || !planeModel || !planeModel.Parent)) {
 			R.skin = skin;
 			buildPlane(skin);
 		}
 	}
 	function seek(t, force) {
+		const back = t < R.t - 0.05;
 		R.t = clamp(t, 0, R.len);
 		const i = Math.floor(R.t * R.hz);
-		applyAt(i, force);
+		// crashed at this point or not
+		let deadNow = false;
+		for (const e of R.ev) {
+			if (e[0] > i) break;
+			if (e[1] === "x") deadNow = true;
+			else if (e[1] === "r") deadNow = false;
+		}
+		if (deadNow !== R.dead) {
+			R.dead = deadNow;
+			R.skin = null;
+			if (deadNow && planeModel) planeModel.Parent = null;
+		}
+		// going back: the world comes back too, with its pickups and glass
+		applyAt(i, force || back);
+		R.lastI = i;
+		const n = at(R.nitros, i);
+		R.nk = n ? n[2] : 0;
+		R.roll = null;
+		R.shake = 0;
 		Game.cam.last = null;
 		Game.cam.blend = null;
 		R.camPos = null;
 		frame(0);
 		if (Game.flushChunks) Game.flushChunks();
+	}
+	const near = (kind) => {
+		let best = null, bd = 60;
+		for (const m of pickups.GetChildren()) {
+			if (m.GetAttribute("Kind") !== kind || m.GetAttribute("Taken")) continue;
+			const dd = m.GetPivot().Position.sub(pos).Magnitude;
+			if (dd < bd) (bd = dd), (best = m);
+		}
+		return best;
+	};
+	function fire(e) {
+		const [, t, a] = e;
+		if (t === "u") {
+			const m = near(a);
+			if (m) Game.pickupFx(m, a);
+			sfx("pick_" + a);
+			if (a !== "fuel" && PAD[a]) popup(PAD[a][1], PAD[a][0]);
+			if (a === "heart") Game.heartFx();
+		} else if (t === "o") {
+			R.roll = { t: 0, dir: a };
+			R.kick = 1;
+			sfx("roll", 1, 1, a * 0.4);
+		} else if (t === "c") {
+			popup("CLOSE!  +" + (CONFIG.closeBonus || 15) + " \u25CF", WHITE);
+			sfx("near");
+			R.shake = Math.max(R.shake, 0.12);
+		} else if (t === "g") {
+			for (const h of workspace.GetPartBoundsInBox(CFrame.fromPos(pos), GLASSBOX.mul(1.6), params)) if (h.GetAttribute("Glass") && h.Parent) shatter(h, pos.add(V3(0, 0, 8)), 0.8, true, 4);
+			sfx("glass");
+			popup("+FUEL   +10 \u25CF", RGB(255, 90, 70));
+			R.shake = Math.max(R.shake, 0.35);
+		} else if (t === "m") {
+			if (e[0] > 0) banner(stageName(a), WHITE, 2);
+		} else if (t === "b") {
+			sfx("blast");
+			R.shake = Math.max(R.shake, 0.8);
+		} else if (t === "r") {
+			flash();
+			sfx("revive");
+			R.dead = false;
+			R.skin = null;
+		} else if (t === "x") {
+			R.dead = true;
+			const was = data.death;
+			data.death = a || "Default";
+			try {
+				sfx((Game.DEATHS[data.death] || Game.DEATHS.Default).sfx);
+				wreck((R.x[Math.max(0, e[0] - 1)] - R.x[Math.max(0, e[0] - 2)]) * R.hz);
+				deathEffect(pos);
+			} catch (er) {}
+			data.death = was;
+			R.shake = 1;
+		} else if (t === "n") R.nk = a;
 	}
 	function frame(dt) {
 		const f = R.t * R.hz, i = Math.min(Math.floor(f), R.x.length - 2), k = clamp(f - i, 0, 1);
@@ -15315,6 +15423,24 @@ const Replay = (() => {
 		const vxe = (R.x[i + 1] - R.x[i]) * R.hz;
 		applyAt(i, false);
 		pos = V3(x, y, -d);
+		// everything that happened since the last frame, only while it actually plays forward
+		if (R.lastI >= 0 && i > R.lastI && i - R.lastI < R.hz * 3 && !R.drag) {
+			for (const e of R.ev) if (e[0] > R.lastI && e[0] <= i) fire(e);
+		}
+		if (i !== R.lastI) R.lastI = i;
+		speedNow = Math.max(0, (R.d[i + 1] - R.d[i]) * R.hz);
+		nitroK += (R.nk - nitroK) * Math.min(1, dt * (R.nk ? 4 : 2));
+		R.kick = Math.max(0, R.kick - dt * 2.5);
+		let spin = 0;
+		if (R.roll) {
+			R.roll.t += dt;
+			const q = Math.min(R.roll.t / 0.45, 1);
+			const ez = q < 0.5 ? 2 * q * q : 1 - (-2 * q + 2) ** 2 / 2;
+			spin = -R.roll.dir * Math.PI * 2 * ez;
+			if (q >= 1) R.roll = null;
+		}
+		setVignette(nitroK * 0.8);
+		if (nitroK > 0.1) R.shake = Math.max(R.shake, 0.1 * nitroK);
 		runTime = R.t;
 		const [st] = stageFor(d);
 		if (st !== R.stage) {
@@ -15322,17 +15448,22 @@ const Replay = (() => {
 			curStage = st;
 			moodFor(st);
 		}
-		if (planeMain) planeMain.CFrame = CFrame.fromPos(pos).mul(Ang(0, 0, -clamp(vxe / 60, -1, 1) * 0.6));
+		if (planeMain && planeMain.Parent && !R.dead) planeMain.CFrame = CFrame.fromPos(pos).mul(Ang(0, 0, -clamp(vxe / 60, -1, 1) * 0.6 + spin));
 		trackChunks(pos.X, pos.Z);
 		updateMovers();
 		updatePads(pos.Y, pos.Z);
 		const want = CFrame.lookAt(pos.add(V3(0, 10, 28)), pos.add(V3(0, 2, -60)));
 		R.camPos = R.camPos && !big ? R.camPos.Lerp(want, Math.min(1, dt * 6)) : want;
-		camera.CFrame = R.camPos;
+		R.shake = Math.max(0, R.shake - dt * 1.5);
+		const sh = R.shake * 1.6;
+		camera.CFrame = sh > 0.01 ? R.camPos.mul(CFn(random(-sh, sh), random(-sh, sh), 0)) : R.camPos;
+		const fov = Math.min(120, settings.fov + clamp((speedNow / BASE_SPEED - 1) * 14, -10, 12) + nitroK * 30 + Math.sin(R.kick * Math.PI) * 14);
+		camera.FieldOfView += (fov - camera.FieldOfView) * Math.min(1, dt * 4);
 		draw();
 	}
 	Game.replayTick = (dt) => {
 		if (!R) return;
+		Game.replayPaused = !R.playing || !!R.drag;
 		if (R.playing && !R.drag) {
 			R.t += dt * R.speed;
 			if (R.t >= R.len) {
@@ -15349,6 +15480,11 @@ const Replay = (() => {
 	function stop() {
 		if (!R) return;
 		R = null;
+		nitroK = 0;
+		setVignette(0);
+		Game.replayTier = null;
+		Game.replayPaused = false;
+		camera.FieldOfView = settings.fov;
 		if (ui) ui.root.remove();
 		ui = null;
 		removeEventListener("keydown", onKey, true);
