@@ -139,7 +139,7 @@ export function logout() {
 }
 
 // the worker keeps everyone's real save. the game tells it what you did and gets back how things really stand
-const WORKER = EMU ? "http://127.0.0.1:8787" : "https://dontcrash-pay.schwaiger-fabio0907.workers.dev";
+const WORKER = EMU ? "http://127.0.0.1:8787" : "https://dontcrash-pay.brainblast-studios.workers.dev";
 export async function sync(payload) {
 	const t = await token();
 	let r;
